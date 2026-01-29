@@ -247,34 +247,36 @@ export class HaFloorplanBuilder extends LitElement {
     this.requestUpdate();
   }
 
-  private async _createFloorPlan(): Promise<void> {
+  private async _createFloor(): Promise<void> {
     if (!this.hass) return;
 
+    const name = prompt("Floor name:", `Floor ${this._floorPlans.length + 1}`);
+    if (!name) return;
+
     try {
+      // Each "floor" is a floor plan with a single floor
       const result = await this.hass.callWS<FloorPlan>({
         type: "inhabit/floor_plans/create",
-        name: "My Home",
+        name: name,
         unit: "cm",
         grid_size: 10,
       });
 
-      this._floorPlans = [...this._floorPlans, result];
-      currentFloorPlan.value = result;
-      currentFloor.value = null;
-
-      // Automatically create a ground floor
+      // Create the floor inside
       const floor = await this.hass.callWS<Floor>({
         type: "inhabit/floors/add",
         floor_plan_id: result.id,
-        name: "Ground Floor",
-        level: 0,
+        name: name,
+        level: this._floorPlans.length,
       });
 
       result.floors = [floor];
+      this._floorPlans = [...this._floorPlans, result];
+      currentFloorPlan.value = result;
       currentFloor.value = floor;
     } catch (err) {
-      console.error("Error creating floor plan:", err);
-      alert(`Failed to create floor plan: ${err}`);
+      console.error("Error creating floor:", err);
+      alert(`Failed to create floor: ${err}`);
     }
   }
 
@@ -330,7 +332,7 @@ export class HaFloorplanBuilder extends LitElement {
             Create visual floor plans of your home, place devices, and set up
             spatial automations with occupancy detection.
           </p>
-          <button @click=${this._createFloorPlan}>Create Floor Plan</button>
+          <button @click=${this._createFloor}>Create Floor</button>
         </div>
       `;
     }
@@ -345,7 +347,7 @@ export class HaFloorplanBuilder extends LitElement {
               this._handleFloorPlanSelect(e.detail.id)}
             @floor-select=${(e: CustomEvent) =>
               this._handleFloorSelect(e.detail.id)}
-            @create-floor-plan=${this._createFloorPlan}
+            @create-floor=${this._createFloor}
           ></fpb-toolbar>
 
           <div class="canvas-container">

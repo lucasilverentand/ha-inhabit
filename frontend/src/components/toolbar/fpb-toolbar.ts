@@ -7,7 +7,6 @@ import { customElement, property } from "lit/decorators.js";
 import type { HomeAssistant, FloorPlan, ToolType } from "../../types";
 import {
   currentFloorPlan,
-  currentFloor,
   activeTool,
   showGrid,
   snapToGrid,
@@ -49,7 +48,6 @@ export class FpbToolbar extends LitElement {
       background: var(--card-background-color);
     }
 
-    .floor-plan-select,
     .floor-select {
       padding: 8px 12px;
       border: 1px solid var(--divider-color);
@@ -145,21 +143,11 @@ export class FpbToolbar extends LitElement {
     }
   `;
 
-  private _handleFloorPlanChange(e: Event): void {
-    const select = e.target as HTMLSelectElement;
-    this.dispatchEvent(
-      new CustomEvent("floor-plan-select", {
-        detail: { id: select.value },
-        bubbles: true,
-        composed: true,
-      })
-    );
-  }
-
   private _handleFloorChange(e: Event): void {
     const select = e.target as HTMLSelectElement;
+    // Each floor plan represents a floor, so we select by floor plan id
     this.dispatchEvent(
-      new CustomEvent("floor-select", {
+      new CustomEvent("floor-plan-select", {
         detail: { id: select.value },
         bubbles: true,
         composed: true,
@@ -187,82 +175,35 @@ export class FpbToolbar extends LitElement {
     snapToGrid.value = !snapToGrid.value;
   }
 
-  private _handleCreateFloorPlan(): void {
+  private _handleCreateFloor(): void {
     this.dispatchEvent(
-      new CustomEvent("create-floor-plan", {
+      new CustomEvent("create-floor", {
         bubbles: true,
         composed: true,
       })
     );
   }
 
-  private async _handleAddFloor(): Promise<void> {
-    if (!this.hass) return;
-
-    const fp = currentFloorPlan.value;
-    if (!fp) return;
-
-    const name = prompt("Enter floor name:");
-    if (!name) return;
-
-    const level = parseInt(prompt("Enter floor level (0 = ground):") || "0", 10);
-
-    try {
-      await this.hass.callWS({
-        type: "inhabit/floors/add",
-        floor_plan_id: fp.id,
-        name,
-        level,
-      });
-      window.location.reload();
-    } catch (err) {
-      console.error("Error adding floor:", err);
-      alert(`Failed to add floor: ${err}`);
-    }
-  }
-
   override render() {
     const fp = currentFloorPlan.value;
-    const floor = currentFloor.value;
     const tool = activeTool.value;
 
     return html`
-      <!-- Floor Plan Selector -->
+      <!-- Floor Selector (each floor plan = one floor) -->
       <select
-        class="floor-plan-select"
+        class="floor-select"
         .value=${fp?.id || ""}
-        @change=${this._handleFloorPlanChange}
+        @change=${this._handleFloorChange}
       >
         ${this.floorPlans.map(
           (p) => html`<option value=${p.id}>${p.name}</option>`
         )}
       </select>
 
-      <button class="add-button" @click=${this._handleCreateFloorPlan}>
+      <button class="add-button" @click=${this._handleCreateFloor}>
         <ha-icon icon="mdi:plus"></ha-icon>
-        New
+        Add Floor
       </button>
-
-      <div class="divider"></div>
-
-      <!-- Floor Selector -->
-      ${fp
-        ? html`
-            <select
-              class="floor-select"
-              .value=${floor?.id || ""}
-              @change=${this._handleFloorChange}
-            >
-              ${fp.floors.map(
-                (f) => html`<option value=${f.id}>${f.name}</option>`
-              )}
-            </select>
-
-            <button class="tool-button" @click=${this._handleAddFloor} title="Add Floor">
-              <ha-icon icon="mdi:layers-plus"></ha-icon>
-            </button>
-          `
-        : null}
 
       <div class="divider"></div>
 
