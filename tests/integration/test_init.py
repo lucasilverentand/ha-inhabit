@@ -9,8 +9,9 @@ from __future__ import annotations
 from unittest.mock import patch
 
 import pytest
-from homeassistant.config_entries import ConfigEntry, ConfigEntryState
+from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.inhabit.const import DOMAIN
 
@@ -18,15 +19,11 @@ from custom_components.inhabit.const import DOMAIN
 @pytest.fixture
 def mock_config_entry(hass: HomeAssistant):
     """Create a mock config entry for testing."""
-    entry = ConfigEntry(
-        version=1,
-        minor_version=1,
+    entry = MockConfigEntry(
         domain=DOMAIN,
         title="Inhabit Floor Plan Builder",
         data={},
-        source="user",
         options={},
-        entry_id="test_entry_id",
     )
     entry.add_to_hass(hass)
     return entry
