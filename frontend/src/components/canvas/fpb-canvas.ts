@@ -1,16 +1,16 @@
 /**
- * SVG Canvas Component with pan/zoom and layers
+ * SVG Canvas Component with pan/zoom and wall-based room creation
  */
 
-import { LitElement, html, css, svg, PropertyValues } from "lit";
+import { LitElement, html, css, svg } from "lit";
 import { customElement, property, state, query } from "lit/decorators.js";
 import { effect } from "@preact/signals-core";
-import type { HomeAssistant, Coordinates, ViewBox } from "../../types";
+import type { HomeAssistant, Coordinates, ViewBox, Floor, Wall } from "../../types";
 import {
   currentFloor,
+  currentFloorPlan,
   viewBox,
   gridSize,
-  showGrid,
   snapToGrid,
   layers,
   activeTool,
@@ -19,6 +19,12 @@ import {
 } from "../../ha-floorplan-builder";
 import { polygonToPath, wallPath, viewBoxToString } from "../../utils/svg";
 import { snapToGrid as snapPoint } from "../../utils/geometry";
+
+interface WallSegment {
+  start: Coordinates;
+  end: Coordinates;
+  id?: string;
+}
 
 @customElement("fpb-canvas")
 export class FpbCanvas extends LitElement {
@@ -43,6 +49,12 @@ export class FpbCanvas extends LitElement {
   @state()
   private _drawingPoints: Coordinates[] = [];
 
+  @state()
+  private _wallStartPoint: Coordinates | null = null;
+
+  @state()
+  private _haAreas: Array<{ area_id: string; name: string }> = [];
+
   private _cleanupEffects: (() => void)[] = [];
 
   static override styles = css`
@@ -51,7 +63,7 @@ export class FpbCanvas extends LitElement {
       width: 100%;
       height: 100%;
       overflow: hidden;
-      background: var(--card-background-color, #fff);
+      background: #f5f5f5;
     }
 
     svg {
@@ -66,10 +78,6 @@ export class FpbCanvas extends LitElement {
 
     svg.select-tool {
       cursor: default;
-    }
-
-    .grid-layer {
-      pointer-events: none;
     }
 
     .room {
@@ -88,7 +96,7 @@ export class FpbCanvas extends LitElement {
     }
 
     .wall {
-      fill: var(--primary-text-color, #333);
+      fill: #333;
       stroke: none;
     }
 
@@ -100,13 +108,6 @@ export class FpbCanvas extends LitElement {
       fill: var(--card-background-color, #fff);
       stroke: var(--primary-text-color, #333);
       stroke-width: 1;
-    }
-
-    .door-swing {
-      fill: none;
-      stroke: var(--secondary-text-color, #666);
-      stroke-width: 1;
-      stroke-dasharray: 3,3;
     }
 
     .window {
@@ -135,19 +136,6 @@ export class FpbCanvas extends LitElement {
       fill: var(--disabled-text-color, #bdbdbd);
     }
 
-    .coverage-zone {
-      pointer-events: none;
-      opacity: 0.3;
-    }
-
-    .coverage-zone.motion {
-      fill: #4caf50;
-    }
-
-    .coverage-zone.presence {
-      fill: #2196f3;
-    }
-
     .room-label {
       pointer-events: none;
       font-size: 14px;
@@ -158,35 +146,71 @@ export class FpbCanvas extends LitElement {
     }
 
     .drawing-preview {
-      fill: rgba(33, 150, 243, 0.2);
-      stroke: var(--primary-color, #2196f3);
-      stroke-width: 2;
-      stroke-dasharray: 5,5;
       pointer-events: none;
     }
 
-    .crosshair {
-      stroke: var(--secondary-text-color, #666);
-      stroke-width: 1;
+    .wall-preview {
+      stroke: var(--primary-color, #2196f3);
+      stroke-width: 8;
+      stroke-linecap: round;
+    }
+
+    .wall-length-label {
+      font-size: 12px;
+      font-weight: 500;
+      fill: var(--primary-color, #2196f3);
+      text-anchor: middle;
+      dominant-baseline: middle;
       pointer-events: none;
+    }
+
+    .wall-length-bg {
+      fill: white;
+      opacity: 0.9;
+    }
+
+    .snap-indicator {
+      fill: var(--primary-color, #2196f3);
+      stroke: white;
+      stroke-width: 2;
+    }
+
+    .closed-shape-preview {
+      fill: rgba(76, 175, 80, 0.3);
+      stroke: #4caf50;
+      stroke-width: 2;
+      stroke-dasharray: 5,5;
     }
   `;
 
   override connectedCallback(): void {
     super.connectedCallback();
 
-    // Subscribe to signal changes
     this._cleanupEffects.push(
       effect(() => {
         this._viewBox = viewBox.value;
       })
     );
+
+    this._loadHaAreas();
   }
 
   override disconnectedCallback(): void {
     super.disconnectedCallback();
     this._cleanupEffects.forEach((cleanup) => cleanup());
     this._cleanupEffects = [];
+  }
+
+  private async _loadHaAreas(): Promise<void> {
+    if (!this.hass) return;
+    try {
+      const areas = await this.hass.callWS<Array<{ area_id: string; name: string }>>({
+        type: "config/area_registry/list",
+      });
+      this._haAreas = areas;
+    } catch (err) {
+      console.error("Error loading HA areas:", err);
+    }
   }
 
   private _handleWheel(e: WheelEvent): void {
@@ -198,29 +222,21 @@ export class FpbCanvas extends LitElement {
     const newWidth = this._viewBox.width * zoomFactor;
     const newHeight = this._viewBox.height * zoomFactor;
 
-    // Limit zoom
     if (newWidth < 100 || newWidth > 10000) return;
 
-    // Zoom toward cursor position
     const newX = point.x - (point.x - this._viewBox.x) * zoomFactor;
     const newY = point.y - (point.y - this._viewBox.y) * zoomFactor;
 
-    const newViewBox = {
-      x: newX,
-      y: newY,
-      width: newWidth,
-      height: newHeight,
-    };
-
+    const newViewBox = { x: newX, y: newY, width: newWidth, height: newHeight };
     viewBox.value = newViewBox;
     this._viewBox = newViewBox;
   }
 
   private _handlePointerDown(e: PointerEvent): void {
     const point = this._screenToSvg({ x: e.clientX, y: e.clientY });
-    const snappedPoint = snapToGrid.value ? snapPoint(point, gridSize.value) : point;
+    const snappedPoint = this._getSnappedPoint(point);
 
-    // Middle button or space+click for pan
+    // Middle button or shift+click for pan
     if (e.button === 1 || (e.button === 0 && e.shiftKey)) {
       this._isPanning = true;
       this._panStart = { x: e.clientX, y: e.clientY };
@@ -228,22 +244,20 @@ export class FpbCanvas extends LitElement {
       return;
     }
 
-    // Handle tool-specific actions
     const tool = activeTool.value;
 
     if (tool === "select") {
       this._handleSelectClick(point);
-    } else if (tool === "room" || tool === "polygon") {
-      this._handlePolygonClick(snappedPoint);
     } else if (tool === "wall") {
       this._handleWallClick(snappedPoint);
+    } else if (tool === "room" || tool === "polygon") {
+      this._handlePolygonClick(snappedPoint);
     }
   }
 
   private _handlePointerMove(e: PointerEvent): void {
     const point = this._screenToSvg({ x: e.clientX, y: e.clientY });
-    const snappedPoint = snapToGrid.value ? snapPoint(point, gridSize.value) : point;
-    this._cursorPos = snappedPoint;
+    this._cursorPos = this._getSnappedPoint(point);
 
     if (this._isPanning) {
       const dx = (e.clientX - this._panStart.x) * (this._viewBox.width / this._svg!.clientWidth);
@@ -270,18 +284,37 @@ export class FpbCanvas extends LitElement {
 
   private _handleKeyDown(e: KeyboardEvent): void {
     if (e.key === "Escape") {
+      this._wallStartPoint = null;
       this._drawingPoints = [];
       selection.value = { type: "none", ids: [] };
-    } else if (e.key === "Enter" && this._drawingPoints.length >= 3) {
-      this._completePolygon();
     }
+  }
+
+  private _getSnappedPoint(point: Coordinates): Coordinates {
+    const floor = currentFloor.value;
+    if (!floor) return snapToGrid.value ? snapPoint(point, gridSize.value) : point;
+
+    // Snap to existing wall endpoints
+    const snapDistance = 15;
+    for (const wall of floor.walls) {
+      for (const endpoint of [wall.start, wall.end]) {
+        const dist = Math.sqrt(
+          Math.pow(point.x - endpoint.x, 2) + Math.pow(point.y - endpoint.y, 2)
+        );
+        if (dist < snapDistance) {
+          return endpoint;
+        }
+      }
+    }
+
+    return snapToGrid.value ? snapPoint(point, gridSize.value) : point;
   }
 
   private _handleSelectClick(point: Coordinates): void {
     const floor = currentFloor.value;
     if (!floor) return;
 
-    // Check if clicked on a room
+    // Check rooms
     for (const room of floor.rooms) {
       if (this._pointInPolygon(point, room.polygon.vertices)) {
         selection.value = { type: "room", ids: [room.id] };
@@ -289,7 +322,7 @@ export class FpbCanvas extends LitElement {
       }
     }
 
-    // Check if clicked on a device
+    // Check devices
     const devices = devicePlacements.value.filter((d) => d.floor_id === floor.id);
     for (const device of devices) {
       const dist = Math.sqrt(
@@ -302,34 +335,161 @@ export class FpbCanvas extends LitElement {
       }
     }
 
-    // Clear selection
     selection.value = { type: "none", ids: [] };
   }
 
+  private _handleWallClick(point: Coordinates): void {
+    if (!this._wallStartPoint) {
+      this._wallStartPoint = point;
+    } else {
+      this._completeWall(this._wallStartPoint, point);
+      // Check for closed shape after adding wall
+      this._checkForClosedShape(point);
+      // Start new wall from this point for continuous drawing
+      this._wallStartPoint = point;
+    }
+  }
+
   private _handlePolygonClick(point: Coordinates): void {
-    // Check if closing the polygon
     if (this._drawingPoints.length >= 3) {
       const firstPoint = this._drawingPoints[0];
       const dist = Math.sqrt(
-        Math.pow(point.x - firstPoint.x, 2) +
-        Math.pow(point.y - firstPoint.y, 2)
+        Math.pow(point.x - firstPoint.x, 2) + Math.pow(point.y - firstPoint.y, 2)
       );
       if (dist < 15) {
         this._completePolygon();
         return;
       }
     }
-
     this._drawingPoints = [...this._drawingPoints, point];
   }
 
-  private _handleWallClick(point: Coordinates): void {
-    if (this._drawingPoints.length === 0) {
-      this._drawingPoints = [point];
-    } else {
-      // Complete wall
-      this._completeWall(this._drawingPoints[0], point);
-      this._drawingPoints = [];
+  private async _completeWall(start: Coordinates, end: Coordinates): Promise<void> {
+    if (!this.hass) return;
+
+    const floor = currentFloor.value;
+    const floorPlan = currentFloorPlan.value;
+    if (!floor || !floorPlan) return;
+
+    try {
+      await this.hass.callWS({
+        type: "inhabit/walls/add",
+        floor_plan_id: floorPlan.id,
+        floor_id: floor.id,
+        start,
+        end,
+        thickness: 8,
+      });
+      // Reload to get updated floor
+      window.location.reload();
+    } catch (err) {
+      console.error("Error creating wall:", err);
+    }
+  }
+
+  private _checkForClosedShape(lastPoint: Coordinates): void {
+    const floor = currentFloor.value;
+    if (!floor || floor.walls.length < 2) return;
+
+    // Find closed polygon from walls
+    const polygon = this._findClosedPolygon(floor.walls, lastPoint);
+    if (polygon && polygon.length >= 3) {
+      this._promptCreateRoom(polygon);
+    }
+  }
+
+  private _findClosedPolygon(walls: Wall[], fromPoint: Coordinates): Coordinates[] | null {
+    // Build adjacency from walls
+    const visited = new Set<string>();
+    const path: Coordinates[] = [fromPoint];
+
+    const findPath = (current: Coordinates, target: Coordinates, depth: number): boolean => {
+      if (depth > 20) return false; // Prevent infinite loops
+
+      const key = `${current.x},${current.y}`;
+      if (visited.has(key)) return false;
+      visited.add(key);
+
+      // Check if we're back at start
+      if (path.length >= 3) {
+        const dist = Math.sqrt(
+          Math.pow(current.x - target.x, 2) + Math.pow(current.y - target.y, 2)
+        );
+        if (dist < 5) return true;
+      }
+
+      // Find connected walls
+      for (const wall of walls) {
+        let nextPoint: Coordinates | null = null;
+
+        if (Math.abs(wall.start.x - current.x) < 5 && Math.abs(wall.start.y - current.y) < 5) {
+          nextPoint = wall.end;
+        } else if (Math.abs(wall.end.x - current.x) < 5 && Math.abs(wall.end.y - current.y) < 5) {
+          nextPoint = wall.start;
+        }
+
+        if (nextPoint) {
+          path.push(nextPoint);
+          if (findPath(nextPoint, target, depth + 1)) return true;
+          path.pop();
+        }
+      }
+
+      return false;
+    };
+
+    // Try to find a closed path starting from any wall endpoint
+    for (const wall of walls) {
+      visited.clear();
+      path.length = 0;
+      path.push(wall.start);
+
+      if (findPath(wall.start, wall.start, 0)) {
+        return [...path];
+      }
+    }
+
+    return null;
+  }
+
+  private async _promptCreateRoom(polygon: Coordinates[]): Promise<void> {
+    if (!this.hass) return;
+
+    const floor = currentFloor.value;
+    const floorPlan = currentFloorPlan.value;
+    if (!floor || !floorPlan) return;
+
+    // Show dialog to create room
+    const roomName = prompt("Closed shape detected! Enter room name (or cancel to skip):");
+    if (!roomName) return;
+
+    // Ask to link to HA area
+    let haAreaId: string | null = null;
+    if (this._haAreas.length > 0) {
+      const areaNames = this._haAreas.map((a) => a.name).join(", ");
+      const areaInput = prompt(`Link to Home Assistant area? (${areaNames}) or leave empty:`);
+      if (areaInput) {
+        const area = this._haAreas.find(
+          (a) => a.name.toLowerCase() === areaInput.toLowerCase()
+        );
+        if (area) haAreaId = area.area_id;
+      }
+    }
+
+    try {
+      await this.hass.callWS({
+        type: "inhabit/rooms/add",
+        floor_plan_id: floorPlan.id,
+        floor_id: floor.id,
+        name: roomName,
+        polygon: { vertices: polygon },
+        color: this._getRandomRoomColor(),
+        ha_area_id: haAreaId,
+      });
+      window.location.reload();
+    } catch (err) {
+      console.error("Error creating room:", err);
+      alert(`Failed to create room: ${err}`);
     }
   }
 
@@ -337,13 +497,26 @@ export class FpbCanvas extends LitElement {
     if (!this.hass || this._drawingPoints.length < 3) return;
 
     const floor = currentFloor.value;
-    const floorPlan = (await import("../../ha-floorplan-builder")).currentFloorPlan.value;
+    const floorPlan = currentFloorPlan.value;
     if (!floor || !floorPlan) return;
 
     const roomName = prompt("Enter room name:");
     if (!roomName) {
       this._drawingPoints = [];
       return;
+    }
+
+    // Ask to link to HA area
+    let haAreaId: string | null = null;
+    if (this._haAreas.length > 0) {
+      const areaNames = this._haAreas.map((a) => a.name).join(", ");
+      const areaInput = prompt(`Link to Home Assistant area? (${areaNames}) or leave empty:`);
+      if (areaInput) {
+        const area = this._haAreas.find(
+          (a) => a.name.toLowerCase() === areaInput.toLowerCase()
+        );
+        if (area) haAreaId = area.area_id;
+      }
     }
 
     try {
@@ -354,35 +527,14 @@ export class FpbCanvas extends LitElement {
         name: roomName,
         polygon: { vertices: this._drawingPoints },
         color: this._getRandomRoomColor(),
+        ha_area_id: haAreaId,
       });
 
       this._drawingPoints = [];
-      // Reload floor plan
-      window.location.reload(); // Simple approach - would use signals in production
+      window.location.reload();
     } catch (err) {
       console.error("Error creating room:", err);
       alert(`Failed to create room: ${err}`);
-    }
-  }
-
-  private async _completeWall(start: Coordinates, end: Coordinates): Promise<void> {
-    if (!this.hass) return;
-
-    const floor = currentFloor.value;
-    const floorPlan = (await import("../../ha-floorplan-builder")).currentFloorPlan.value;
-    if (!floor || !floorPlan) return;
-
-    try {
-      await this.hass.callWS({
-        type: "inhabit/walls/add",
-        floor_plan_id: floorPlan.id,
-        floor_id: floor.id,
-        start,
-        end,
-        thickness: 10,
-      });
-    } catch (err) {
-      console.error("Error creating wall:", err);
     }
   }
 
@@ -428,26 +580,16 @@ export class FpbCanvas extends LitElement {
     return colors[Math.floor(Math.random() * colors.length)];
   }
 
-  private _renderGrid() {
-    if (!showGrid.value) return null;
+  private _calculateWallLength(start: Coordinates, end: Coordinates): number {
+    return Math.sqrt(Math.pow(end.x - start.x, 2) + Math.pow(end.y - start.y, 2));
+  }
 
-    const gs = gridSize.value;
-    const majorGs = gs * 10;
-
-    return svg`
-      <defs>
-        <pattern id="minor-grid" width="${gs}" height="${gs}" patternUnits="userSpaceOnUse">
-          <path d="M ${gs} 0 L 0 0 0 ${gs}" fill="none" stroke="#f0f0f0" stroke-width="0.5"/>
-        </pattern>
-        <pattern id="major-grid" width="${majorGs}" height="${majorGs}" patternUnits="userSpaceOnUse">
-          <rect width="${majorGs}" height="${majorGs}" fill="url(#minor-grid)"/>
-          <path d="M ${majorGs} 0 L 0 0 0 ${majorGs}" fill="none" stroke="#d0d0d0" stroke-width="1"/>
-        </pattern>
-      </defs>
-      <rect class="grid-layer" x="${this._viewBox.x}" y="${this._viewBox.y}"
-            width="${this._viewBox.width}" height="${this._viewBox.height}"
-            fill="url(#major-grid)"/>
-    `;
+  private _formatLength(length: number): string {
+    // Assuming units are in cm, show in meters if > 100cm
+    if (length >= 100) {
+      return `${(length / 100).toFixed(2)}m`;
+    }
+    return `${Math.round(length)}cm`;
   }
 
   private _renderFloor() {
@@ -467,7 +609,7 @@ export class FpbCanvas extends LitElement {
                opacity="${layerConfig.find(l => l.id === "background")?.opacity ?? 1}"/>
       ` : null}
 
-      <!-- Structure layer (walls, doors, windows) -->
+      <!-- Structure layer -->
       ${layerConfig.find(l => l.id === "structure")?.visible ? svg`
         <g class="structure-layer" opacity="${layerConfig.find(l => l.id === "structure")?.opacity ?? 1}">
           <!-- Rooms -->
@@ -517,10 +659,12 @@ export class FpbCanvas extends LitElement {
       ${layerConfig.find(l => l.id === "labels")?.visible ? svg`
         <g class="labels-layer" opacity="${layerConfig.find(l => l.id === "labels")?.opacity ?? 1}">
           ${floor.rooms.map(room => {
-            const bbox = this._getPolygonCenter(room.polygon.vertices);
-            if (!bbox) return null;
+            const center = this._getPolygonCenter(room.polygon.vertices);
+            if (!center) return null;
             return svg`
-              <text class="room-label" x="${bbox.x}" y="${bbox.y}">${room.name}</text>
+              <text class="room-label" x="${center.x}" y="${center.y}">
+                ${room.name}${room.ha_area_id ? " 🏠" : ""}
+              </text>
             `;
           })}
         </g>
@@ -556,28 +700,55 @@ export class FpbCanvas extends LitElement {
   }
 
   private _renderDrawingPreview() {
-    if (this._drawingPoints.length === 0) return null;
-
     const tool = activeTool.value;
 
-    if (tool === "room" || tool === "polygon") {
+    // Wall drawing preview with length
+    if (tool === "wall" && this._wallStartPoint) {
+      const start = this._wallStartPoint;
+      const end = this._cursorPos;
+      const length = this._calculateWallLength(start, end);
+      const midX = (start.x + end.x) / 2;
+      const midY = (start.y + end.y) / 2;
+
+      // Calculate angle for label rotation
+      const angle = Math.atan2(end.y - start.y, end.x - start.x) * (180 / Math.PI);
+      const labelAngle = angle > 90 || angle < -90 ? angle + 180 : angle;
+
+      return svg`
+        <g class="drawing-preview">
+          <!-- Wall line -->
+          <line class="wall-preview"
+                x1="${start.x}" y1="${start.y}"
+                x2="${end.x}" y2="${end.y}"/>
+
+          <!-- Start point indicator -->
+          <circle class="snap-indicator" cx="${start.x}" cy="${start.y}" r="6"/>
+
+          <!-- Length label -->
+          <g transform="translate(${midX}, ${midY}) rotate(${labelAngle})">
+            <rect class="wall-length-bg" x="-30" y="-10" width="60" height="20" rx="4"/>
+            <text class="wall-length-label" x="0" y="0">${this._formatLength(length)}</text>
+          </g>
+
+          <!-- End point indicator -->
+          <circle class="snap-indicator" cx="${end.x}" cy="${end.y}" r="4" opacity="0.5"/>
+        </g>
+      `;
+    }
+
+    // Room/polygon drawing preview
+    if ((tool === "room" || tool === "polygon") && this._drawingPoints.length > 0) {
       const points = [...this._drawingPoints, this._cursorPos];
       const pathData = points.map((p, i) => `${i === 0 ? "M" : "L"}${p.x},${p.y}`).join(" ");
 
       return svg`
-        <path class="drawing-preview" d="${pathData} Z"/>
-        ${this._drawingPoints.map(p => svg`
-          <circle cx="${p.x}" cy="${p.y}" r="5" fill="var(--primary-color)" stroke="white" stroke-width="2"/>
-        `)}
-      `;
-    }
-
-    if (tool === "wall" && this._drawingPoints.length === 1) {
-      const start = this._drawingPoints[0];
-      return svg`
-        <line class="drawing-preview" x1="${start.x}" y1="${start.y}"
-              x2="${this._cursorPos.x}" y2="${this._cursorPos.y}"
-              stroke="var(--primary-color)" stroke-width="3"/>
+        <g class="drawing-preview">
+          <path d="${pathData} Z" fill="rgba(33, 150, 243, 0.2)"
+                stroke="var(--primary-color)" stroke-width="2" stroke-dasharray="5,5"/>
+          ${this._drawingPoints.map(p => svg`
+            <circle cx="${p.x}" cy="${p.y}" r="5" fill="var(--primary-color)" stroke="white" stroke-width="2"/>
+          `)}
+        </g>
       `;
     }
 
@@ -612,7 +783,6 @@ export class FpbCanvas extends LitElement {
         @keydown=${this._handleKeyDown}
         tabindex="0"
       >
-        ${this._renderGrid()}
         ${this._renderFloor()}
         ${this._renderDrawingPreview()}
       </svg>

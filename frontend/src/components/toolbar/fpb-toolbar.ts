@@ -8,8 +8,6 @@ import type { HomeAssistant, FloorPlan, ToolType } from "../../types";
 import {
   currentFloorPlan,
   activeTool,
-  showGrid,
-  snapToGrid,
 } from "../../ha-floorplan-builder";
 import { canUndo, canRedo, undo, redo } from "../../stores/history-store";
 
@@ -106,25 +104,6 @@ export class FpbToolbar extends LitElement {
       flex: 1;
     }
 
-    .toggle-button {
-      display: flex;
-      align-items: center;
-      gap: 4px;
-      padding: 6px 12px;
-      border: 1px solid var(--divider-color);
-      border-radius: 4px;
-      background: transparent;
-      color: var(--primary-text-color);
-      cursor: pointer;
-      font-size: 12px;
-    }
-
-    .toggle-button.active {
-      background: var(--primary-color);
-      color: var(--text-primary-color);
-      border-color: var(--primary-color);
-    }
-
     .add-button {
       display: flex;
       align-items: center;
@@ -165,14 +144,6 @@ export class FpbToolbar extends LitElement {
 
   private _handleRedo(): void {
     redo();
-  }
-
-  private _toggleGrid(): void {
-    showGrid.value = !showGrid.value;
-  }
-
-  private _toggleSnap(): void {
-    snapToGrid.value = !snapToGrid.value;
   }
 
   private _handleCreateFloor(): void {
@@ -245,23 +216,6 @@ export class FpbToolbar extends LitElement {
       </div>
 
       <div class="spacer"></div>
-
-      <!-- View Options -->
-      <button
-        class="toggle-button ${showGrid.value ? "active" : ""}"
-        @click=${this._toggleGrid}
-      >
-        <ha-icon icon="mdi:grid"></ha-icon>
-        Grid
-      </button>
-
-      <button
-        class="toggle-button ${snapToGrid.value ? "active" : ""}"
-        @click=${this._toggleSnap}
-      >
-        <ha-icon icon="mdi:magnet"></ha-icon>
-        Snap
-      </button>
     `;
   }
 }
