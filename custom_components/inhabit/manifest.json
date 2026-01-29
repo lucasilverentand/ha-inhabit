@@ -1,0 +1,13 @@
+{
+  "domain": "inhabit",
+  "name": "Inhabit Floor Plan Builder",
+  "codeowners": ["@luca"],
+  "config_flow": true,
+  "dependencies": ["websocket_api", "http"],
+  "documentation": "https://github.com/luca/ha-inhabit",
+  "integration_type": "service",
+  "iot_class": "local_push",
+  "issue_tracker": "https://github.com/luca/ha-inhabit/issues",
+  "requirements": [],
+  "version": "0.1.0"
+}

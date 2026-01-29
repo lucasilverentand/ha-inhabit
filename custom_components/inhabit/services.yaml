@@ -1,0 +1,52 @@
+set_room_occupancy:
+  name: Set Room Occupancy
+  description: Manually set the occupancy state of a room
+  fields:
+    room_id:
+      name: Room ID
+      description: The ID of the room to set occupancy for
+      required: true
+      selector:
+        text:
+    state:
+      name: State
+      description: The occupancy state to set
+      required: true
+      selector:
+        select:
+          options:
+            - vacant
+            - occupied
+            - checking
+
+refresh_sensors:
+  name: Refresh Sensors
+  description: Refresh all virtual occupancy sensors from current configuration
+
+export_automation:
+  name: Export Automation
+  description: Export a visual rule as Home Assistant automation YAML
+  fields:
+    rule_id:
+      name: Rule ID
+      description: The ID of the visual rule to export
+      required: true
+      selector:
+        text:
+
+export_card:
+  name: Export Card
+  description: Export a floor plan or room as Lovelace card YAML
+  fields:
+    floor_plan_id:
+      name: Floor Plan ID
+      description: The ID of the floor plan to export
+      required: true
+      selector:
+        text:
+    room_id:
+      name: Room ID
+      description: Optional room ID to export only that room
+      required: false
+      selector:
+        text:

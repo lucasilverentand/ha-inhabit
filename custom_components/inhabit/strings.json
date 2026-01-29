@@ -1,0 +1,69 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Inhabit Floor Plan Builder",
+        "description": "This integration enables visual floor plan creation with device placement and occupancy detection.\n\nClick Submit to install."
+      }
+    },
+    "abort": {
+      "already_configured": "Inhabit is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Inhabit Options",
+        "data": {
+          "default_motion_timeout": "Default motion timeout (seconds)",
+          "default_checking_timeout": "Default checking timeout (seconds)",
+          "default_grid_size": "Default grid size"
+        }
+      }
+    }
+  },
+  "services": {
+    "set_room_occupancy": {
+      "name": "Set Room Occupancy",
+      "description": "Manually set the occupancy state of a room",
+      "fields": {
+        "room_id": {
+          "name": "Room ID",
+          "description": "The ID of the room"
+        },
+        "state": {
+          "name": "State",
+          "description": "The occupancy state (vacant, occupied, checking)"
+        }
+      }
+    },
+    "refresh_sensors": {
+      "name": "Refresh Sensors",
+      "description": "Refresh all virtual occupancy sensors"
+    },
+    "export_automation": {
+      "name": "Export Automation",
+      "description": "Export a visual rule as Home Assistant automation",
+      "fields": {
+        "rule_id": {
+          "name": "Rule ID",
+          "description": "The ID of the rule to export"
+        }
+      }
+    },
+    "export_card": {
+      "name": "Export Card",
+      "description": "Export a floor plan or room as Lovelace card",
+      "fields": {
+        "floor_plan_id": {
+          "name": "Floor Plan ID",
+          "description": "The ID of the floor plan"
+        },
+        "room_id": {
+          "name": "Room ID",
+          "description": "Optional room ID for single room export"
+        }
+      }
+    }
+  }
+}
