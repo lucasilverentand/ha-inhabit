@@ -79,19 +79,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             "/inhabit/panel.js", panel_path, cache_headers=False
         )
 
-    hass.components.frontend.async_register_built_in_panel(
-        component_name="custom",
-        sidebar_title="Floor Plan",
-        sidebar_icon="mdi:floor-plan",
-        frontend_url_path="inhabit",
-        require_admin=False,
-        config={
-            "_panel_custom": {
-                "name": "ha-floorplan-builder",
-                "module_url": "/inhabit/panel.js",
-            }
-        },
-    )
+    # Register panel (only if not already registered)
+    panels = hass.data.get("frontend_panels", {})
+    if "inhabit" not in panels:
+        hass.components.frontend.async_register_built_in_panel(
+            component_name="custom",
+            sidebar_title="Floor Plan",
+            sidebar_icon="mdi:floor-plan",
+            frontend_url_path="inhabit",
+            require_admin=False,
+            config={
+                "_panel_custom": {
+                    "name": "ha-floorplan-builder",
+                    "module_url": "/inhabit/panel.js",
+                }
+            },
+        )
 
     # Set up platforms
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS_LIST)
