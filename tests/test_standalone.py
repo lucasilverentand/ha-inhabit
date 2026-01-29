@@ -1,10 +1,8 @@
 """Standalone tests that don't require homeassistant installation."""
+
 from __future__ import annotations
 
 import sys
-from dataclasses import dataclass, field
-from datetime import datetime
-from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -201,7 +199,6 @@ class TestFloorPlanModels:
     def test_floor_plan_get_room(self):
         """Test getting room from floor plan."""
         from custom_components.inhabit.models.floor_plan import (
-            Coordinates,
             Floor,
             FloorPlan,
             Polygon,
@@ -485,14 +482,18 @@ class TestFakeHouseSimulator:
         simulator.add_person("person1", "John")
 
         # Initial state - all sensors off
-        assert simulator.sensors["binary_sensor.ground_living_motion"].state == STATE_OFF
+        assert (
+            simulator.sensors["binary_sensor.ground_living_motion"].state == STATE_OFF
+        )
 
         # Move person to living room
         simulator.move_person_to_room("person1", "ground_living")
 
         # Sensors should be on
         assert simulator.sensors["binary_sensor.ground_living_motion"].state == STATE_ON
-        assert simulator.sensors["binary_sensor.ground_living_presence"].state == STATE_ON
+        assert (
+            simulator.sensors["binary_sensor.ground_living_presence"].state == STATE_ON
+        )
 
     def test_person_becomes_still(self):
         """Test that PIR clears but presence maintains when still."""
@@ -510,8 +511,12 @@ class TestFakeHouseSimulator:
         simulator.person_becomes_still("person1")
 
         # PIR should clear, presence should remain
-        assert simulator.sensors["binary_sensor.ground_living_motion"].state == STATE_OFF
-        assert simulator.sensors["binary_sensor.ground_living_presence"].state == STATE_ON
+        assert (
+            simulator.sensors["binary_sensor.ground_living_motion"].state == STATE_OFF
+        )
+        assert (
+            simulator.sensors["binary_sensor.ground_living_presence"].state == STATE_ON
+        )
 
     def test_person_leaves_room(self):
         """Test that all sensors clear when person leaves."""
@@ -524,8 +529,12 @@ class TestFakeHouseSimulator:
         simulator.move_person_to_room("person1", "ground_living")
         simulator.person_leaves_room("person1")
 
-        assert simulator.sensors["binary_sensor.ground_living_motion"].state == STATE_OFF
-        assert simulator.sensors["binary_sensor.ground_living_presence"].state == STATE_OFF
+        assert (
+            simulator.sensors["binary_sensor.ground_living_motion"].state == STATE_OFF
+        )
+        assert (
+            simulator.sensors["binary_sensor.ground_living_presence"].state == STATE_OFF
+        )
 
     def test_door_operations(self):
         """Test door open/close operations."""

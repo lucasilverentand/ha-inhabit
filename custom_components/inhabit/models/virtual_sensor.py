@@ -1,4 +1,5 @@
 """Virtual sensor configuration and state models."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -25,10 +26,20 @@ class OccupancyStateData:
         return {
             "state": self.state,
             "confidence": self.confidence,
-            "last_motion_at": self.last_motion_at.isoformat() if self.last_motion_at else None,
-            "last_presence_at": self.last_presence_at.isoformat() if self.last_presence_at else None,
-            "last_door_event_at": self.last_door_event_at.isoformat() if self.last_door_event_at else None,
-            "checking_started_at": self.checking_started_at.isoformat() if self.checking_started_at else None,
+            "last_motion_at": (
+                self.last_motion_at.isoformat() if self.last_motion_at else None
+            ),
+            "last_presence_at": (
+                self.last_presence_at.isoformat() if self.last_presence_at else None
+            ),
+            "last_door_event_at": (
+                self.last_door_event_at.isoformat() if self.last_door_event_at else None
+            ),
+            "checking_started_at": (
+                self.checking_started_at.isoformat()
+                if self.checking_started_at
+                else None
+            ),
             "contributing_sensors": self.contributing_sensors,
         }
 
@@ -38,10 +49,26 @@ class OccupancyStateData:
         return cls(
             state=data.get("state", OccupancyState.VACANT),
             confidence=float(data.get("confidence", 0.0)),
-            last_motion_at=datetime.fromisoformat(data["last_motion_at"]) if data.get("last_motion_at") else None,
-            last_presence_at=datetime.fromisoformat(data["last_presence_at"]) if data.get("last_presence_at") else None,
-            last_door_event_at=datetime.fromisoformat(data["last_door_event_at"]) if data.get("last_door_event_at") else None,
-            checking_started_at=datetime.fromisoformat(data["checking_started_at"]) if data.get("checking_started_at") else None,
+            last_motion_at=(
+                datetime.fromisoformat(data["last_motion_at"])
+                if data.get("last_motion_at")
+                else None
+            ),
+            last_presence_at=(
+                datetime.fromisoformat(data["last_presence_at"])
+                if data.get("last_presence_at")
+                else None
+            ),
+            last_door_event_at=(
+                datetime.fromisoformat(data["last_door_event_at"])
+                if data.get("last_door_event_at")
+                else None
+            ),
+            checking_started_at=(
+                datetime.fromisoformat(data["checking_started_at"])
+                if data.get("checking_started_at")
+                else None
+            ),
             contributing_sensors=data.get("contributing_sensors", []),
         )
 
@@ -129,9 +156,15 @@ class VirtualSensorConfig:
             motion_timeout=int(data.get("motion_timeout", 120)),
             checking_timeout=int(data.get("checking_timeout", 30)),
             presence_timeout=int(data.get("presence_timeout", 300)),
-            motion_sensors=[SensorBinding.from_dict(s) for s in data.get("motion_sensors", [])],
-            presence_sensors=[SensorBinding.from_dict(s) for s in data.get("presence_sensors", [])],
-            door_sensors=[SensorBinding.from_dict(s) for s in data.get("door_sensors", [])],
+            motion_sensors=[
+                SensorBinding.from_dict(s) for s in data.get("motion_sensors", [])
+            ],
+            presence_sensors=[
+                SensorBinding.from_dict(s) for s in data.get("presence_sensors", [])
+            ],
+            door_sensors=[
+                SensorBinding.from_dict(s) for s in data.get("door_sensors", [])
+            ],
             door_blocks_vacancy=data.get("door_blocks_vacancy", True),
             door_open_resets_checking=data.get("door_open_resets_checking", True),
             occupied_threshold=float(data.get("occupied_threshold", 0.5)),

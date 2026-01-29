@@ -1,4 +1,5 @@
 """Floor plan storage with persistence to HA .storage."""
+
 from __future__ import annotations
 
 import logging
@@ -23,9 +24,7 @@ class FloorPlanStore:
     def __init__(self, hass: HomeAssistant) -> None:
         """Initialize the store."""
         self.hass = hass
-        self._store: Store[dict[str, Any]] = Store(
-            hass, STORAGE_VERSION, STORAGE_KEY
-        )
+        self._store: Store[dict[str, Any]] = Store(hass, STORAGE_VERSION, STORAGE_KEY)
         self._data: dict[str, Any] = {
             "floor_plans": {},
             "device_placements": {},
@@ -43,7 +42,10 @@ class FloorPlanStore:
         if data:
             self._data = data
         self._loaded = True
-        _LOGGER.debug("Loaded floor plan data: %d floor plans", len(self._data.get("floor_plans", {})))
+        _LOGGER.debug(
+            "Loaded floor plan data: %d floor plans",
+            len(self._data.get("floor_plans", {})),
+        )
 
     async def async_save(self) -> None:
         """Save data to storage immediately."""
@@ -110,7 +112,8 @@ class FloorPlanStore:
         # Clean up sensor configs for rooms in this floor plan
         sensor_configs = self._data.get("sensor_configs", {})
         to_delete = [
-            k for k, v in sensor_configs.items()
+            k
+            for k, v in sensor_configs.items()
             if v.get("floor_plan_id") == floor_plan_id
         ]
         for key in to_delete:
@@ -119,7 +122,8 @@ class FloorPlanStore:
         # Clean up visual rules
         visual_rules = self._data.get("visual_rules", {})
         to_delete = [
-            k for k, v in visual_rules.items()
+            k
+            for k, v in visual_rules.items()
             if v.get("floor_plan_id") == floor_plan_id
         ]
         for key in to_delete:
@@ -186,12 +190,14 @@ class FloorPlanStore:
 
         # Create default sensor config for the room
         if room.occupancy_sensor_enabled:
-            self.create_sensor_config(VirtualSensorConfig(
-                room_id=room.id,
-                floor_plan_id=floor_plan_id,
-                motion_timeout=room.motion_timeout,
-                checking_timeout=room.checking_timeout,
-            ))
+            self.create_sensor_config(
+                VirtualSensorConfig(
+                    room_id=room.id,
+                    floor_plan_id=floor_plan_id,
+                    motion_timeout=room.motion_timeout,
+                    checking_timeout=room.checking_timeout,
+                )
+            )
 
         return room
 
@@ -268,7 +274,9 @@ class FloorPlanStore:
         self.update_floor_plan(floor_plan)
         return door
 
-    def add_window(self, floor_plan_id: str, floor_id: str, window: Window) -> Window | None:
+    def add_window(
+        self, floor_plan_id: str, floor_id: str, window: Window
+    ) -> Window | None:
         """Add a window to a floor."""
         floor_plan = self.get_floor_plan(floor_plan_id)
         if not floor_plan:
@@ -291,7 +299,9 @@ class FloorPlanStore:
             return DevicePlacementCollection.from_dict(data)
         return DevicePlacementCollection(floor_plan_id=floor_plan_id)
 
-    def place_device(self, floor_plan_id: str, device: DevicePlacement) -> DevicePlacement:
+    def place_device(
+        self, floor_plan_id: str, device: DevicePlacement
+    ) -> DevicePlacement:
         """Place a device on a floor plan."""
         if "device_placements" not in self._data:
             self._data["device_placements"] = {}
@@ -308,7 +318,9 @@ class FloorPlanStore:
         self.async_delay_save()
         return device
 
-    def update_device_placement(self, floor_plan_id: str, device: DevicePlacement) -> DevicePlacement | None:
+    def update_device_placement(
+        self, floor_plan_id: str, device: DevicePlacement
+    ) -> DevicePlacement | None:
         """Update a device placement."""
         collection = self.get_device_placements(floor_plan_id)
         if collection.update_device(device):
@@ -351,7 +363,9 @@ class FloorPlanStore:
         self.async_delay_save()
         return config
 
-    def update_sensor_config(self, config: VirtualSensorConfig) -> VirtualSensorConfig | None:
+    def update_sensor_config(
+        self, config: VirtualSensorConfig
+    ) -> VirtualSensorConfig | None:
         """Update a sensor configuration."""
         if config.room_id not in self._data.get("sensor_configs", {}):
             return None
@@ -416,4 +430,5 @@ class FloorPlanStore:
     def _generate_id(self) -> str:
         """Generate a unique ID."""
         import uuid
+
         return uuid.uuid4().hex[:8]

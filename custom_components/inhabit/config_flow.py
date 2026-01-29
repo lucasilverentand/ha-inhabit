@@ -1,4 +1,5 @@
 """Config flow for Inhabit Floor Plan Builder."""
+
 from __future__ import annotations
 
 import logging
@@ -66,11 +67,15 @@ class InhabitOptionsFlow:
                 {
                     vol.Optional(
                         "default_motion_timeout",
-                        default=self.config_entry.options.get("default_motion_timeout", 120),
+                        default=self.config_entry.options.get(
+                            "default_motion_timeout", 120
+                        ),
                     ): vol.All(vol.Coerce(int), vol.Range(min=10, max=600)),
                     vol.Optional(
                         "default_checking_timeout",
-                        default=self.config_entry.options.get("default_checking_timeout", 30),
+                        default=self.config_entry.options.get(
+                            "default_checking_timeout", 30
+                        ),
                     ): vol.All(vol.Coerce(int), vol.Range(min=5, max=120)),
                     vol.Optional(
                         "default_grid_size",

@@ -1,4 +1,5 @@
 """Inhabit Floor Plan Builder integration for Home Assistant."""
+
 from __future__ import annotations
 
 import logging
@@ -8,10 +9,10 @@ from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.typing import ConfigType
 
-from .api import websocket as ws_api
 from .api import http as http_api
 from .api import services
-from .const import DOMAIN, PLATFORMS
+from .api import websocket as ws_api
+from .const import DOMAIN
 from .engine.virtual_sensor_engine import VirtualSensorEngine
 from .store import FloorPlanStore, ImageStore
 

@@ -1,9 +1,10 @@
 """Multi-sensor presence aggregation."""
+
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from homeassistant.const import STATE_ON

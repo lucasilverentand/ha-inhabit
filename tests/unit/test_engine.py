@@ -1,9 +1,11 @@
 """Unit tests for engine components."""
+
 from __future__ import annotations
 
+from datetime import datetime
+from unittest.mock import MagicMock
+
 import pytest
-from datetime import datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock, patch
 
 from custom_components.inhabit.const import OccupancyState
 from custom_components.inhabit.models.virtual_sensor import (
@@ -72,8 +74,12 @@ class TestVirtualSensorConfigAdvanced:
             room_id="room_1",
             floor_plan_id="fp_1",
             motion_sensors=[
-                SensorBinding(entity_id="binary_sensor.m1", sensor_type="motion", weight=1.0),
-                SensorBinding(entity_id="binary_sensor.m2", sensor_type="motion", weight=1.0),
+                SensorBinding(
+                    entity_id="binary_sensor.m1", sensor_type="motion", weight=1.0
+                ),
+                SensorBinding(
+                    entity_id="binary_sensor.m2", sensor_type="motion", weight=1.0
+                ),
             ],
         )
         ids = config.get_all_sensor_entity_ids()
@@ -87,7 +93,9 @@ class TestVirtualSensorConfigAdvanced:
             room_id="room_1",
             floor_plan_id="fp_1",
             presence_sensors=[
-                SensorBinding(entity_id="binary_sensor.p1", sensor_type="presence", weight=1.5),
+                SensorBinding(
+                    entity_id="binary_sensor.p1", sensor_type="presence", weight=1.5
+                ),
             ],
         )
         ids = config.get_all_sensor_entity_ids()
@@ -99,7 +107,9 @@ class TestVirtualSensorConfigAdvanced:
             room_id="room_1",
             floor_plan_id="fp_1",
             door_sensors=[
-                SensorBinding(entity_id="binary_sensor.d1", sensor_type="door", weight=1.0),
+                SensorBinding(
+                    entity_id="binary_sensor.d1", sensor_type="door", weight=1.0
+                ),
             ],
         )
         ids = config.get_all_sensor_entity_ids()
@@ -148,13 +158,19 @@ class TestVirtualSensorConfigAdvanced:
             checking_timeout=30,
             presence_timeout=300,
             motion_sensors=[
-                SensorBinding(entity_id="binary_sensor.m1", sensor_type="motion", weight=1.0),
+                SensorBinding(
+                    entity_id="binary_sensor.m1", sensor_type="motion", weight=1.0
+                ),
             ],
             presence_sensors=[
-                SensorBinding(entity_id="binary_sensor.p1", sensor_type="presence", weight=1.5),
+                SensorBinding(
+                    entity_id="binary_sensor.p1", sensor_type="presence", weight=1.5
+                ),
             ],
             door_sensors=[
-                SensorBinding(entity_id="binary_sensor.d1", sensor_type="door", weight=1.0),
+                SensorBinding(
+                    entity_id="binary_sensor.d1", sensor_type="door", weight=1.0
+                ),
             ],
             door_blocks_vacancy=True,
             door_open_resets_checking=True,
@@ -329,7 +345,11 @@ class TestOccupancyStateMachineScenarios:
         machine.set_state(OccupancyState.VACANT, "left")
 
         assert len(changes) == 3
-        assert changes == [OccupancyState.OCCUPIED, OccupancyState.CHECKING, OccupancyState.VACANT]
+        assert changes == [
+            OccupancyState.OCCUPIED,
+            OccupancyState.CHECKING,
+            OccupancyState.VACANT,
+        ]
 
     def test_inverted_sensor(self, mock_hass, basic_config):
         """Test inverted sensor logic."""

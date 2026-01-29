@@ -1,4 +1,7 @@
 """Data models for Inhabit Floor Plan Builder."""
+
+from .automation_rule import RuleAction, RuleCondition, VisualRule
+from .device_placement import DevicePlacement, SensorCoverage
 from .floor_plan import (
     BoundingBox,
     Coordinates,
@@ -10,9 +13,7 @@ from .floor_plan import (
     Wall,
     Window,
 )
-from .device_placement import DevicePlacement, SensorCoverage
 from .virtual_sensor import OccupancyStateData, VirtualSensorConfig
-from .automation_rule import RuleAction, RuleCondition, VisualRule
 
 __all__ = [
     "BoundingBox",

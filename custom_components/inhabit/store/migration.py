@@ -1,4 +1,5 @@
 """Schema migration utilities for Inhabit storage."""
+
 from __future__ import annotations
 
 import logging
@@ -7,7 +8,9 @@ from typing import Any
 _LOGGER = logging.getLogger(__name__)
 
 
-def migrate_data(data: dict[str, Any], from_version: int, to_version: int) -> dict[str, Any]:
+def migrate_data(
+    data: dict[str, Any], from_version: int, to_version: int
+) -> dict[str, Any]:
     """Migrate data between schema versions."""
     if from_version == to_version:
         return data

@@ -1,4 +1,5 @@
 """Export floor plans as Lovelace cards."""
+
 from __future__ import annotations
 
 import logging
@@ -21,9 +22,7 @@ class CardExporter:
         self.hass = hass
         self._store = store
 
-    def export_room_card(
-        self, floor_plan_id: str, room_id: str
-    ) -> dict[str, Any]:
+    def export_room_card(self, floor_plan_id: str, room_id: str) -> dict[str, Any]:
         """Export a single room as a Lovelace card."""
         floor_plan = self._store.get_floor_plan(floor_plan_id)
         if not floor_plan:
@@ -43,10 +42,12 @@ class CardExporter:
         entities = []
 
         # Add occupancy sensor
-        entities.append({
-            "entity": f"binary_sensor.fp_{room_id}_occupancy",
-            "name": "Occupancy",
-        })
+        entities.append(
+            {
+                "entity": f"binary_sensor.fp_{room_id}_occupancy",
+                "name": "Occupancy",
+            }
+        )
 
         # Add placed devices
         for device in devices:
@@ -85,21 +86,23 @@ class CardExporter:
             for room in floor.rooms:
                 if room.polygon.bounding_box:
                     center = room.polygon.bounding_box.center
-                    elements.append({
-                        "type": "state-label",
-                        "entity": f"binary_sensor.fp_{room.id}_occupancy",
-                        "style": {
-                            "left": f"{center.x}px",
-                            "top": f"{center.y}px",
-                            "transform": "translate(-50%, -50%)",
-                            "font-weight": "bold",
-                            "color": "white",
-                            "text-shadow": "1px 1px 2px black",
-                        },
-                        "tap_action": {
-                            "action": "more-info",
-                        },
-                    })
+                    elements.append(
+                        {
+                            "type": "state-label",
+                            "entity": f"binary_sensor.fp_{room.id}_occupancy",
+                            "style": {
+                                "left": f"{center.x}px",
+                                "top": f"{center.y}px",
+                                "transform": "translate(-50%, -50%)",
+                                "font-weight": "bold",
+                                "color": "white",
+                                "text-shadow": "1px 1px 2px black",
+                            },
+                            "tap_action": {
+                                "action": "more-info",
+                            },
+                        }
+                    )
 
             # Add device markers
             for device in collection.get_devices_on_floor(floor.id):
@@ -116,7 +119,11 @@ class CardExporter:
                         "transform": f"translate(-50%, -50%) rotate({device.rotation}deg)",
                     },
                     "tap_action": {
-                        "action": "toggle" if self._is_toggleable(device.entity_id) else "more-info",
+                        "action": (
+                            "toggle"
+                            if self._is_toggleable(device.entity_id)
+                            else "more-info"
+                        ),
                     },
                 }
 
@@ -162,11 +169,13 @@ class CardExporter:
         entities = []
 
         for room in rooms:
-            entities.append({
-                "entity": f"binary_sensor.fp_{room.id}_occupancy",
-                "name": room.name,
-                "secondary_info": "last-changed",
-            })
+            entities.append(
+                {
+                    "entity": f"binary_sensor.fp_{room.id}_occupancy",
+                    "name": room.name,
+                    "secondary_info": "last-changed",
+                }
+            )
 
         return {
             "type": "entities",
@@ -175,7 +184,9 @@ class CardExporter:
             "state_color": True,
         }
 
-    def export_yaml(self, floor_plan_id: str, card_type: str = "picture-elements") -> str:
+    def export_yaml(
+        self, floor_plan_id: str, card_type: str = "picture-elements"
+    ) -> str:
         """Export card configuration as YAML string."""
         if card_type == "summary":
             card = self.export_summary_card(floor_plan_id)

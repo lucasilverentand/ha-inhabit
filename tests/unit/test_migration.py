@@ -1,10 +1,14 @@
 """Unit tests for data migration."""
+
 from __future__ import annotations
 
-import pytest
 from copy import deepcopy
 
-from custom_components.inhabit.store.migration import migrate_data, _migrate_to_v2, MIGRATIONS
+from custom_components.inhabit.store.migration import (
+    MIGRATIONS,
+    _migrate_to_v2,
+    migrate_data,
+)
 
 
 class TestMigration:
@@ -56,9 +60,7 @@ class TestMigration:
                     "floors": [
                         {
                             "name": "Ground",
-                            "rooms": [
-                                {"id": "room_1", "name": "Living Room"}
-                            ],
+                            "rooms": [{"id": "room_1", "name": "Living Room"}],
                         }
                     ],
                 }
@@ -117,9 +119,7 @@ class TestMigration:
                     "floors": [
                         {
                             "name": "Ground",
-                            "rooms": [
-                                {"id": "room_1", "name": "Living Room"}
-                            ],
+                            "rooms": [{"id": "room_1", "name": "Living Room"}],
                         }
                     ],
                 }

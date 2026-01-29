@@ -1,9 +1,16 @@
 """Unit tests for FloorPlanStore."""
+
 from __future__ import annotations
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
+from custom_components.inhabit.models.automation_rule import (
+    RuleAction,
+    VisualRule,
+)
+from custom_components.inhabit.models.device_placement import DevicePlacement
 from custom_components.inhabit.models.floor_plan import (
     Coordinates,
     Door,
@@ -14,14 +21,9 @@ from custom_components.inhabit.models.floor_plan import (
     Wall,
     Window,
 )
-from custom_components.inhabit.models.device_placement import DevicePlacement
 from custom_components.inhabit.models.virtual_sensor import (
     SensorBinding,
     VirtualSensorConfig,
-)
-from custom_components.inhabit.models.automation_rule import (
-    RuleAction,
-    VisualRule,
 )
 from custom_components.inhabit.store.floor_plan_store import FloorPlanStore
 
@@ -239,12 +241,14 @@ class TestRoomOperations:
 
             room = Room(
                 name="Living Room",
-                polygon=Polygon(vertices=[
-                    Coordinates(0, 0),
-                    Coordinates(500, 0),
-                    Coordinates(500, 400),
-                    Coordinates(0, 400),
-                ]),
+                polygon=Polygon(
+                    vertices=[
+                        Coordinates(0, 0),
+                        Coordinates(500, 0),
+                        Coordinates(500, 400),
+                        Coordinates(0, 400),
+                    ]
+                ),
             )
             added = store.add_room(fp.id, floor.id, room)
 
@@ -265,8 +269,9 @@ class TestRoomOperations:
             fp = store.create_floor_plan(FloorPlan(name="House"))
             floor = store.add_floor(fp.id, Floor(name="Ground", level=0))
             room = store.add_room(
-                fp.id, floor.id,
-                Room(name="Room", polygon=Polygon(vertices=[Coordinates(0, 0)]))
+                fp.id,
+                floor.id,
+                Room(name="Room", polygon=Polygon(vertices=[Coordinates(0, 0)])),
             )
 
             room.name = "Updated Room"
@@ -290,8 +295,9 @@ class TestRoomOperations:
             fp = store.create_floor_plan(FloorPlan(name="House"))
             floor = store.add_floor(fp.id, Floor(name="Ground", level=0))
             room = store.add_room(
-                fp.id, floor.id,
-                Room(name="Room", polygon=Polygon(vertices=[Coordinates(0, 0)]))
+                fp.id,
+                floor.id,
+                Room(name="Room", polygon=Polygon(vertices=[Coordinates(0, 0)])),
             )
 
             deleted = store.delete_room(fp.id, room.id)
@@ -341,8 +347,7 @@ class TestDoorOperations:
             fp = store.create_floor_plan(FloorPlan(name="House"))
             floor = store.add_floor(fp.id, Floor(name="Ground", level=0))
             wall = store.add_wall(
-                fp.id, floor.id,
-                Wall(start=Coordinates(0, 0), end=Coordinates(500, 0))
+                fp.id, floor.id, Wall(start=Coordinates(0, 0), end=Coordinates(500, 0))
             )
 
             door = Door(
@@ -372,8 +377,7 @@ class TestWindowOperations:
             fp = store.create_floor_plan(FloorPlan(name="House"))
             floor = store.add_floor(fp.id, Floor(name="Ground", level=0))
             wall = store.add_wall(
-                fp.id, floor.id,
-                Wall(start=Coordinates(0, 0), end=Coordinates(500, 0))
+                fp.id, floor.id, Wall(start=Coordinates(0, 0), end=Coordinates(500, 0))
             )
 
             window = Window(
@@ -427,12 +431,18 @@ class TestDevicePlacementOperations:
             fp = store.create_floor_plan(FloorPlan(name="House"))
             floor = store.add_floor(fp.id, Floor(name="Ground", level=0))
 
-            store.place_device(fp.id, DevicePlacement(
-                entity_id="light.1", floor_id=floor.id, position=Coordinates(0, 0)
-            ))
-            store.place_device(fp.id, DevicePlacement(
-                entity_id="light.2", floor_id=floor.id, position=Coordinates(100, 0)
-            ))
+            store.place_device(
+                fp.id,
+                DevicePlacement(
+                    entity_id="light.1", floor_id=floor.id, position=Coordinates(0, 0)
+                ),
+            )
+            store.place_device(
+                fp.id,
+                DevicePlacement(
+                    entity_id="light.2", floor_id=floor.id, position=Coordinates(100, 0)
+                ),
+            )
 
             collection = store.get_device_placements(fp.id)
             assert len(collection.devices) == 2
@@ -449,9 +459,14 @@ class TestDevicePlacementOperations:
 
             fp = store.create_floor_plan(FloorPlan(name="House"))
             floor = store.add_floor(fp.id, Floor(name="Ground", level=0))
-            device = store.place_device(fp.id, DevicePlacement(
-                entity_id="light.test", floor_id=floor.id, position=Coordinates(0, 0)
-            ))
+            device = store.place_device(
+                fp.id,
+                DevicePlacement(
+                    entity_id="light.test",
+                    floor_id=floor.id,
+                    position=Coordinates(0, 0),
+                ),
+            )
 
             device.position = Coordinates(100, 100)
             device.rotation = 45
@@ -472,9 +487,14 @@ class TestDevicePlacementOperations:
 
             fp = store.create_floor_plan(FloorPlan(name="House"))
             floor = store.add_floor(fp.id, Floor(name="Ground", level=0))
-            device = store.place_device(fp.id, DevicePlacement(
-                entity_id="light.test", floor_id=floor.id, position=Coordinates(0, 0)
-            ))
+            device = store.place_device(
+                fp.id,
+                DevicePlacement(
+                    entity_id="light.test",
+                    floor_id=floor.id,
+                    position=Coordinates(0, 0),
+                ),
+            )
 
             removed = store.remove_device_placement(fp.id, device.id)
             assert removed is True
@@ -520,10 +540,12 @@ class TestSensorConfigOperations:
             store = FloorPlanStore(mock_hass)
             await store.async_load()
 
-            store.create_sensor_config(VirtualSensorConfig(
-                room_id="room_1",
-                floor_plan_id="fp_1",
-            ))
+            store.create_sensor_config(
+                VirtualSensorConfig(
+                    room_id="room_1",
+                    floor_plan_id="fp_1",
+                )
+            )
 
             retrieved = store.get_sensor_config("room_1")
             assert retrieved is not None
@@ -551,11 +573,13 @@ class TestSensorConfigOperations:
             store = FloorPlanStore(mock_hass)
             await store.async_load()
 
-            config = store.create_sensor_config(VirtualSensorConfig(
-                room_id="room_1",
-                floor_plan_id="fp_1",
-                motion_timeout=60,
-            ))
+            config = store.create_sensor_config(
+                VirtualSensorConfig(
+                    room_id="room_1",
+                    floor_plan_id="fp_1",
+                    motion_timeout=60,
+                )
+            )
 
             config.motion_timeout = 120
             updated = store.update_sensor_config(config)
@@ -572,10 +596,12 @@ class TestSensorConfigOperations:
             store = FloorPlanStore(mock_hass)
             await store.async_load()
 
-            store.create_sensor_config(VirtualSensorConfig(
-                room_id="room_1",
-                floor_plan_id="fp_1",
-            ))
+            store.create_sensor_config(
+                VirtualSensorConfig(
+                    room_id="room_1",
+                    floor_plan_id="fp_1",
+                )
+            )
 
             deleted = store.delete_sensor_config("room_1")
             assert deleted is True
@@ -627,26 +653,30 @@ class TestVisualRuleOperations:
             store = FloorPlanStore(mock_hass)
             await store.async_load()
 
-            store.create_visual_rule(VisualRule(
-                name="Rule 1",
-                description="",
-                floor_plan_id="fp_1",
-                trigger_type="room_occupancy",
-                trigger_room_id="room_1",
-                trigger_state="on",
-                conditions=[],
-                actions=[],
-            ))
-            store.create_visual_rule(VisualRule(
-                name="Rule 2",
-                description="",
-                floor_plan_id="fp_1",
-                trigger_type="room_occupancy",
-                trigger_room_id="room_2",
-                trigger_state="off",
-                conditions=[],
-                actions=[],
-            ))
+            store.create_visual_rule(
+                VisualRule(
+                    name="Rule 1",
+                    description="",
+                    floor_plan_id="fp_1",
+                    trigger_type="room_occupancy",
+                    trigger_room_id="room_1",
+                    trigger_state="on",
+                    conditions=[],
+                    actions=[],
+                )
+            )
+            store.create_visual_rule(
+                VisualRule(
+                    name="Rule 2",
+                    description="",
+                    floor_plan_id="fp_1",
+                    trigger_type="room_occupancy",
+                    trigger_room_id="room_2",
+                    trigger_state="off",
+                    conditions=[],
+                    actions=[],
+                )
+            )
 
             rules = store.get_visual_rules("fp_1")
             assert len(rules) == 2
@@ -661,16 +691,18 @@ class TestVisualRuleOperations:
             store = FloorPlanStore(mock_hass)
             await store.async_load()
 
-            rule = store.create_visual_rule(VisualRule(
-                name="To Delete",
-                description="",
-                floor_plan_id="fp_1",
-                trigger_type="room_occupancy",
-                trigger_room_id="room_1",
-                trigger_state="on",
-                conditions=[],
-                actions=[],
-            ))
+            rule = store.create_visual_rule(
+                VisualRule(
+                    name="To Delete",
+                    description="",
+                    floor_plan_id="fp_1",
+                    trigger_type="room_occupancy",
+                    trigger_room_id="room_1",
+                    trigger_state="on",
+                    conditions=[],
+                    actions=[],
+                )
+            )
 
             deleted = store.delete_visual_rule(rule.id)
             assert deleted is True

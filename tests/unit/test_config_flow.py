@@ -1,7 +1,6 @@
 """Unit tests for config flow."""
-from __future__ import annotations
 
-import pytest
+from __future__ import annotations
 
 from custom_components.inhabit.const import DOMAIN
 

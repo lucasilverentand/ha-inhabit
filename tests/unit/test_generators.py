@@ -1,22 +1,29 @@
 """Unit tests for automation and card generators."""
+
 from __future__ import annotations
 
-import pytest
 from unittest.mock import MagicMock
 
-from custom_components.inhabit.generators.automation_generator import AutomationGenerator
+import pytest
+
+from custom_components.inhabit.generators.automation_generator import (
+    AutomationGenerator,
+)
 from custom_components.inhabit.generators.card_exporter import CardExporter
 from custom_components.inhabit.models.automation_rule import (
-    VisualRule,
-    RuleCondition,
     RuleAction,
-)
-from custom_components.inhabit.models.floor_plan import (
-    FloorPlan, Floor, Room, Polygon, Coordinates as FPCoordinates, BoundingBox,
+    VisualRule,
 )
 from custom_components.inhabit.models.device_placement import (
-    DevicePlacement,
     Coordinates,
+    DevicePlacement,
+)
+from custom_components.inhabit.models.floor_plan import Coordinates as FPCoordinates
+from custom_components.inhabit.models.floor_plan import (
+    Floor,
+    FloorPlan,
+    Polygon,
+    Room,
 )
 
 
@@ -51,7 +58,10 @@ class TestAutomationGenerator:
         assert automation["mode"] == "single"
         assert len(automation["trigger"]) == 1
         assert automation["trigger"][0]["platform"] == "state"
-        assert automation["trigger"][0]["entity_id"] == "binary_sensor.fp_living_room_occupancy"
+        assert (
+            automation["trigger"][0]["entity_id"]
+            == "binary_sensor.fp_living_room_occupancy"
+        )
         assert automation["trigger"][0]["to"] == "on"
         assert len(automation["action"]) == 1
         assert automation["action"][0]["service"] == "light.turn_on"

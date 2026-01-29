@@ -1,4 +1,5 @@
 """Generate Home Assistant automations from visual rules."""
+
 from __future__ import annotations
 
 import logging
@@ -89,10 +90,12 @@ class AutomationGenerator:
         # Add actions for each target entity
         for entity_id in target_entity_ids:
             domain = entity_id.split(".")[0]
-            automation["action"].append({
-                "service": f"{domain}.{action}",
-                "target": {"entity_id": entity_id},
-            })
+            automation["action"].append(
+                {
+                    "service": f"{domain}.{action}",
+                    "target": {"entity_id": entity_id},
+                }
+            )
 
         return automation
 

@@ -1,4 +1,5 @@
 """Constants for the Inhabit Floor Plan Builder integration."""
+
 from typing import Final
 
 DOMAIN: Final = "inhabit"
@@ -10,21 +11,26 @@ STORAGE_VERSION: Final = 1
 # Platform types
 PLATFORMS: Final = ["binary_sensor"]
 
+
 # Occupancy states
 class OccupancyState:
     """Occupancy state machine states."""
+
     VACANT: Final = "vacant"
     OCCUPIED: Final = "occupied"
     CHECKING: Final = "checking"
+
 
 # Default timing (seconds)
 DEFAULT_CHECKING_TIMEOUT: Final = 30
 DEFAULT_MOTION_TIMEOUT: Final = 120
 DEFAULT_PRESENCE_TIMEOUT: Final = 300
 
+
 # Device categories
 class DeviceCategory:
     """Device category constants."""
+
     LIGHT: Final = "light"
     SWITCH: Final = "switch"
     SENSOR: Final = "sensor"
@@ -36,6 +42,7 @@ class DeviceCategory:
     MEDIA_PLAYER: Final = "media_player"
     VACUUM: Final = "vacuum"
     LOCK: Final = "lock"
+
 
 # Sensor types for occupancy detection
 MOTION_SENSOR_CLASSES: Final = ["motion", "occupancy", "presence"]

@@ -1,15 +1,17 @@
 """Unit tests for device placement models."""
+
 from __future__ import annotations
 
 import pytest
 
 from custom_components.inhabit.models.device_placement import (
-    SensorCoverage,
+    Coordinates,
     DevicePlacement,
     DevicePlacementCollection,
-    Coordinates,
+    SensorCoverage,
 )
-from custom_components.inhabit.models.floor_plan import Polygon, Coordinates as FPCoordinates
+from custom_components.inhabit.models.floor_plan import Coordinates as FPCoordinates
+from custom_components.inhabit.models.floor_plan import Polygon
 
 
 class TestSensorCoverage:
@@ -51,12 +53,14 @@ class TestSensorCoverage:
 
     def test_polygon_coverage(self):
         """Test polygon coverage type."""
-        polygon = Polygon(vertices=[
-            FPCoordinates(0, 0),
-            FPCoordinates(100, 0),
-            FPCoordinates(100, 100),
-            FPCoordinates(0, 100),
-        ])
+        polygon = Polygon(
+            vertices=[
+                FPCoordinates(0, 0),
+                FPCoordinates(100, 0),
+                FPCoordinates(100, 100),
+                FPCoordinates(0, 100),
+            ]
+        )
         coverage = SensorCoverage(
             type="polygon",
             polygon=polygon,
@@ -84,11 +88,13 @@ class TestSensorCoverage:
 
     def test_to_dict_with_polygon(self):
         """Test serialization with polygon."""
-        polygon = Polygon(vertices=[
-            FPCoordinates(0, 0),
-            FPCoordinates(50, 0),
-            FPCoordinates(50, 50),
-        ])
+        polygon = Polygon(
+            vertices=[
+                FPCoordinates(0, 0),
+                FPCoordinates(50, 0),
+                FPCoordinates(50, 50),
+            ]
+        )
         coverage = SensorCoverage(type="polygon", polygon=polygon)
         data = coverage.to_dict()
 

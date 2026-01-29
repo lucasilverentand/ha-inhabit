@@ -1,8 +1,9 @@
 """Virtual sensor engine that manages all room occupancy state machines."""
+
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING
 
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_send
@@ -67,7 +68,7 @@ class VirtualSensorEngine:
         self._running = False
 
         # Stop all state machines
-        for room_id, machine in list(self._state_machines.items()):
+        for _room_id, machine in list(self._state_machines.items()):
             await machine.async_stop()
 
         self._state_machines.clear()
@@ -98,9 +99,7 @@ class VirtualSensorEngine:
     async def async_add_room(self, config: VirtualSensorConfig) -> None:
         """Add a new room to the engine."""
         if config.room_id in self._state_machines:
-            _LOGGER.warning(
-                "State machine already exists for room %s", config.room_id
-            )
+            _LOGGER.warning("State machine already exists for room %s", config.room_id)
             return
 
         if config.enabled:
@@ -130,8 +129,7 @@ class VirtualSensorEngine:
     def get_all_states(self) -> dict[str, OccupancyStateData]:
         """Get all room states."""
         return {
-            room_id: machine.state
-            for room_id, machine in self._state_machines.items()
+            room_id: machine.state for room_id, machine in self._state_machines.items()
         }
 
     def set_room_occupancy(self, room_id: str, state: str) -> bool:

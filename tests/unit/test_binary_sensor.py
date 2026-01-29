@@ -1,9 +1,8 @@
 """Unit tests for virtual occupancy binary sensor."""
+
 from __future__ import annotations
 
-import pytest
 from datetime import datetime
-from unittest.mock import MagicMock, AsyncMock, patch
 
 from custom_components.inhabit.const import (
     ATTR_CONFIDENCE,
@@ -63,15 +62,24 @@ class TestOccupancyStateDataForSensor:
         """Test which states should report is_on=True for sensor."""
         # VACANT should be False
         vacant_state = OccupancyStateData(state=OccupancyState.VACANT)
-        assert vacant_state.state not in (OccupancyState.OCCUPIED, OccupancyState.CHECKING)
+        assert vacant_state.state not in (
+            OccupancyState.OCCUPIED,
+            OccupancyState.CHECKING,
+        )
 
         # OCCUPIED should be True
         occupied_state = OccupancyStateData(state=OccupancyState.OCCUPIED)
-        assert occupied_state.state in (OccupancyState.OCCUPIED, OccupancyState.CHECKING)
+        assert occupied_state.state in (
+            OccupancyState.OCCUPIED,
+            OccupancyState.CHECKING,
+        )
 
         # CHECKING should also be True (still considered occupied)
         checking_state = OccupancyStateData(state=OccupancyState.CHECKING)
-        assert checking_state.state in (OccupancyState.OCCUPIED, OccupancyState.CHECKING)
+        assert checking_state.state in (
+            OccupancyState.OCCUPIED,
+            OccupancyState.CHECKING,
+        )
 
 
 class TestSensorAttributes:

@@ -1,4 +1,5 @@
 """Virtual occupancy sensor entity."""
+
 from __future__ import annotations
 
 import logging
@@ -36,7 +37,6 @@ async def async_setup_entry(
 ) -> None:
     """Set up virtual occupancy sensors from a config entry."""
     store = hass.data[DOMAIN]["store"]
-    sensor_engine = hass.data[DOMAIN]["sensor_engine"]
 
     # Create entities for all existing rooms
     entities: list[VirtualOccupancySensor] = []
@@ -68,15 +68,17 @@ async def async_setup_entry(
             result = floor_plan.get_room(room_id)
             if result:
                 floor, room = result
-                async_add_entities([
-                    VirtualOccupancySensor(
-                        hass,
-                        floor_plan.id,
-                        floor_plan.name,
-                        room.id,
-                        room.name,
-                    )
-                ])
+                async_add_entities(
+                    [
+                        VirtualOccupancySensor(
+                            hass,
+                            floor_plan.id,
+                            floor_plan.name,
+                            room.id,
+                            room.name,
+                        )
+                    ]
+                )
                 _LOGGER.info("Added virtual occupancy sensor for room %s", room.name)
                 return
 
@@ -167,9 +169,7 @@ class VirtualOccupancySensor(BinarySensorEntity):
         )
 
     @callback
-    def _handle_state_change(
-        self, room_id: str, state: OccupancyStateData
-    ) -> None:
+    def _handle_state_change(self, room_id: str, state: OccupancyStateData) -> None:
         """Handle state change from the sensor engine."""
         if room_id != self._room_id:
             return

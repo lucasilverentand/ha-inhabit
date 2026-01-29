@@ -1,11 +1,11 @@
 """Fake house simulator for testing occupancy scenarios."""
+
 from __future__ import annotations
 
-import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime
 from enum import Enum
-from typing import Any, Callable
+from typing import Any
 from unittest.mock import MagicMock
 
 from homeassistant.const import STATE_OFF, STATE_ON
@@ -84,38 +84,52 @@ class FakeHouseSimulator:
     def _setup_house(self) -> None:
         """Set up the fake house structure."""
         # Basement
-        self._add_room("basement_utility", "Utility Room", "basement", ["basement_garage"])
-        self._add_room("basement_garage", "Garage", "basement", ["basement_utility", "ground_hallway"])
+        self._add_room(
+            "basement_utility", "Utility Room", "basement", ["basement_garage"]
+        )
+        self._add_room(
+            "basement_garage",
+            "Garage",
+            "basement",
+            ["basement_utility", "ground_hallway"],
+        )
 
         # Ground Floor
         self._add_room(
-            "ground_living", "Living Room", "ground",
-            ["ground_hallway", "ground_kitchen"]
+            "ground_living",
+            "Living Room",
+            "ground",
+            ["ground_hallway", "ground_kitchen"],
         )
         self._add_room(
-            "ground_kitchen", "Kitchen", "ground",
-            ["ground_living", "ground_hallway"]
+            "ground_kitchen", "Kitchen", "ground", ["ground_living", "ground_hallway"]
         )
         self._add_room(
-            "ground_hallway", "Hallway", "ground",
-            ["ground_living", "ground_kitchen", "ground_bathroom", "first_hallway", "basement_garage"]
+            "ground_hallway",
+            "Hallway",
+            "ground",
+            [
+                "ground_living",
+                "ground_kitchen",
+                "ground_bathroom",
+                "first_hallway",
+                "basement_garage",
+            ],
         )
         self._add_room("ground_bathroom", "Bathroom", "ground", ["ground_hallway"])
 
         # First Floor
+        self._add_room("first_bedroom1", "Master Bedroom", "first", ["first_hallway"])
+        self._add_room("first_bedroom2", "Bedroom 2", "first", ["first_hallway"])
         self._add_room(
-            "first_bedroom1", "Master Bedroom", "first",
-            ["first_hallway"]
+            "first_hallway",
+            "Upstairs Hallway",
+            "first",
+            ["first_bedroom1", "first_bedroom2", "first_bathroom", "ground_hallway"],
         )
         self._add_room(
-            "first_bedroom2", "Bedroom 2", "first",
-            ["first_hallway"]
+            "first_bathroom", "Upstairs Bathroom", "first", ["first_hallway"]
         )
-        self._add_room(
-            "first_hallway", "Upstairs Hallway", "first",
-            ["first_bedroom1", "first_bedroom2", "first_bathroom", "ground_hallway"]
-        )
-        self._add_room("first_bathroom", "Upstairs Bathroom", "first", ["first_hallway"])
 
         # Add door sensors between connected rooms
         self._add_door_sensors()
@@ -217,7 +231,9 @@ class FakeHouseSimulator:
         for callback in self._state_change_callbacks:
             callback(entity_id, state)
 
-    def on_state_change(self, callback: Callable[[str, str], None]) -> Callable[[], None]:
+    def on_state_change(
+        self, callback: Callable[[str, str], None]
+    ) -> Callable[[], None]:
         """Register a callback for state changes. Returns unsubscribe function."""
         self._state_change_callbacks.append(callback)
         return lambda: self._state_change_callbacks.remove(callback)

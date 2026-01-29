@@ -1,4 +1,5 @@
 """HTTP endpoints for Inhabit Floor Plan Builder."""
+
 from __future__ import annotations
 
 import logging
@@ -64,10 +65,12 @@ class ImageUploadView(HomeAssistantView):
                 status=400,
             )
 
-        return web.json_response({
-            "id": image_id,
-            "url": image_store.get_image_url(image_id),
-        })
+        return web.json_response(
+            {
+                "id": image_id,
+                "url": image_store.get_image_url(image_id),
+            }
+        )
 
 
 class ImageListView(HomeAssistantView):

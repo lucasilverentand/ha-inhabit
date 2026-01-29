@@ -1,9 +1,17 @@
 """Comprehensive unit tests for all data models."""
+
 from __future__ import annotations
 
-import pytest
-from datetime import datetime
-
+from custom_components.inhabit.const import OccupancyState
+from custom_components.inhabit.models.automation_rule import (
+    RuleAction,
+    RuleCondition,
+    VisualRule,
+)
+from custom_components.inhabit.models.device_placement import (
+    DevicePlacement,
+    DevicePlacementCollection,
+)
 from custom_components.inhabit.models.floor_plan import (
     BoundingBox,
     Coordinates,
@@ -15,22 +23,11 @@ from custom_components.inhabit.models.floor_plan import (
     Wall,
     Window,
 )
-from custom_components.inhabit.models.device_placement import (
-    DevicePlacement,
-    DevicePlacementCollection,
-    SensorCoverage,
-)
 from custom_components.inhabit.models.virtual_sensor import (
     OccupancyStateData,
     SensorBinding,
     VirtualSensorConfig,
 )
-from custom_components.inhabit.models.automation_rule import (
-    RuleAction,
-    RuleCondition,
-    VisualRule,
-)
-from custom_components.inhabit.const import OccupancyState
 
 
 class TestCoordinates:
@@ -91,7 +88,9 @@ class TestBoundingBox:
 
     def test_from_dict(self):
         """Test deserialization."""
-        bb = BoundingBox.from_dict({"min_x": 10, "min_y": 20, "max_x": 110, "max_y": 70})
+        bb = BoundingBox.from_dict(
+            {"min_x": 10, "min_y": 20, "max_x": 110, "max_y": 70}
+        )
         assert bb.min_x == 10
         assert bb.min_y == 20
 
@@ -284,12 +283,14 @@ class TestRoom:
         """Test basic creation."""
         room = Room(
             name="Living Room",
-            polygon=Polygon(vertices=[
-                Coordinates(0, 0),
-                Coordinates(500, 0),
-                Coordinates(500, 400),
-                Coordinates(0, 400),
-            ]),
+            polygon=Polygon(
+                vertices=[
+                    Coordinates(0, 0),
+                    Coordinates(500, 0),
+                    Coordinates(500, 400),
+                    Coordinates(0, 400),
+                ]
+            ),
         )
         assert room.name == "Living Room"
 
@@ -446,12 +447,14 @@ class TestFloorPlan:
         room = Room(
             id="room_1",
             name="Living Room",
-            polygon=Polygon(vertices=[
-                Coordinates(0, 0),
-                Coordinates(100, 0),
-                Coordinates(100, 100),
-                Coordinates(0, 100),
-            ]),
+            polygon=Polygon(
+                vertices=[
+                    Coordinates(0, 0),
+                    Coordinates(100, 0),
+                    Coordinates(100, 100),
+                    Coordinates(0, 100),
+                ]
+            ),
             occupancy_sensor_enabled=True,
         )
         floor = Floor(id="floor_1", name="Ground", level=0, rooms=[room])
@@ -597,14 +600,24 @@ class TestVirtualSensorConfig:
             room_id="room_1",
             floor_plan_id="fp_1",
             motion_sensors=[
-                SensorBinding(entity_id="binary_sensor.motion1", sensor_type="motion", weight=1.0),
-                SensorBinding(entity_id="binary_sensor.motion2", sensor_type="motion", weight=1.0),
+                SensorBinding(
+                    entity_id="binary_sensor.motion1", sensor_type="motion", weight=1.0
+                ),
+                SensorBinding(
+                    entity_id="binary_sensor.motion2", sensor_type="motion", weight=1.0
+                ),
             ],
             presence_sensors=[
-                SensorBinding(entity_id="binary_sensor.presence1", sensor_type="presence", weight=1.5),
+                SensorBinding(
+                    entity_id="binary_sensor.presence1",
+                    sensor_type="presence",
+                    weight=1.5,
+                ),
             ],
             door_sensors=[
-                SensorBinding(entity_id="binary_sensor.door1", sensor_type="door", weight=1.0),
+                SensorBinding(
+                    entity_id="binary_sensor.door1", sensor_type="door", weight=1.0
+                ),
             ],
         )
         ids = config.get_all_sensor_entity_ids()

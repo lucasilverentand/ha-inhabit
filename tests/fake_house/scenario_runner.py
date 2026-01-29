@@ -1,10 +1,12 @@
 """Scenario runner for testing occupancy scenarios."""
+
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Callable
+from typing import Any
 
 from homeassistant.const import STATE_OFF, STATE_ON
 
@@ -52,9 +54,7 @@ class ScenarioRunner:
         self._assertions_passed = 0
         self._assertions_failed = 0
 
-    def set_occupancy_callback(
-        self, callback: Callable[[str, str], None]
-    ) -> None:
+    def set_occupancy_callback(self, callback: Callable[[str, str], None]) -> None:
         """Set callback to track occupancy state changes."""
         # This would be connected to the virtual sensor engine
         pass
@@ -89,7 +89,9 @@ class ScenarioRunner:
             "success": self._assertions_failed == 0,
         }
 
-        print(f"\nResults: {self._assertions_passed} passed, {self._assertions_failed} failed")
+        print(
+            f"\nResults: {self._assertions_passed} passed, {self._assertions_failed} failed"
+        )
         return results
 
     async def _execute_action(self, action: ScenarioAction) -> None:
@@ -122,9 +124,7 @@ class ScenarioRunner:
             expected = params["expected"]
             actual = self.simulator.sensors[entity_id].state
             if actual != expected:
-                raise AssertionError(
-                    f"{entity_id}: expected {expected}, got {actual}"
-                )
+                raise AssertionError(f"{entity_id}: expected {expected}, got {actual}")
             self._assertions_passed += 1
 
         elif action.action_type == ActionType.ASSERT_OCCUPANCY:
@@ -152,11 +152,17 @@ class ScenarioRunner:
                     ScenarioAction(ActionType.WAIT, {"seconds": 0.1}),
                     ScenarioAction(
                         ActionType.ASSERT_STATE,
-                        {"entity_id": "binary_sensor.ground_living_motion", "expected": STATE_ON},
+                        {
+                            "entity_id": "binary_sensor.ground_living_motion",
+                            "expected": STATE_ON,
+                        },
                     ),
                     ScenarioAction(
                         ActionType.ASSERT_STATE,
-                        {"entity_id": "binary_sensor.ground_living_presence", "expected": STATE_ON},
+                        {
+                            "entity_id": "binary_sensor.ground_living_presence",
+                            "expected": STATE_ON,
+                        },
                     ),
                     ScenarioAction(
                         ActionType.PERSON_STILL,
@@ -165,11 +171,17 @@ class ScenarioRunner:
                     ScenarioAction(ActionType.WAIT, {"seconds": 0.1}),
                     ScenarioAction(
                         ActionType.ASSERT_STATE,
-                        {"entity_id": "binary_sensor.ground_living_motion", "expected": STATE_OFF},
+                        {
+                            "entity_id": "binary_sensor.ground_living_motion",
+                            "expected": STATE_OFF,
+                        },
                     ),
                     ScenarioAction(
                         ActionType.ASSERT_STATE,
-                        {"entity_id": "binary_sensor.ground_living_presence", "expected": STATE_ON},
+                        {
+                            "entity_id": "binary_sensor.ground_living_presence",
+                            "expected": STATE_ON,
+                        },
                     ),
                 ],
             ),
@@ -189,11 +201,17 @@ class ScenarioRunner:
                     ScenarioAction(ActionType.WAIT, {"seconds": 0.1}),
                     ScenarioAction(
                         ActionType.ASSERT_STATE,
-                        {"entity_id": "binary_sensor.ground_kitchen_motion", "expected": STATE_ON},
+                        {
+                            "entity_id": "binary_sensor.ground_kitchen_motion",
+                            "expected": STATE_ON,
+                        },
                     ),
                     ScenarioAction(
                         ActionType.ASSERT_STATE,
-                        {"entity_id": "binary_sensor.ground_kitchen_presence", "expected": STATE_ON},
+                        {
+                            "entity_id": "binary_sensor.ground_kitchen_presence",
+                            "expected": STATE_ON,
+                        },
                     ),
                 ],
             ),
@@ -213,11 +231,17 @@ class ScenarioRunner:
                     ScenarioAction(ActionType.WAIT, {"seconds": 0.1}),
                     ScenarioAction(
                         ActionType.ASSERT_STATE,
-                        {"entity_id": "binary_sensor.ground_living_motion", "expected": STATE_OFF},
+                        {
+                            "entity_id": "binary_sensor.ground_living_motion",
+                            "expected": STATE_OFF,
+                        },
                     ),
                     ScenarioAction(
                         ActionType.ASSERT_STATE,
-                        {"entity_id": "binary_sensor.ground_living_presence", "expected": STATE_OFF},
+                        {
+                            "entity_id": "binary_sensor.ground_living_presence",
+                            "expected": STATE_OFF,
+                        },
                     ),
                 ],
             ),
@@ -258,7 +282,10 @@ class ScenarioRunner:
                     ScenarioAction(ActionType.WAIT, {"seconds": 0.1}),
                     ScenarioAction(
                         ActionType.ASSERT_STATE,
-                        {"entity_id": "binary_sensor.first_bedroom1_motion", "expected": STATE_ON},
+                        {
+                            "entity_id": "binary_sensor.first_bedroom1_motion",
+                            "expected": STATE_ON,
+                        },
                     ),
                 ],
             ),
@@ -268,20 +295,32 @@ class ScenarioRunner:
                 actions=[
                     ScenarioAction(
                         ActionType.SET_SENSOR,
-                        {"entity_id": "binary_sensor.ground_living_motion", "state": STATE_ON},
+                        {
+                            "entity_id": "binary_sensor.ground_living_motion",
+                            "state": STATE_ON,
+                        },
                     ),
                     ScenarioAction(
                         ActionType.SET_SENSOR,
-                        {"entity_id": "binary_sensor.ground_kitchen_motion", "state": STATE_ON},
+                        {
+                            "entity_id": "binary_sensor.ground_kitchen_motion",
+                            "state": STATE_ON,
+                        },
                     ),
                     ScenarioAction(ActionType.WAIT, {"seconds": 0.1}),
                     ScenarioAction(
                         ActionType.ASSERT_STATE,
-                        {"entity_id": "binary_sensor.ground_living_motion", "expected": STATE_ON},
+                        {
+                            "entity_id": "binary_sensor.ground_living_motion",
+                            "expected": STATE_ON,
+                        },
                     ),
                     ScenarioAction(
                         ActionType.ASSERT_STATE,
-                        {"entity_id": "binary_sensor.ground_kitchen_motion", "expected": STATE_ON},
+                        {
+                            "entity_id": "binary_sensor.ground_kitchen_motion",
+                            "expected": STATE_ON,
+                        },
                     ),
                 ],
             ),

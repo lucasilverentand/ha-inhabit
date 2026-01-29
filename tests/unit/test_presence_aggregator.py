@@ -1,9 +1,11 @@
 """Unit tests for presence aggregator."""
+
 from __future__ import annotations
 
-import pytest
-from datetime import datetime, timedelta
+from datetime import datetime
 from unittest.mock import MagicMock
+
+import pytest
 
 from custom_components.inhabit.engine.presence_aggregator import (
     PresenceAggregator,
@@ -60,15 +62,21 @@ class TestPresenceAggregator:
     def motion_bindings(self):
         """Create motion sensor bindings."""
         return [
-            SensorBinding(entity_id="binary_sensor.motion1", sensor_type="motion", weight=1.0),
-            SensorBinding(entity_id="binary_sensor.motion2", sensor_type="motion", weight=1.0),
+            SensorBinding(
+                entity_id="binary_sensor.motion1", sensor_type="motion", weight=1.0
+            ),
+            SensorBinding(
+                entity_id="binary_sensor.motion2", sensor_type="motion", weight=1.0
+            ),
         ]
 
     @pytest.fixture
     def presence_bindings(self):
         """Create presence sensor bindings."""
         return [
-            SensorBinding(entity_id="binary_sensor.presence1", sensor_type="presence", weight=1.5),
+            SensorBinding(
+                entity_id="binary_sensor.presence1", sensor_type="presence", weight=1.5
+            ),
         ]
 
     @pytest.fixture
@@ -281,10 +289,14 @@ class TestPresenceAggregatorRefreshFromState:
     def test_refresh_updates_readings(self, mock_hass):
         """Test that refresh updates readings from state."""
         motion_bindings = [
-            SensorBinding(entity_id="binary_sensor.motion", sensor_type="motion", weight=1.0),
+            SensorBinding(
+                entity_id="binary_sensor.motion", sensor_type="motion", weight=1.0
+            ),
         ]
         presence_bindings = [
-            SensorBinding(entity_id="binary_sensor.presence", sensor_type="presence", weight=1.5),
+            SensorBinding(
+                entity_id="binary_sensor.presence", sensor_type="presence", weight=1.5
+            ),
         ]
 
         # Mock states
@@ -312,7 +324,9 @@ class TestPresenceAggregatorRefreshFromState:
     def test_refresh_handles_missing_state(self, mock_hass):
         """Test that refresh handles missing entity states gracefully."""
         motion_bindings = [
-            SensorBinding(entity_id="binary_sensor.missing", sensor_type="motion", weight=1.0),
+            SensorBinding(
+                entity_id="binary_sensor.missing", sensor_type="motion", weight=1.0
+            ),
         ]
 
         mock_hass.states.get.return_value = None

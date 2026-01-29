@@ -1,4 +1,5 @@
 """WebSocket API for Inhabit Floor Plan Builder."""
+
 from __future__ import annotations
 
 import logging
@@ -11,7 +12,16 @@ from homeassistant.core import HomeAssistant, callback
 from ..const import DOMAIN, WS_PREFIX
 from ..models.automation_rule import VisualRule
 from ..models.device_placement import DevicePlacement
-from ..models.floor_plan import Coordinates, Door, Floor, FloorPlan, Polygon, Room, Wall, Window
+from ..models.floor_plan import (
+    Coordinates,
+    Door,
+    Floor,
+    FloorPlan,
+    Polygon,
+    Room,
+    Wall,
+    Window,
+)
 from ..models.virtual_sensor import SensorBinding, VirtualSensorConfig
 
 _LOGGER = logging.getLogger(__name__)
@@ -679,9 +689,13 @@ def ws_sensor_config_update(
     if "presence_timeout" in msg:
         config.presence_timeout = msg["presence_timeout"]
     if "motion_sensors" in msg:
-        config.motion_sensors = [SensorBinding.from_dict(s) for s in msg["motion_sensors"]]
+        config.motion_sensors = [
+            SensorBinding.from_dict(s) for s in msg["motion_sensors"]
+        ]
     if "presence_sensors" in msg:
-        config.presence_sensors = [SensorBinding.from_dict(s) for s in msg["presence_sensors"]]
+        config.presence_sensors = [
+            SensorBinding.from_dict(s) for s in msg["presence_sensors"]
+        ]
     if "door_sensors" in msg:
         config.door_sensors = [SensorBinding.from_dict(s) for s in msg["door_sensors"]]
     if "door_blocks_vacancy" in msg:
@@ -696,7 +710,9 @@ def ws_sensor_config_update(
         hass.async_create_task(sensor_engine.async_update_room(config))
         connection.send_result(msg["id"], result.to_dict())
     else:
-        connection.send_error(msg["id"], "update_failed", "Failed to update sensor config")
+        connection.send_error(
+            msg["id"], "update_failed", "Failed to update sensor config"
+        )
 
 
 # ==================== Visual Rules ====================
@@ -746,21 +762,23 @@ def ws_rules_create(
 ) -> None:
     """Create a visual rule."""
     store = hass.data[DOMAIN]["store"]
-    rule = VisualRule.from_dict({
-        "floor_plan_id": msg["floor_plan_id"],
-        "name": msg["name"],
-        "description": msg.get("description", ""),
-        "trigger_type": msg["trigger_type"],
-        "trigger_room_id": msg.get("trigger_room_id"),
-        "trigger_entity_id": msg.get("trigger_entity_id"),
-        "trigger_state": msg.get("trigger_state"),
-        "trigger_for": msg.get("trigger_for"),
-        "conditions": msg.get("conditions", []),
-        "actions": msg.get("actions", []),
-        "source_room_id": msg.get("source_room_id"),
-        "target_entity_ids": msg.get("target_entity_ids", []),
-        "color": msg.get("color", "#3b82f6"),
-    })
+    rule = VisualRule.from_dict(
+        {
+            "floor_plan_id": msg["floor_plan_id"],
+            "name": msg["name"],
+            "description": msg.get("description", ""),
+            "trigger_type": msg["trigger_type"],
+            "trigger_room_id": msg.get("trigger_room_id"),
+            "trigger_entity_id": msg.get("trigger_entity_id"),
+            "trigger_state": msg.get("trigger_state"),
+            "trigger_for": msg.get("trigger_for"),
+            "conditions": msg.get("conditions", []),
+            "actions": msg.get("actions", []),
+            "source_room_id": msg.get("source_room_id"),
+            "target_entity_ids": msg.get("target_entity_ids", []),
+            "color": msg.get("color", "#3b82f6"),
+        }
+    )
     result = store.create_visual_rule(rule)
     connection.send_result(msg["id"], result.to_dict())
 
@@ -797,9 +815,21 @@ def ws_rules_update(
         connection.send_error(msg["id"], "not_found", "Rule not found")
         return
 
-    for key in ["name", "description", "enabled", "trigger_type", "trigger_room_id",
-                "trigger_entity_id", "trigger_state", "trigger_for", "conditions",
-                "actions", "source_room_id", "target_entity_ids", "color"]:
+    for key in [
+        "name",
+        "description",
+        "enabled",
+        "trigger_type",
+        "trigger_room_id",
+        "trigger_entity_id",
+        "trigger_state",
+        "trigger_for",
+        "conditions",
+        "actions",
+        "source_room_id",
+        "target_entity_ids",
+        "color",
+    ]:
         if key in msg:
             setattr(rule, key, msg[key])
 

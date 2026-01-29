@@ -1,4 +1,5 @@
 """Image storage for floor plan backgrounds."""
+
 from __future__ import annotations
 
 import hashlib
@@ -9,7 +10,7 @@ from typing import TYPE_CHECKING
 from homeassistant.core import HomeAssistant
 
 if TYPE_CHECKING:
-    from aiohttp import web
+    pass
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -49,9 +50,7 @@ class ImageStore:
             return f"/local/inhabit/images/{path.name}"
         return None
 
-    async def async_save_image(
-        self, content: bytes, filename: str
-    ) -> str | None:
+    async def async_save_image(self, content: bytes, filename: str) -> str | None:
         """Save an image and return its ID."""
         # Validate extension
         ext = Path(filename).suffix.lower()
@@ -98,11 +97,13 @@ class ImageStore:
                 for path in self._storage_path.iterdir():
                     if path.suffix.lower() in ALLOWED_EXTENSIONS:
                         image_id = path.stem
-                        images.append({
-                            "id": image_id,
-                            "filename": path.name,
-                            "url": f"/local/inhabit/images/{path.name}",
-                        })
+                        images.append(
+                            {
+                                "id": image_id,
+                                "filename": path.name,
+                                "url": f"/local/inhabit/images/{path.name}",
+                            }
+                        )
             return images
 
         return await self.hass.async_add_executor_job(_list)

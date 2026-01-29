@@ -1,4 +1,5 @@
 """Floor plan data models."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -240,7 +241,9 @@ class Room:
     occupancy_sensor_enabled: bool = True
     motion_timeout: int = 120  # Seconds before CHECKING state
     checking_timeout: int = 30  # Seconds in CHECKING before VACANT
-    connected_rooms: list[str] = field(default_factory=list)  # Room IDs connected via doors
+    connected_rooms: list[str] = field(
+        default_factory=list
+    )  # Room IDs connected via doors
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""

@@ -1,11 +1,10 @@
 """Unit tests for automation rule models."""
+
 from __future__ import annotations
 
-import pytest
-
 from custom_components.inhabit.models.automation_rule import (
-    RuleCondition,
     RuleAction,
+    RuleCondition,
     VisualRule,
 )
 
@@ -313,7 +312,11 @@ class TestVisualRule:
                 RuleCondition(type="time", after="18:00", before="23:00"),
             ],
             actions=[
-                RuleAction(type="service_call", service="light.turn_on", entity_id="light.living"),
+                RuleAction(
+                    type="service_call",
+                    service="light.turn_on",
+                    entity_id="light.living",
+                ),
             ],
             source_room_id="living_room",
             target_entity_ids=["light.living"],
@@ -351,7 +354,11 @@ class TestVisualRule:
             "trigger_state": "off",
             "conditions": [],
             "actions": [
-                {"type": "service_call", "service": "light.turn_off", "entity_id": "light.bedroom"},
+                {
+                    "type": "service_call",
+                    "service": "light.turn_off",
+                    "entity_id": "light.bedroom",
+                },
             ],
         }
         rule = VisualRule.from_dict(data)
@@ -370,7 +377,11 @@ class TestVisualRule:
             trigger_room_id="kitchen",
             trigger_state="on",
             actions=[
-                RuleAction(type="service_call", service="light.turn_on", entity_id="light.kitchen"),
+                RuleAction(
+                    type="service_call",
+                    service="light.turn_on",
+                    entity_id="light.kitchen",
+                ),
             ],
         )
         automation = rule.to_ha_automation()
@@ -378,7 +389,10 @@ class TestVisualRule:
         assert automation["alias"] == "Occupancy Light"
         assert automation["mode"] == "single"
         assert automation["trigger"][0]["platform"] == "state"
-        assert automation["trigger"][0]["entity_id"] == "binary_sensor.fp_kitchen_occupancy"
+        assert (
+            automation["trigger"][0]["entity_id"]
+            == "binary_sensor.fp_kitchen_occupancy"
+        )
         assert automation["trigger"][0]["to"] == "on"
         assert len(automation["action"]) == 1
 
@@ -392,7 +406,9 @@ class TestVisualRule:
             trigger_state="on",
             trigger_for=10,
             actions=[
-                RuleAction(type="service_call", service="light.turn_on", entity_id="light.hall"),
+                RuleAction(
+                    type="service_call", service="light.turn_on", entity_id="light.hall"
+                ),
             ],
         )
         automation = rule.to_ha_automation()
@@ -424,7 +440,11 @@ class TestVisualRule:
             trigger_type="sun",
             trigger_state="sunset",
             actions=[
-                RuleAction(type="service_call", service="light.turn_on", entity_id="light.outdoor"),
+                RuleAction(
+                    type="service_call",
+                    service="light.turn_on",
+                    entity_id="light.outdoor",
+                ),
             ],
         )
         automation = rule.to_ha_automation()
@@ -444,7 +464,11 @@ class TestVisualRule:
                 RuleCondition(type="time", after="18:00"),
             ],
             actions=[
-                RuleAction(type="service_call", service="light.turn_on", entity_id="light.living"),
+                RuleAction(
+                    type="service_call",
+                    service="light.turn_on",
+                    entity_id="light.living",
+                ),
             ],
         )
         automation = rule.to_ha_automation()

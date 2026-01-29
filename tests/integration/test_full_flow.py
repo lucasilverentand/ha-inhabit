@@ -1,13 +1,12 @@
 """Integration tests for full workflow scenarios."""
+
 from __future__ import annotations
 
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from homeassistant.const import STATE_OFF, STATE_ON
 
-from custom_components.inhabit.const import DOMAIN, OccupancyState
 from custom_components.inhabit.models.floor_plan import (
     Coordinates,
     Floor,
@@ -256,7 +255,6 @@ class TestFullWorkflow:
         ):
             from custom_components.inhabit.models.automation_rule import (
                 RuleAction,
-                RuleCondition,
                 VisualRule,
             )
 
@@ -318,7 +316,9 @@ class TestFullWorkflow:
         simulator.move_person_to_room("person1", "first_bedroom1")
 
         assert person.current_room == "first_bedroom1"
-        assert simulator.sensors["binary_sensor.first_bedroom1_motion"].state == STATE_ON
+        assert (
+            simulator.sensors["binary_sensor.first_bedroom1_motion"].state == STATE_ON
+        )
 
     @pytest.mark.asyncio
     async def test_data_persistence_structure(self, mock_hass):

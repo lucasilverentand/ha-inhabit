@@ -1,10 +1,11 @@
 """Pytest configuration and fixtures for Inhabit tests."""
+
 from __future__ import annotations
 
 import sys
 from collections.abc import Generator
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -13,6 +14,7 @@ try:
     from homeassistant.const import STATE_OFF, STATE_ON
     from homeassistant.core import HomeAssistant
     from homeassistant.helpers.storage import Store
+
     HAS_HOMEASSISTANT = True
 except ImportError:
     HAS_HOMEASSISTANT = False

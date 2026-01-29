@@ -1,15 +1,17 @@
 """Door-aware occupancy state machine."""
+
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 
-from homeassistant.const import STATE_ON, STATE_OFF
+from homeassistant.const import STATE_ON
 from homeassistant.core import HomeAssistant, State, callback
 from homeassistant.helpers.event import (
-    async_track_state_change_event,
     async_call_later,
+    async_track_state_change_event,
 )
 
 from ..const import OccupancyState

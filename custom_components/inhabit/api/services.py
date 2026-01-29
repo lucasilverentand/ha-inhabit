@@ -1,4 +1,5 @@
 """Service handlers for Inhabit Floor Plan Builder."""
+
 from __future__ import annotations
 
 import logging
@@ -12,11 +13,11 @@ from ..const import (
     ATTR_FLOOR_PLAN_ID,
     ATTR_ROOM_ID,
     DOMAIN,
-    OccupancyState,
     SERVICE_EXPORT_AUTOMATION,
     SERVICE_EXPORT_CARD,
     SERVICE_REFRESH_SENSORS,
     SERVICE_SET_ROOM_OCCUPANCY,
+    OccupancyState,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -24,11 +25,13 @@ _LOGGER = logging.getLogger(__name__)
 SET_ROOM_OCCUPANCY_SCHEMA = vol.Schema(
     {
         vol.Required(ATTR_ROOM_ID): cv.string,
-        vol.Required("state"): vol.In([
-            OccupancyState.VACANT,
-            OccupancyState.OCCUPIED,
-            OccupancyState.CHECKING,
-        ]),
+        vol.Required("state"): vol.In(
+            [
+                OccupancyState.VACANT,
+                OccupancyState.OCCUPIED,
+                OccupancyState.CHECKING,
+            ]
+        ),
     }
 )
 
@@ -87,6 +90,7 @@ async def async_register_services(hass: HomeAssistant) -> None:
 
         # Generate Lovelace card YAML
         from ..generators.card_exporter import CardExporter
+
         exporter = CardExporter(hass, store)
 
         if room_id:

@@ -1,9 +1,9 @@
 """Unit tests for the occupancy state machine."""
+
 from __future__ import annotations
 
 import sys
-from datetime import datetime
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
