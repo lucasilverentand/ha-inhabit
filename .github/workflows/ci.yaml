@@ -67,10 +67,6 @@ jobs:
           pip install pytest-homeassistant-custom-component
           pip install voluptuous aiohttp
 
-      - name: Install integration
-        run: |
-          pip install -e . || true
-
       - name: Run unit tests
         run: |
           pytest tests/unit tests/test_standalone.py -v \
