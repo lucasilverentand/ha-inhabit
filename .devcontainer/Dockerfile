@@ -1,27 +1,15 @@
-FROM python:3.12-slim
+FROM python:3.12-slim-bookworm
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
+# Install minimal system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     gcc \
     libffi-dev \
-    libssl-dev \
     libjpeg-dev \
     zlib1g-dev \
-    autoconf \
-    build-essential \
-    libopenjp2-7 \
-    libtiff6 \
-    libturbojpeg0-dev \
-    tzdata \
-    ffmpeg \
-    liblapack3 \
-    liblapack-dev \
-    libatlas-base-dev \
-    curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Home Assistant and dependencies
+# Install Home Assistant and dev tools
 RUN pip install --no-cache-dir \
     homeassistant \
     pytest \
@@ -35,7 +23,6 @@ RUN mkdir -p /config/custom_components
 
 WORKDIR /workspaces/ha-inhabit
 
-# Expose Home Assistant port
 EXPOSE 8123
 
 CMD ["python", "-m", "homeassistant", "-c", "/config"]

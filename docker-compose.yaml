@@ -1,29 +1,22 @@
 # Docker Compose for local development
 # Usage: docker compose up
+# Then open http://localhost:8123
 
 services:
   homeassistant:
-    build:
-      context: .
-      dockerfile: .devcontainer/Dockerfile
+    image: ghcr.io/home-assistant/home-assistant:stable
     container_name: inhabit-dev
     ports:
       - "8123:8123"
     volumes:
       # Mount the integration for live reloading
-      - ./custom_components/inhabit:/config/custom_components/inhabit
+      - ./custom_components/inhabit:/config/custom_components/inhabit:ro
       # Mount the dev config
-      - ./.devcontainer/config:/config-template:ro
+      - ./.devcontainer/config/configuration.yaml:/config/configuration.yaml:ro
       # Persist HA data between restarts
       - ha-data:/config
     environment:
       - TZ=Europe/Amsterdam
-    command: >
-      bash -c "
-        cp -n /config-template/* /config/ 2>/dev/null || true;
-        mkdir -p /config/custom_components;
-        python -m homeassistant -c /config
-      "
     restart: unless-stopped
 
 volumes:
