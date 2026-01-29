@@ -9,24 +9,27 @@ from __future__ import annotations
 from unittest.mock import patch
 
 import pytest
-from homeassistant.config_entries import ConfigEntryState
+from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.core import HomeAssistant
-from homeassistant.setup import async_setup_component
-from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.inhabit.const import DOMAIN
 
 
 @pytest.fixture
-def mock_config_entry() -> MockConfigEntry:
+def mock_config_entry(hass: HomeAssistant):
     """Create a mock config entry for testing."""
-    return MockConfigEntry(
+    entry = ConfigEntry(
+        version=1,
+        minor_version=1,
         domain=DOMAIN,
         title="Inhabit Floor Plan Builder",
         data={},
+        source="user",
         options={},
         entry_id="test_entry_id",
     )
+    entry.add_to_hass(hass)
+    return entry
 
 
 @pytest.fixture
@@ -46,7 +49,7 @@ class TestIntegrationSetup:
     async def test_setup_entry(
         self,
         hass: HomeAssistant,
-        mock_config_entry: MockConfigEntry,
+        mock_config_entry,
         mock_frontend_file,
     ):
         """Test setting up the integration."""
@@ -56,8 +59,6 @@ class TestIntegrationSetup:
             "path",
             side_effect=lambda *args: str(mock_frontend_file / "/".join(args)),
         ):
-            mock_config_entry.add_to_hass(hass)
-
             # Setup the integration
             assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
             await hass.async_block_till_done()
@@ -74,7 +75,7 @@ class TestIntegrationSetup:
     async def test_unload_entry(
         self,
         hass: HomeAssistant,
-        mock_config_entry: MockConfigEntry,
+        mock_config_entry,
         mock_frontend_file,
     ):
         """Test unloading the integration."""
@@ -83,8 +84,6 @@ class TestIntegrationSetup:
             "path",
             side_effect=lambda *args: str(mock_frontend_file / "/".join(args)),
         ):
-            mock_config_entry.add_to_hass(hass)
-
             # Setup
             assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
             await hass.async_block_till_done()
@@ -103,7 +102,7 @@ class TestIntegrationSetup:
     async def test_reload_entry(
         self,
         hass: HomeAssistant,
-        mock_config_entry: MockConfigEntry,
+        mock_config_entry,
         mock_frontend_file,
     ):
         """Test reloading the integration."""
@@ -112,8 +111,6 @@ class TestIntegrationSetup:
             "path",
             side_effect=lambda *args: str(mock_frontend_file / "/".join(args)),
         ):
-            mock_config_entry.add_to_hass(hass)
-
             # Setup
             assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
             await hass.async_block_till_done()
@@ -125,81 +122,6 @@ class TestIntegrationSetup:
             # Verify entry is still loaded
             assert mock_config_entry.state == ConfigEntryState.LOADED
 
-    @pytest.mark.asyncio
-    async def test_setup_creates_binary_sensor_platform(
-        self,
-        hass: HomeAssistant,
-        mock_config_entry: MockConfigEntry,
-        mock_frontend_file,
-    ):
-        """Test that setup creates the binary sensor platform."""
-        with patch.object(
-            hass.config,
-            "path",
-            side_effect=lambda *args: str(mock_frontend_file / "/".join(args)),
-        ):
-            mock_config_entry.add_to_hass(hass)
-
-            assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
-            await hass.async_block_till_done()
-
-            # Binary sensor platform should be loaded
-            # The actual sensors are created dynamically based on floor plan rooms
-
-
-class TestStaticPathRegistration:
-    """Test static path registration for frontend."""
-
-    @pytest.mark.asyncio
-    async def test_static_path_registered(
-        self,
-        hass: HomeAssistant,
-        mock_config_entry: MockConfigEntry,
-        mock_frontend_file,
-    ):
-        """Test that the panel.js static path is registered."""
-        with patch.object(
-            hass.config,
-            "path",
-            side_effect=lambda *args: str(mock_frontend_file / "/".join(args)),
-        ):
-            mock_config_entry.add_to_hass(hass)
-
-            assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
-            await hass.async_block_till_done()
-
-            # Check that http is configured (static path registration doesn't raise)
-            assert hass.http is not None
-
-
-class TestWebSocketAPI:
-    """Test WebSocket API registration."""
-
-    @pytest.mark.asyncio
-    async def test_websocket_commands_registered(
-        self,
-        hass: HomeAssistant,
-        mock_config_entry: MockConfigEntry,
-        mock_frontend_file,
-    ):
-        """Test that WebSocket commands are registered."""
-        with patch.object(
-            hass.config,
-            "path",
-            side_effect=lambda *args: str(mock_frontend_file / "/".join(args)),
-        ):
-            mock_config_entry.add_to_hass(hass)
-
-            assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
-            await hass.async_block_till_done()
-
-            # WebSocket commands should be registered
-            # They are registered via websocket_api.async_register_command
-            from homeassistant.components import websocket_api
-
-            # The commands should exist in the websocket handlers
-            # This verifies the registration doesn't raise errors
-
 
 class TestServices:
     """Test service registration."""
@@ -208,7 +130,7 @@ class TestServices:
     async def test_services_registered(
         self,
         hass: HomeAssistant,
-        mock_config_entry: MockConfigEntry,
+        mock_config_entry,
         mock_frontend_file,
     ):
         """Test that services are registered."""
@@ -217,8 +139,6 @@ class TestServices:
             "path",
             side_effect=lambda *args: str(mock_frontend_file / "/".join(args)),
         ):
-            mock_config_entry.add_to_hass(hass)
-
             assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
             await hass.async_block_till_done()
 

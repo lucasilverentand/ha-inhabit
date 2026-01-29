@@ -4,8 +4,15 @@ from __future__ import annotations
 
 import logging
 
-from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
+
+try:
+    from homeassistant.components.http import StaticPathConfig
+
+    HAS_STATIC_PATH_CONFIG = True
+except ImportError:
+    # Home Assistant < 2024.7
+    HAS_STATIC_PATH_CONFIG = False
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.typing import ConfigType
@@ -59,16 +66,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Register services
     await services.async_register_services(hass)
 
-    # Register panel
-    await hass.http.async_register_static_paths(
-        [
-            StaticPathConfig(
-                "/inhabit/panel.js",
-                hass.config.path("custom_components/inhabit/frontend/dist/panel.js"),
-                cache_headers=False,
-            )
-        ]
-    )
+    # Register panel static path
+    panel_path = hass.config.path("custom_components/inhabit/frontend/dist/panel.js")
+    if HAS_STATIC_PATH_CONFIG:
+        # Home Assistant 2024.7+
+        await hass.http.async_register_static_paths(
+            [StaticPathConfig("/inhabit/panel.js", panel_path, cache_headers=False)]
+        )
+    else:
+        # Home Assistant < 2024.7 (deprecated)
+        hass.http.register_static_path(
+            "/inhabit/panel.js", panel_path, cache_headers=False
+        )
 
     hass.components.frontend.async_register_built_in_panel(
         component_name="custom",

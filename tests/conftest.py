@@ -2,47 +2,14 @@
 
 from __future__ import annotations
 
-import sys
 from collections.abc import Generator
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-# Try to import homeassistant, mock if not available
-try:
-    from homeassistant.const import STATE_OFF, STATE_ON
-    from homeassistant.core import HomeAssistant
-    from homeassistant.helpers.storage import Store
-
-    HAS_HOMEASSISTANT = True
-except ImportError:
-    HAS_HOMEASSISTANT = False
-    STATE_ON = "on"
-    STATE_OFF = "off"
-    HomeAssistant = MagicMock
-    Store = MagicMock
-
-    # Mock homeassistant modules
-    sys.modules["homeassistant"] = MagicMock()
-    sys.modules["homeassistant.core"] = MagicMock()
-    sys.modules["homeassistant.const"] = MagicMock()
-    sys.modules["homeassistant.const"].STATE_ON = STATE_ON
-    sys.modules["homeassistant.const"].STATE_OFF = STATE_OFF
-    sys.modules["homeassistant.config_entries"] = MagicMock()
-    sys.modules["homeassistant.helpers"] = MagicMock()
-    sys.modules["homeassistant.helpers.storage"] = MagicMock()
-    sys.modules["homeassistant.helpers.event"] = MagicMock()
-    sys.modules["homeassistant.helpers.dispatcher"] = MagicMock()
-    sys.modules["homeassistant.helpers.entity"] = MagicMock()
-    sys.modules["homeassistant.helpers.entity_platform"] = MagicMock()
-    sys.modules["homeassistant.helpers.typing"] = MagicMock()
-    sys.modules["homeassistant.components"] = MagicMock()
-    sys.modules["homeassistant.components.websocket_api"] = MagicMock()
-    sys.modules["homeassistant.components.http"] = MagicMock()
-    sys.modules["homeassistant.components.binary_sensor"] = MagicMock()
-    sys.modules["voluptuous"] = MagicMock()
-    sys.modules["aiohttp"] = MagicMock()
+# Import homeassistant - it should be installed for tests
+from homeassistant.const import STATE_OFF
 
 from custom_components.inhabit.models.floor_plan import (
     Coordinates,
@@ -58,8 +25,8 @@ from custom_components.inhabit.models.virtual_sensor import (
 
 
 @pytest.fixture
-def hass() -> Generator[Any, None, None]:
-    """Create a mock Home Assistant instance."""
+def mock_hass() -> Generator[Any, None, None]:
+    """Create a mock Home Assistant instance for unit tests."""
     hass = MagicMock()
     hass.data = {}
     hass.states = MagicMock()
