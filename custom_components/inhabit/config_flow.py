@@ -6,10 +6,17 @@ import logging
 from typing import Any
 
 import voluptuous as vol
-from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
+from homeassistant.config_entries import ConfigFlow
 from homeassistant.core import callback
+from homeassistant.data_entry_flow import FlowResult
 
 from .const import DOMAIN
+
+# ConfigFlowResult was added in HA 2024.4, use FlowResult as fallback
+try:
+    from homeassistant.config_entries import ConfigFlowResult
+except ImportError:
+    ConfigFlowResult = FlowResult
 
 _LOGGER = logging.getLogger(__name__)
 
