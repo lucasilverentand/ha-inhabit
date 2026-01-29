@@ -1,6 +1,12 @@
 # Inhabit Floor Plan Builder
 
+[![HACS Custom](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
+[![GitHub Release](https://img.shields.io/github/v/release/lucasilverentand/ha-inhabit)](https://github.com/lucasilverentand/ha-inhabit/releases)
+[![License](https://img.shields.io/github/license/lucasilverentand/ha-inhabit)](LICENSE)
+
 A HACS-compatible Home Assistant integration for creating visual floor plans, placing devices, and generating virtual occupancy sensors with intelligent door-aware state machine logic.
+
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=lucasilverentand&repository=ha-inhabit&category=integration)
 
 ## Features
 
