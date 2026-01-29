@@ -61,6 +61,12 @@ export class FpbCanvas extends LitElement {
   @state()
   private _selectedWall: Wall | null = null;
 
+  @state()
+  private _wallEditor: { wall: Wall; position: Coordinates; length: number } | null = null;
+
+  @state()
+  private _editingLength: string = "";
+
   private _cleanupEffects: (() => void)[] = [];
 
   static override styles = css`
@@ -70,6 +76,7 @@ export class FpbCanvas extends LitElement {
       height: 100%;
       overflow: hidden;
       background: var(--card-background-color, #f5f5f5);
+      position: relative;
     }
 
     svg {
@@ -233,6 +240,62 @@ export class FpbCanvas extends LitElement {
     .extend-button:hover .extend-icon {
       fill: var(--text-primary-color, white);
     }
+
+    .wall-editor {
+      position: absolute;
+      background: var(--card-background-color, white);
+      border: 1px solid var(--divider-color, #ccc);
+      border-radius: 8px;
+      padding: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      z-index: 100;
+    }
+
+    .wall-editor input {
+      width: 70px;
+      padding: 4px 8px;
+      border: 1px solid var(--divider-color, #ccc);
+      border-radius: 4px;
+      font-size: 14px;
+      background: var(--primary-background-color, white);
+      color: var(--primary-text-color, #333);
+    }
+
+    .wall-editor input:focus {
+      outline: none;
+      border-color: var(--primary-color, #2196f3);
+    }
+
+    .wall-editor span {
+      font-size: 12px;
+      color: var(--secondary-text-color, #666);
+    }
+
+    .wall-editor button {
+      padding: 4px 8px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+    }
+
+    .wall-editor .save-btn {
+      background: var(--primary-color, #2196f3);
+      color: white;
+    }
+
+    .wall-editor .delete-btn {
+      background: var(--error-color, #f44336);
+      color: white;
+    }
+
+    .wall-editor .cancel-btn {
+      background: var(--secondary-background-color, #e0e0e0);
+      color: var(--primary-text-color, #333);
+    }
   `;
 
   override connectedCallback(): void {
@@ -288,8 +351,15 @@ export class FpbCanvas extends LitElement {
     const point = this._screenToSvg({ x: e.clientX, y: e.clientY });
     const snappedPoint = this._getSnappedPoint(point);
 
-    // Middle button or shift+click for pan
-    if (e.button === 1 || (e.button === 0 && e.shiftKey)) {
+    // Close wall editor if clicking outside
+    if (this._wallEditor) {
+      // Don't close if clicking on the editor itself (handled by stopPropagation)
+      this._wallEditor = null;
+      selection.value = { type: "none", ids: [] };
+    }
+
+    // Middle button always pans
+    if (e.button === 1) {
       this._isPanning = true;
       this._panStart = { x: e.clientX, y: e.clientY };
       this._svg?.setPointerCapture(e.pointerId);
@@ -298,12 +368,27 @@ export class FpbCanvas extends LitElement {
 
     const tool = activeTool.value;
 
-    if (tool === "select") {
-      this._handleSelectClick(point);
-    } else if (tool === "wall") {
-      this._handleWallClick(snappedPoint);
-    } else if (tool === "room" || tool === "polygon") {
-      this._handlePolygonClick(snappedPoint);
+    // Left click behavior depends on tool
+    if (e.button === 0) {
+      if (tool === "select") {
+        // Check if clicking on something selectable
+        const clickedSomething = this._handleSelectClick(point);
+        if (!clickedSomething) {
+          // Start panning if clicking on empty space
+          this._isPanning = true;
+          this._panStart = { x: e.clientX, y: e.clientY };
+          this._svg?.setPointerCapture(e.pointerId);
+        }
+      } else if (tool === "wall") {
+        this._handleWallClick(snappedPoint);
+      } else if (tool === "room" || tool === "polygon") {
+        this._handlePolygonClick(snappedPoint);
+      } else {
+        // Other tools - pan on empty space
+        this._isPanning = true;
+        this._panStart = { x: e.clientX, y: e.clientY };
+        this._svg?.setPointerCapture(e.pointerId);
+      }
     }
   }
 
@@ -395,31 +480,70 @@ export class FpbCanvas extends LitElement {
     this._selectedWall = wall;
     selection.value = { type: "wall", ids: [wall.id] };
 
-    // Calculate current length
+    // Calculate current length and midpoint for editor position
     const currentLength = this._calculateWallLength(wall.start, wall.end);
+    const midpoint: Coordinates = {
+      x: (wall.start.x + wall.end.x) / 2,
+      y: (wall.start.y + wall.end.y) / 2,
+    };
 
-    // Prompt for new length
-    const newLengthStr = prompt(
-      `Edit wall length:\nCurrent: ${this._formatLength(currentLength)}`,
-      Math.round(currentLength).toString()
-    );
+    // Show inline editor
+    this._wallEditor = {
+      wall,
+      position: midpoint,
+      length: currentLength,
+    };
+    this._editingLength = Math.round(currentLength).toString();
+  }
 
-    if (newLengthStr === null) {
-      this._selectedWall = null;
-      selection.value = { type: "none", ids: [] };
-      return;
-    }
+  private _handleEditorSave(): void {
+    if (!this._wallEditor) return;
 
-    const newLength = parseFloat(newLengthStr);
+    const newLength = parseFloat(this._editingLength);
     if (isNaN(newLength) || newLength <= 0) {
-      alert("Invalid length");
-      this._selectedWall = null;
-      selection.value = { type: "none", ids: [] };
       return;
     }
 
-    // Update wall length (scale from end point)
-    this._updateWallLength(wall, newLength);
+    this._updateWallLength(this._wallEditor.wall, newLength);
+    this._wallEditor = null;
+  }
+
+  private _handleEditorCancel(): void {
+    this._wallEditor = null;
+    this._selectedWall = null;
+    selection.value = { type: "none", ids: [] };
+  }
+
+  private async _handleWallDelete(): Promise<void> {
+    if (!this._wallEditor || !this.hass) return;
+
+    const floor = currentFloor.value;
+    const floorPlan = currentFloorPlan.value;
+    if (!floor || !floorPlan) return;
+
+    try {
+      await this.hass.callWS({
+        type: "inhabit/walls/delete",
+        floor_plan_id: floorPlan.id,
+        floor_id: floor.id,
+        wall_id: this._wallEditor.wall.id,
+      });
+      window.location.reload();
+    } catch (err) {
+      console.error("Error deleting wall:", err);
+    }
+
+    this._wallEditor = null;
+    this._selectedWall = null;
+    selection.value = { type: "none", ids: [] };
+  }
+
+  private _handleEditorKeyDown(e: KeyboardEvent): void {
+    if (e.key === "Enter") {
+      this._handleEditorSave();
+    } else if (e.key === "Escape") {
+      this._handleEditorCancel();
+    }
   }
 
   private async _updateWallLength(wall: Wall, newLength: number): Promise<void> {
@@ -482,15 +606,15 @@ export class FpbCanvas extends LitElement {
     return snapToGrid.value ? snapPoint(point, gridSize.value) : point;
   }
 
-  private _handleSelectClick(point: Coordinates): void {
+  private _handleSelectClick(point: Coordinates): boolean {
     const floor = currentFloor.value;
-    if (!floor) return;
+    if (!floor) return false;
 
     // Check rooms
     for (const room of floor.rooms) {
       if (this._pointInPolygon(point, room.polygon.vertices)) {
         selection.value = { type: "room", ids: [room.id] };
-        return;
+        return true;
       }
     }
 
@@ -503,11 +627,12 @@ export class FpbCanvas extends LitElement {
       );
       if (dist < 15) {
         selection.value = { type: "device", ids: [device.id] };
-        return;
+        return true;
       }
     }
 
     selection.value = { type: "none", ids: [] };
+    return false;
   }
 
   private _handleWallClick(point: Coordinates): void {
@@ -1001,6 +1126,44 @@ export class FpbCanvas extends LitElement {
     };
   }
 
+  private _svgToScreen(svgPoint: Coordinates): Coordinates {
+    if (!this._svg) return svgPoint;
+
+    const rect = this._svg.getBoundingClientRect();
+    const scaleX = rect.width / this._viewBox.width;
+    const scaleY = rect.height / this._viewBox.height;
+
+    return {
+      x: (svgPoint.x - this._viewBox.x) * scaleX,
+      y: (svgPoint.y - this._viewBox.y) * scaleY,
+    };
+  }
+
+  private _renderWallEditor() {
+    if (!this._wallEditor) return null;
+
+    const screenPos = this._svgToScreen(this._wallEditor.position);
+
+    return html`
+      <div class="wall-editor"
+           style="left: ${screenPos.x + 10}px; top: ${screenPos.y - 20}px;"
+           @click=${(e: Event) => e.stopPropagation()}
+           @pointerdown=${(e: Event) => e.stopPropagation()}>
+        <input
+          type="number"
+          .value=${this._editingLength}
+          @input=${(e: InputEvent) => this._editingLength = (e.target as HTMLInputElement).value}
+          @keydown=${this._handleEditorKeyDown}
+          autofocus
+        />
+        <span>cm</span>
+        <button class="save-btn" @click=${this._handleEditorSave}>✓</button>
+        <button class="delete-btn" @click=${this._handleWallDelete}>🗑</button>
+        <button class="cancel-btn" @click=${this._handleEditorCancel}>✕</button>
+      </div>
+    `;
+  }
+
   override render() {
     return html`
       <svg
@@ -1017,6 +1180,7 @@ export class FpbCanvas extends LitElement {
         ${this._renderWallEndpoints()}
         ${this._renderDrawingPreview()}
       </svg>
+      ${this._renderWallEditor()}
     `;
   }
 }
