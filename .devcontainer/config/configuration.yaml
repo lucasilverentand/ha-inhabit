@@ -1,0 +1,203 @@
+# Home Assistant Development Configuration for Inhabit
+
+homeassistant:
+  name: Inhabit Dev Home
+  unit_system: metric
+  time_zone: Europe/Amsterdam
+  # Dam Square, Amsterdam (public landmark)
+  latitude: 52.3731
+  longitude: 4.8932
+
+# Enable frontend and API
+frontend:
+http:
+  server_port: 8123
+api:
+
+# Enable default config components
+config:
+logger:
+  default: info
+  logs:
+    custom_components.inhabit: debug
+
+# Demo house with rooms, lights, sensors, and doors
+# Living Room
+light:
+  - platform: demo
+    lights:
+      - name: "Living Room Ceiling"
+        unique_id: light_living_ceiling
+      - name: "Living Room Lamp"
+        unique_id: light_living_lamp
+      - name: "Kitchen Main"
+        unique_id: light_kitchen_main
+      - name: "Kitchen Counter"
+        unique_id: light_kitchen_counter
+      - name: "Bedroom Ceiling"
+        unique_id: light_bedroom_ceiling
+      - name: "Bedroom Nightstand"
+        unique_id: light_bedroom_nightstand
+      - name: "Bathroom Mirror"
+        unique_id: light_bathroom_mirror
+      - name: "Hallway"
+        unique_id: light_hallway
+      - name: "Office Desk"
+        unique_id: light_office_desk
+      - name: "Office Ceiling"
+        unique_id: light_office_ceiling
+
+# Motion sensors for each room
+binary_sensor:
+  - platform: template
+    sensors:
+      living_room_motion:
+        friendly_name: "Living Room Motion"
+        device_class: motion
+        value_template: "{{ states('input_boolean.living_room_motion_sim') }}"
+      kitchen_motion:
+        friendly_name: "Kitchen Motion"
+        device_class: motion
+        value_template: "{{ states('input_boolean.kitchen_motion_sim') }}"
+      bedroom_motion:
+        friendly_name: "Bedroom Motion"
+        device_class: motion
+        value_template: "{{ states('input_boolean.bedroom_motion_sim') }}"
+      bathroom_motion:
+        friendly_name: "Bathroom Motion"
+        device_class: motion
+        value_template: "{{ states('input_boolean.bathroom_motion_sim') }}"
+      hallway_motion:
+        friendly_name: "Hallway Motion"
+        device_class: motion
+        value_template: "{{ states('input_boolean.hallway_motion_sim') }}"
+      office_motion:
+        friendly_name: "Office Motion"
+        device_class: motion
+        value_template: "{{ states('input_boolean.office_motion_sim') }}"
+      # Door sensors
+      front_door:
+        friendly_name: "Front Door"
+        device_class: door
+        value_template: "{{ states('input_boolean.front_door_sim') }}"
+      bedroom_door:
+        friendly_name: "Bedroom Door"
+        device_class: door
+        value_template: "{{ states('input_boolean.bedroom_door_sim') }}"
+      bathroom_door:
+        friendly_name: "Bathroom Door"
+        device_class: door
+        value_template: "{{ states('input_boolean.bathroom_door_sim') }}"
+      office_door:
+        friendly_name: "Office Door"
+        device_class: door
+        value_template: "{{ states('input_boolean.office_door_sim') }}"
+      # Window sensors
+      living_room_window:
+        friendly_name: "Living Room Window"
+        device_class: window
+        value_template: "{{ states('input_boolean.living_room_window_sim') }}"
+      bedroom_window:
+        friendly_name: "Bedroom Window"
+        device_class: window
+        value_template: "{{ states('input_boolean.bedroom_window_sim') }}"
+
+# Input booleans to simulate sensor states
+input_boolean:
+  # Motion simulators
+  living_room_motion_sim:
+    name: "Simulate Living Room Motion"
+    icon: mdi:motion-sensor
+  kitchen_motion_sim:
+    name: "Simulate Kitchen Motion"
+    icon: mdi:motion-sensor
+  bedroom_motion_sim:
+    name: "Simulate Bedroom Motion"
+    icon: mdi:motion-sensor
+  bathroom_motion_sim:
+    name: "Simulate Bathroom Motion"
+    icon: mdi:motion-sensor
+  hallway_motion_sim:
+    name: "Simulate Hallway Motion"
+    icon: mdi:motion-sensor
+  office_motion_sim:
+    name: "Simulate Office Motion"
+    icon: mdi:motion-sensor
+  # Door simulators
+  front_door_sim:
+    name: "Simulate Front Door"
+    icon: mdi:door
+  bedroom_door_sim:
+    name: "Simulate Bedroom Door"
+    icon: mdi:door
+  bathroom_door_sim:
+    name: "Simulate Bathroom Door"
+    icon: mdi:door
+  office_door_sim:
+    name: "Simulate Office Door"
+    icon: mdi:door
+  # Window simulators
+  living_room_window_sim:
+    name: "Simulate Living Room Window"
+    icon: mdi:window-closed
+  bedroom_window_sim:
+    name: "Simulate Bedroom Window"
+    icon: mdi:window-closed
+
+# Temperature and humidity sensors
+sensor:
+  - platform: demo
+    sensors:
+      - name: "Living Room Temperature"
+        unique_id: sensor_living_temp
+        unit_of_measurement: "°C"
+        device_class: temperature
+      - name: "Kitchen Temperature"
+        unique_id: sensor_kitchen_temp
+        unit_of_measurement: "°C"
+        device_class: temperature
+      - name: "Bedroom Temperature"
+        unique_id: sensor_bedroom_temp
+        unit_of_measurement: "°C"
+        device_class: temperature
+      - name: "Bathroom Temperature"
+        unique_id: sensor_bathroom_temp
+        unit_of_measurement: "°C"
+        device_class: temperature
+      - name: "Bathroom Humidity"
+        unique_id: sensor_bathroom_humidity
+        unit_of_measurement: "%"
+        device_class: humidity
+      - name: "Office Temperature"
+        unique_id: sensor_office_temp
+        unit_of_measurement: "°C"
+        device_class: temperature
+
+# Climate devices
+climate:
+  - platform: demo
+    climates:
+      - name: "Living Room Thermostat"
+        unique_id: climate_living
+      - name: "Bedroom Thermostat"
+        unique_id: climate_bedroom
+
+# Media players
+media_player:
+  - platform: demo
+    media_players:
+      - name: "Living Room TV"
+        unique_id: media_living_tv
+      - name: "Bedroom Speaker"
+        unique_id: media_bedroom_speaker
+
+# Covers (blinds)
+cover:
+  - platform: demo
+    covers:
+      - name: "Living Room Blinds"
+        unique_id: cover_living_blinds
+      - name: "Bedroom Blinds"
+        unique_id: cover_bedroom_blinds
+      - name: "Office Blinds"
+        unique_id: cover_office_blinds

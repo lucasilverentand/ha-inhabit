@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Start Home Assistant in development mode
+
+set -e
+
+CONFIG_DIR="/config"
+
+# Use local config dir if not in container
+if [ ! -d "$CONFIG_DIR" ]; then
+    CONFIG_DIR="/workspaces/ha-inhabit/.devcontainer/config"
+fi
+
+echo "Starting Home Assistant..."
+echo "Config directory: $CONFIG_DIR"
+echo ""
+echo "Home Assistant will be available at http://localhost:8123"
+echo "Press Ctrl+C to stop"
+echo ""
+
+python -m homeassistant -c "$CONFIG_DIR"

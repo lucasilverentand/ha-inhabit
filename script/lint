@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Lint and format code
+
+set -e
+
+cd /workspaces/ha-inhabit 2>/dev/null || cd "$(dirname "$0")/.."
+
+echo "Running ruff..."
+ruff check custom_components/ tests/ --fix
+
+echo "Running black..."
+black custom_components/ tests/
+
+echo "Running isort..."
+isort --profile black custom_components/ tests/
+
+echo "Linting complete!"

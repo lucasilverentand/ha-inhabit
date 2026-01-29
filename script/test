@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Run tests
+
+set -e
+
+cd /workspaces/ha-inhabit 2>/dev/null || cd "$(dirname "$0")/.."
+
+echo "Running tests..."
+pytest tests/ -v --cov=custom_components/inhabit "$@"

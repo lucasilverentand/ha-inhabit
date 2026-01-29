@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Setup script for Inhabit development environment
+
+set -e
+
+echo "Setting up Inhabit development environment..."
+
+# Copy configuration to HA config directory
+cp -r /workspaces/ha-inhabit/.devcontainer/config/* /config/
+
+# Create custom_components directory if it doesn't exist
+mkdir -p /config/custom_components
+
+# Link the inhabit component (if not using bind mount)
+if [ ! -d "/config/custom_components/inhabit" ]; then
+    ln -sf /workspaces/ha-inhabit/custom_components/inhabit /config/custom_components/inhabit
+fi
+
+# Install Python dev dependencies
+if [ -f "/workspaces/ha-inhabit/requirements-dev.txt" ]; then
+    pip install -r /workspaces/ha-inhabit/requirements-dev.txt
+fi
+
+# Build frontend if needed
+if [ -f "/workspaces/ha-inhabit/frontend/package.json" ]; then
+    echo "Note: Frontend build requires Node.js. Run 'cd frontend && npm install && npm run build' if needed."
+fi
+
+echo "Setup complete!"
