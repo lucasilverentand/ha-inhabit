@@ -55,6 +55,9 @@ export class FpbCanvas extends LitElement {
   @state()
   private _haAreas: Array<{ area_id: string; name: string }> = [];
 
+  @state()
+  private _hoveredEndpoint: { wallId: string; point: "start" | "end"; coords: Coordinates } | null = null;
+
   private _cleanupEffects: (() => void)[] = [];
 
   static override styles = css`
@@ -181,6 +184,47 @@ export class FpbCanvas extends LitElement {
       stroke-width: 2;
       stroke-dasharray: 5,5;
     }
+
+    .wall-endpoint {
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .wall-endpoint circle {
+      fill: white;
+      stroke: #666;
+      stroke-width: 2;
+    }
+
+    .wall-endpoint:hover circle {
+      fill: var(--primary-color, #2196f3);
+      stroke: var(--primary-color, #2196f3);
+      r: 10;
+    }
+
+    .wall-endpoint text {
+      fill: #666;
+      font-size: 16px;
+      font-weight: bold;
+      pointer-events: none;
+    }
+
+    .wall-endpoint:hover text {
+      fill: white;
+    }
+
+    .extend-button {
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .extend-button:hover .extend-bg {
+      fill: var(--primary-color, #2196f3);
+    }
+
+    .extend-button:hover .extend-icon {
+      fill: white;
+    }
   `;
 
   override connectedCallback(): void {
@@ -272,7 +316,45 @@ export class FpbCanvas extends LitElement {
       this._panStart = { x: e.clientX, y: e.clientY };
       viewBox.value = newViewBox;
       this._viewBox = newViewBox;
+      return;
     }
+
+    // Check for hovering over wall endpoints (only when not drawing)
+    if (!this._wallStartPoint && activeTool.value === "select") {
+      this._checkEndpointHover(point);
+    }
+  }
+
+  private _checkEndpointHover(point: Coordinates): void {
+    const floor = currentFloor.value;
+    if (!floor) {
+      this._hoveredEndpoint = null;
+      return;
+    }
+
+    const hoverDistance = 20;
+
+    for (const wall of floor.walls) {
+      // Check start point
+      const distStart = Math.sqrt(
+        Math.pow(point.x - wall.start.x, 2) + Math.pow(point.y - wall.start.y, 2)
+      );
+      if (distStart < hoverDistance) {
+        this._hoveredEndpoint = { wallId: wall.id, point: "start", coords: wall.start };
+        return;
+      }
+
+      // Check end point
+      const distEnd = Math.sqrt(
+        Math.pow(point.x - wall.end.x, 2) + Math.pow(point.y - wall.end.y, 2)
+      );
+      if (distEnd < hoverDistance) {
+        this._hoveredEndpoint = { wallId: wall.id, point: "end", coords: wall.end };
+        return;
+      }
+    }
+
+    this._hoveredEndpoint = null;
   }
 
   private _handlePointerUp(e: PointerEvent): void {
@@ -286,8 +368,16 @@ export class FpbCanvas extends LitElement {
     if (e.key === "Escape") {
       this._wallStartPoint = null;
       this._drawingPoints = [];
+      this._hoveredEndpoint = null;
       selection.value = { type: "none", ids: [] };
     }
+  }
+
+  private _handleExtendWall(endpoint: Coordinates): void {
+    // Start drawing a new wall from this endpoint
+    this._wallStartPoint = endpoint;
+    this._hoveredEndpoint = null;
+    activeTool.value = "wall";
   }
 
   private _getSnappedPoint(point: Coordinates): Coordinates {
@@ -699,6 +789,56 @@ export class FpbCanvas extends LitElement {
     `;
   }
 
+  private _renderWallEndpoints() {
+    const floor = currentFloor.value;
+    if (!floor || floor.walls.length === 0) return null;
+
+    // Collect all unique endpoints
+    const endpoints: Map<string, { coords: Coordinates; wallIds: string[] }> = new Map();
+
+    for (const wall of floor.walls) {
+      const startKey = `${wall.start.x},${wall.start.y}`;
+      const endKey = `${wall.end.x},${wall.end.y}`;
+
+      if (!endpoints.has(startKey)) {
+        endpoints.set(startKey, { coords: wall.start, wallIds: [] });
+      }
+      endpoints.get(startKey)!.wallIds.push(wall.id);
+
+      if (!endpoints.has(endKey)) {
+        endpoints.set(endKey, { coords: wall.end, wallIds: [] });
+      }
+      endpoints.get(endKey)!.wallIds.push(wall.id);
+    }
+
+    // Only show extend buttons on endpoints with 1 connection (end of a wall chain)
+    const extendableEndpoints = Array.from(endpoints.values()).filter(
+      (ep) => ep.wallIds.length === 1
+    );
+
+    return svg`
+      <g class="wall-endpoints-layer">
+        ${extendableEndpoints.map((ep) => {
+          const isHovered = this._hoveredEndpoint &&
+            Math.abs(this._hoveredEndpoint.coords.x - ep.coords.x) < 1 &&
+            Math.abs(this._hoveredEndpoint.coords.y - ep.coords.y) < 1;
+
+          return svg`
+            <g class="extend-button"
+               transform="translate(${ep.coords.x}, ${ep.coords.y})"
+               @click=${(e: Event) => {
+                 e.stopPropagation();
+                 this._handleExtendWall(ep.coords);
+               }}>
+              <circle class="extend-bg" r="${isHovered ? 12 : 8}" fill="#f0f0f0" stroke="#999" stroke-width="2"/>
+              <text class="extend-icon" text-anchor="middle" dominant-baseline="central" font-size="14" fill="#666">+</text>
+            </g>
+          `;
+        })}
+      </g>
+    `;
+  }
+
   private _renderDrawingPreview() {
     const tool = activeTool.value;
 
@@ -784,6 +924,7 @@ export class FpbCanvas extends LitElement {
         tabindex="0"
       >
         ${this._renderFloor()}
+        ${this._renderWallEndpoints()}
         ${this._renderDrawingPreview()}
       </svg>
     `;
