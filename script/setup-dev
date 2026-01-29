@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+# Automated Home Assistant dev setup
+# Creates a dev user and adds the Inhabit integration
+
+set -e
+
+HA_URL="${HA_URL:-http://localhost:8123}"
+USERNAME="${HA_USERNAME:-dev}"
+PASSWORD="${HA_PASSWORD:-dev}"
+
+echo "Setting up Home Assistant development environment..."
+echo "URL: $HA_URL"
+
+# Wait for HA to be ready
+echo "Waiting for Home Assistant to be ready..."
+for i in {1..60}; do
+    if curl -s "$HA_URL/api/onboarding" > /dev/null 2>&1; then
+        break
+    fi
+    sleep 1
+    echo -n "."
+done
+echo ""
+
+# Check onboarding status
+ONBOARDING=$(curl -s "$HA_URL/api/onboarding")
+USER_DONE=$(echo "$ONBOARDING" | python3 -c "import sys,json; steps={s['step']:s['done'] for s in json.load(sys.stdin)}; print(steps.get('user', False))")
+
+if [ "$USER_DONE" = "True" ]; then
+    echo "Onboarding already completed. Skipping..."
+    exit 0
+fi
+
+# Step 1: Create user
+echo "Creating user '$USERNAME'..."
+AUTH_CODE=$(curl -s -X POST "$HA_URL/api/onboarding/users" \
+    -H "Content-Type: application/json" \
+    -d "{\"client_id\":\"$HA_URL/\",\"name\":\"Developer\",\"username\":\"$USERNAME\",\"password\":\"$PASSWORD\",\"language\":\"en\"}" \
+    | python3 -c "import sys,json; print(json.load(sys.stdin)['auth_code'])")
+
+# Exchange for token
+echo "Getting access token..."
+ACCESS_TOKEN=$(curl -s -X POST "$HA_URL/auth/token" \
+    -H "Content-Type: application/x-www-form-urlencoded" \
+    -d "grant_type=authorization_code&code=$AUTH_CODE&client_id=$HA_URL/" \
+    | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
+
+# Step 2: Core config
+echo "Configuring core settings..."
+curl -s -X POST "$HA_URL/api/onboarding/core_config" \
+    -H "Authorization: Bearer $ACCESS_TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{}' > /dev/null
+
+# Step 3: Analytics (skip)
+echo "Skipping analytics..."
+curl -s -X POST "$HA_URL/api/onboarding/analytics" \
+    -H "Authorization: Bearer $ACCESS_TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{}' > /dev/null
+
+# Step 4: Add Inhabit integration
+echo "Adding Inhabit integration..."
+FLOW_ID=$(curl -s -X POST "$HA_URL/api/config/config_entries/flow" \
+    -H "Authorization: Bearer $ACCESS_TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"handler":"inhabit"}' \
+    | python3 -c "import sys,json; print(json.load(sys.stdin).get('flow_id',''))")
+
+if [ -n "$FLOW_ID" ]; then
+    RESULT=$(curl -s -X POST "$HA_URL/api/config/config_entries/flow/$FLOW_ID" \
+        -H "Authorization: Bearer $ACCESS_TOKEN" \
+        -H "Content-Type: application/json" \
+        -d '{}')
+
+    STATE=$(echo "$RESULT" | python3 -c "import sys,json; r=json.load(sys.stdin); print(r.get('result',{}).get('state','unknown'))" 2>/dev/null || echo "unknown")
+
+    if [ "$STATE" = "loaded" ]; then
+        echo "✓ Inhabit integration loaded successfully!"
+    else
+        echo "⚠ Integration state: $STATE"
+        echo "  Check logs with: docker compose logs | grep inhabit"
+    fi
+fi
+
+echo ""
+echo "========================================="
+echo "Setup complete!"
+echo ""
+echo "  URL:      $HA_URL"
+echo "  Username: $USERNAME"
+echo "  Password: $PASSWORD"
+echo ""
+echo "Open $HA_URL in your browser"
+echo "========================================="

@@ -6,6 +6,8 @@ import logging
 
 from homeassistant.config_entries import ConfigEntry
 
+from homeassistant.components.frontend import async_register_built_in_panel
+
 try:
     from homeassistant.components.http import StaticPathConfig
 
@@ -82,7 +84,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Register panel (only if not already registered)
     panels = hass.data.get("frontend_panels", {})
     if "inhabit" not in panels:
-        hass.components.frontend.async_register_built_in_panel(
+        async_register_built_in_panel(
+            hass,
             component_name="custom",
             sidebar_title="Floor Plan",
             sidebar_icon="mdi:floor-plan",
