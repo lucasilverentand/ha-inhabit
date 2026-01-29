@@ -58,6 +58,9 @@ export class FpbCanvas extends LitElement {
   @state()
   private _hoveredEndpoint: { wallId: string; point: "start" | "end"; coords: Coordinates } | null = null;
 
+  @state()
+  private _selectedWall: Wall | null = null;
+
   private _cleanupEffects: (() => void)[] = [];
 
   static override styles = css`
@@ -101,10 +104,15 @@ export class FpbCanvas extends LitElement {
     .wall {
       fill: var(--primary-text-color, #333);
       stroke: none;
+      cursor: pointer;
     }
 
-    .wall.exterior {
-      fill: var(--primary-text-color, #1a1a1a);
+    .wall:hover {
+      fill: var(--primary-color, #2196f3);
+    }
+
+    .wall.selected {
+      fill: var(--primary-color, #2196f3);
     }
 
     .door {
@@ -378,6 +386,80 @@ export class FpbCanvas extends LitElement {
     this._wallStartPoint = endpoint;
     this._hoveredEndpoint = null;
     activeTool.value = "wall";
+  }
+
+  private _handleWallSelect(e: Event, wall: Wall): void {
+    e.stopPropagation();
+
+    // Select the wall
+    this._selectedWall = wall;
+    selection.value = { type: "wall", ids: [wall.id] };
+
+    // Calculate current length
+    const currentLength = this._calculateWallLength(wall.start, wall.end);
+
+    // Prompt for new length
+    const newLengthStr = prompt(
+      `Edit wall length:\nCurrent: ${this._formatLength(currentLength)}`,
+      Math.round(currentLength).toString()
+    );
+
+    if (newLengthStr === null) {
+      this._selectedWall = null;
+      selection.value = { type: "none", ids: [] };
+      return;
+    }
+
+    const newLength = parseFloat(newLengthStr);
+    if (isNaN(newLength) || newLength <= 0) {
+      alert("Invalid length");
+      this._selectedWall = null;
+      selection.value = { type: "none", ids: [] };
+      return;
+    }
+
+    // Update wall length (scale from end point)
+    this._updateWallLength(wall, newLength);
+  }
+
+  private async _updateWallLength(wall: Wall, newLength: number): Promise<void> {
+    if (!this.hass) return;
+
+    const floor = currentFloor.value;
+    const floorPlan = currentFloorPlan.value;
+    if (!floor || !floorPlan) return;
+
+    // Calculate direction vector
+    const dx = wall.end.x - wall.start.x;
+    const dy = wall.end.y - wall.start.y;
+    const currentLength = Math.sqrt(dx * dx + dy * dy);
+
+    if (currentLength === 0) return;
+
+    // Scale to new length
+    const scale = newLength / currentLength;
+    const newEnd: Coordinates = {
+      x: wall.start.x + dx * scale,
+      y: wall.start.y + dy * scale,
+    };
+
+    try {
+      await this.hass.callWS({
+        type: "inhabit/walls/update",
+        floor_plan_id: floorPlan.id,
+        floor_id: floor.id,
+        wall_id: wall.id,
+        start: wall.start,
+        end: newEnd,
+      });
+      window.location.reload();
+    } catch (err) {
+      console.error("Error updating wall:", err);
+      alert(`Failed to update wall: ${err}`);
+    }
+
+    this._selectedWall = null;
+    selection.value = { type: "none", ids: [] };
   }
 
   private _getSnappedPoint(point: Coordinates): Coordinates {
@@ -720,8 +802,9 @@ export class FpbCanvas extends LitElement {
 
           <!-- Walls -->
           ${floor.walls.map(wall => svg`
-            <path class="wall ${wall.is_exterior ? "exterior" : ""}"
-                  d="${wallPath(wall.start, wall.end, wall.thickness)}"/>
+            <path class="wall ${sel.type === "wall" && sel.ids.includes(wall.id) ? "selected" : ""}"
+                  d="${wallPath(wall.start, wall.end, wall.thickness)}"
+                  @click=${(e: Event) => this._handleWallSelect(e, wall)}/>
           `)}
 
           <!-- Doors -->

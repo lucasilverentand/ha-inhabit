@@ -41,6 +41,7 @@ def async_register_websocket_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_rooms_update)
     websocket_api.async_register_command(hass, ws_rooms_delete)
     websocket_api.async_register_command(hass, ws_walls_add)
+    websocket_api.async_register_command(hass, ws_walls_update)
     websocket_api.async_register_command(hass, ws_doors_add)
     websocket_api.async_register_command(hass, ws_windows_add)
     websocket_api.async_register_command(hass, ws_devices_place)
@@ -430,6 +431,54 @@ def ws_walls_add(
         connection.send_result(msg["id"], result.to_dict())
     else:
         connection.send_error(msg["id"], "not_found", "Floor not found")
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{WS_PREFIX}/walls/update",
+        vol.Required("floor_plan_id"): str,
+        vol.Required("floor_id"): str,
+        vol.Required("wall_id"): str,
+        vol.Optional("start"): dict,
+        vol.Optional("end"): dict,
+        vol.Optional("thickness"): vol.Coerce(float),
+    }
+)
+@callback
+def ws_walls_update(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Update a wall."""
+    store = hass.data[DOMAIN]["store"]
+    floor_plan = store.get_floor_plan(msg["floor_plan_id"])
+    if not floor_plan:
+        connection.send_error(msg["id"], "not_found", "Floor plan not found")
+        return
+
+    floor = floor_plan.get_floor(msg["floor_id"])
+    if not floor:
+        connection.send_error(msg["id"], "not_found", "Floor not found")
+        return
+
+    wall = next((w for w in floor.walls if w.id == msg["wall_id"]), None)
+    if not wall:
+        connection.send_error(msg["id"], "not_found", "Wall not found")
+        return
+
+    if "start" in msg:
+        wall.start = Coordinates.from_dict(msg["start"])
+    if "end" in msg:
+        wall.end = Coordinates.from_dict(msg["end"])
+    if "thickness" in msg:
+        wall.thickness = msg["thickness"]
+
+    result = store.update_floor_plan(floor_plan)
+    if result:
+        connection.send_result(msg["id"], wall.to_dict())
+    else:
+        connection.send_error(msg["id"], "update_failed", "Failed to update wall")
 
 
 @websocket_api.websocket_command(
