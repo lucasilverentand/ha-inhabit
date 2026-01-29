@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 
+from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
@@ -59,10 +60,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await services.async_register_services(hass)
 
     # Register panel
-    hass.http.register_static_path(
-        "/inhabit/panel.js",
-        hass.config.path("custom_components/inhabit/frontend/dist/panel.js"),
-        cache_headers=False,
+    await hass.http.async_register_static_paths(
+        [
+            StaticPathConfig(
+                "/inhabit/panel.js",
+                hass.config.path("custom_components/inhabit/frontend/dist/panel.js"),
+                cache_headers=False,
+            )
+        ]
     )
 
     hass.components.frontend.async_register_built_in_panel(
