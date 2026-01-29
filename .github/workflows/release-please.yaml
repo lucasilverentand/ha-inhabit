@@ -1,0 +1,73 @@
+name: Release Please
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          release-type: simple
+          package-name: inhabit
+
+  build-release:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Build frontend
+        run: |
+          cd frontend
+          npm install
+          npm run build
+
+      - name: Update manifest version
+        run: |
+          VERSION="${{ needs.release-please.outputs.tag_name }}"
+          VERSION="${VERSION#v}"  # Remove 'v' prefix
+          python -c "
+          import json
+          with open('custom_components/inhabit/manifest.json', 'r') as f:
+              manifest = json.load(f)
+          manifest['version'] = '$VERSION'
+          with open('custom_components/inhabit/manifest.json', 'w') as f:
+              json.dump(manifest, f, indent=2)
+          "
+
+      - name: Create release artifact
+        run: |
+          mkdir -p dist
+          cp -r custom_components/inhabit dist/
+          cd dist && zip -r inhabit.zip inhabit
+
+      - name: Upload Release Asset
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ needs.release-please.outputs.tag_name }}
+          files: dist/inhabit.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -113,7 +113,7 @@ Export a floor plan or room as Lovelace card YAML.
 
 ```bash
 # Clone the repository
-git clone https://github.com/luca/ha-inhabit.git
+git clone https://github.com/lucasilverentand/ha-inhabit.git
 cd ha-inhabit
 
 # Install Python dependencies
