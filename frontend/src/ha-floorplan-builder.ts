@@ -250,13 +250,10 @@ export class HaFloorplanBuilder extends LitElement {
   private async _createFloorPlan(): Promise<void> {
     if (!this.hass) return;
 
-    const name = prompt("Enter floor plan name:");
-    if (!name) return;
-
     try {
       const result = await this.hass.callWS<FloorPlan>({
         type: "inhabit/floor_plans/create",
-        name,
+        name: "My Home",
         unit: "cm",
         grid_size: 10,
       });
