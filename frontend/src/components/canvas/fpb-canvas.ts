@@ -66,7 +66,7 @@ export class FpbCanvas extends LitElement {
       width: 100%;
       height: 100%;
       overflow: hidden;
-      background: #f5f5f5;
+      background: var(--card-background-color, #f5f5f5);
     }
 
     svg {
@@ -99,12 +99,12 @@ export class FpbCanvas extends LitElement {
     }
 
     .wall {
-      fill: #333;
+      fill: var(--primary-text-color, #333);
       stroke: none;
     }
 
     .wall.exterior {
-      fill: #1a1a1a;
+      fill: var(--primary-text-color, #1a1a1a);
     }
 
     .door {
@@ -168,8 +168,8 @@ export class FpbCanvas extends LitElement {
     }
 
     .wall-length-bg {
-      fill: white;
-      opacity: 0.9;
+      fill: var(--card-background-color, white);
+      opacity: 0.95;
     }
 
     .snap-indicator {
@@ -191,8 +191,8 @@ export class FpbCanvas extends LitElement {
     }
 
     .wall-endpoint circle {
-      fill: white;
-      stroke: #666;
+      fill: var(--card-background-color, white);
+      stroke: var(--divider-color, #666);
       stroke-width: 2;
     }
 
@@ -203,14 +203,14 @@ export class FpbCanvas extends LitElement {
     }
 
     .wall-endpoint text {
-      fill: #666;
+      fill: var(--secondary-text-color, #666);
       font-size: 16px;
       font-weight: bold;
       pointer-events: none;
     }
 
     .wall-endpoint:hover text {
-      fill: white;
+      fill: var(--text-primary-color, white);
     }
 
     .extend-button {
@@ -223,7 +223,7 @@ export class FpbCanvas extends LitElement {
     }
 
     .extend-button:hover .extend-icon {
-      fill: white;
+      fill: var(--text-primary-color, white);
     }
   `;
 
@@ -663,9 +663,16 @@ export class FpbCanvas extends LitElement {
   }
 
   private _getRandomRoomColor(): string {
+    // Colors that work in both light and dark themes (semi-transparent)
     const colors = [
-      "#e8e8e8", "#fce4ec", "#e8f5e9", "#e3f2fd",
-      "#fff3e0", "#f3e5f5", "#e0f7fa", "#fff8e1",
+      "rgba(156, 156, 156, 0.3)",  // gray
+      "rgba(244, 143, 177, 0.3)",  // pink
+      "rgba(129, 199, 132, 0.3)",  // green
+      "rgba(100, 181, 246, 0.3)",  // blue
+      "rgba(255, 183, 77, 0.3)",   // orange
+      "rgba(186, 104, 200, 0.3)",  // purple
+      "rgba(77, 208, 225, 0.3)",   // cyan
+      "rgba(255, 213, 79, 0.3)",   // yellow
     ];
     return colors[Math.floor(Math.random() * colors.length)];
   }
@@ -707,7 +714,7 @@ export class FpbCanvas extends LitElement {
             <path class="room ${sel.type === "room" && sel.ids.includes(room.id) ? "selected" : ""}"
                   d="${polygonToPath(room.polygon)}"
                   fill="${room.color}"
-                  stroke="#999"
+                  stroke="var(--divider-color, #999)"
                   stroke-width="1"/>
           `)}
 
@@ -830,8 +837,8 @@ export class FpbCanvas extends LitElement {
                  e.stopPropagation();
                  this._handleExtendWall(ep.coords);
                }}>
-              <circle class="extend-bg" r="${isHovered ? 12 : 8}" fill="#f0f0f0" stroke="#999" stroke-width="2"/>
-              <text class="extend-icon" text-anchor="middle" dominant-baseline="central" font-size="14" fill="#666">+</text>
+              <circle class="extend-bg" r="${isHovered ? 12 : 8}" fill="var(--secondary-background-color, #f0f0f0)" stroke="var(--divider-color, #999)" stroke-width="2"/>
+              <text class="extend-icon" text-anchor="middle" dominant-baseline="central" font-size="14" fill="var(--secondary-text-color, #666)">+</text>
             </g>
           `;
         })}

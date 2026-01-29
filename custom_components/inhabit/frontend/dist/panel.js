@@ -47,7 +47,7 @@ const dt=t=>(e,i)=>{void 0!==i?i.addInitializer(()=>{customElements.define(t,e)}
       width: 100%;
       height: 100%;
       overflow: hidden;
-      background: #f5f5f5;
+      background: var(--card-background-color, #f5f5f5);
     }
 
     svg {
@@ -80,12 +80,12 @@ const dt=t=>(e,i)=>{void 0!==i?i.addInitializer(()=>{customElements.define(t,e)}
     }
 
     .wall {
-      fill: #333;
+      fill: var(--primary-text-color, #333);
       stroke: none;
     }
 
     .wall.exterior {
-      fill: #1a1a1a;
+      fill: var(--primary-text-color, #1a1a1a);
     }
 
     .door {
@@ -149,8 +149,8 @@ const dt=t=>(e,i)=>{void 0!==i?i.addInitializer(()=>{customElements.define(t,e)}
     }
 
     .wall-length-bg {
-      fill: white;
-      opacity: 0.9;
+      fill: var(--card-background-color, white);
+      opacity: 0.95;
     }
 
     .snap-indicator {
@@ -172,8 +172,8 @@ const dt=t=>(e,i)=>{void 0!==i?i.addInitializer(()=>{customElements.define(t,e)}
     }
 
     .wall-endpoint circle {
-      fill: white;
-      stroke: #666;
+      fill: var(--card-background-color, white);
+      stroke: var(--divider-color, #666);
       stroke-width: 2;
     }
 
@@ -184,14 +184,14 @@ const dt=t=>(e,i)=>{void 0!==i?i.addInitializer(()=>{customElements.define(t,e)}
     }
 
     .wall-endpoint text {
-      fill: #666;
+      fill: var(--secondary-text-color, #666);
       font-size: 16px;
       font-weight: bold;
       pointer-events: none;
     }
 
     .wall-endpoint:hover text {
-      fill: white;
+      fill: var(--text-primary-color, white);
     }
 
     .extend-button {
@@ -204,9 +204,9 @@ const dt=t=>(e,i)=>{void 0!==i?i.addInitializer(()=>{customElements.define(t,e)}
     }
 
     .extend-button:hover .extend-icon {
-      fill: white;
+      fill: var(--text-primary-color, white);
     }
-  `}connectedCallback(){super.connectedCallback(),this._cleanupEffects.push(Lt(()=>{this._viewBox=Yt.value})),this._loadHaAreas()}disconnectedCallback(){super.disconnectedCallback(),this._cleanupEffects.forEach(t=>t()),this._cleanupEffects=[]}async _loadHaAreas(){if(this.hass)try{const t=await this.hass.callWS({type:"config/area_registry/list"});this._haAreas=t}catch(t){console.error("Error loading HA areas:",t)}}_handleWheel(t){t.preventDefault();const e=t.deltaY>0?1.1:.9,i=this._screenToSvg({x:t.clientX,y:t.clientY}),o=this._viewBox.width*e,r=this._viewBox.height*e;if(o<100||o>1e4)return;const s={x:i.x-(i.x-this._viewBox.x)*e,y:i.y-(i.y-this._viewBox.y)*e,width:o,height:r};Yt.value=s,this._viewBox=s}_handlePointerDown(t){const e=this._screenToSvg({x:t.clientX,y:t.clientY}),i=this._getSnappedPoint(e);if(1===t.button||0===t.button&&t.shiftKey)return this._isPanning=!0,this._panStart={x:t.clientX,y:t.clientY},void this._svg?.setPointerCapture(t.pointerId);const o=Zt.value;"select"===o?this._handleSelectClick(e):"wall"===o?this._handleWallClick(i):"room"!==o&&"polygon"!==o||this._handlePolygonClick(i)}_handlePointerMove(t){const e=this._screenToSvg({x:t.clientX,y:t.clientY});if(this._cursorPos=this._getSnappedPoint(e),this._isPanning){const e=(t.clientX-this._panStart.x)*(this._viewBox.width/this._svg.clientWidth),i=(t.clientY-this._panStart.y)*(this._viewBox.height/this._svg.clientHeight),o={...this._viewBox,x:this._viewBox.x-e,y:this._viewBox.y-i};return this._panStart={x:t.clientX,y:t.clientY},Yt.value=o,void(this._viewBox=o)}this._wallStartPoint||"select"!==Zt.value||this._checkEndpointHover(e)}_checkEndpointHover(t){const e=Vt.value;if(!e)return void(this._hoveredEndpoint=null);for(const i of e.walls){if(Math.sqrt(Math.pow(t.x-i.start.x,2)+Math.pow(t.y-i.start.y,2))<20)return void(this._hoveredEndpoint={wallId:i.id,point:"start",coords:i.start});if(Math.sqrt(Math.pow(t.x-i.end.x,2)+Math.pow(t.y-i.end.y,2))<20)return void(this._hoveredEndpoint={wallId:i.id,point:"end",coords:i.end})}this._hoveredEndpoint=null}_handlePointerUp(t){this._isPanning&&(this._isPanning=!1,this._svg?.releasePointerCapture(t.pointerId))}_handleKeyDown(t){"Escape"===t.key&&(this._wallStartPoint=null,this._drawingPoints=[],this._hoveredEndpoint=null,Xt.value={type:"none",ids:[]})}_handleExtendWall(t){this._wallStartPoint=t,this._hoveredEndpoint=null,Zt.value="wall"}_getSnappedPoint(t){const e=Vt.value;if(!e)return Jt.value?Ht(t,Kt.value):t;for(const i of e.walls)for(const e of[i.start,i.end]){if(Math.sqrt(Math.pow(t.x-e.x,2)+Math.pow(t.y-e.y,2))<15)return e}return Jt.value?Ht(t,Kt.value):t}_handleSelectClick(t){const e=Vt.value;if(!e)return;for(const i of e.rooms)if(this._pointInPolygon(t,i.polygon.vertices))return void(Xt.value={type:"room",ids:[i.id]});const i=Qt.value.filter(t=>t.floor_id===e.id);for(const e of i){if(Math.sqrt(Math.pow(t.x-e.position.x,2)+Math.pow(t.y-e.position.y,2))<15)return void(Xt.value={type:"device",ids:[e.id]})}Xt.value={type:"none",ids:[]}}_handleWallClick(t){this._wallStartPoint?(this._completeWall(this._wallStartPoint,t),this._checkForClosedShape(t),this._wallStartPoint=t):this._wallStartPoint=t}_handlePolygonClick(t){if(this._drawingPoints.length>=3){const e=this._drawingPoints[0];if(Math.sqrt(Math.pow(t.x-e.x,2)+Math.pow(t.y-e.y,2))<15)return void this._completePolygon()}this._drawingPoints=[...this._drawingPoints,t]}async _completeWall(t,e){if(!this.hass)return;const i=Vt.value,o=qt.value;if(i&&o)try{await this.hass.callWS({type:"inhabit/walls/add",floor_plan_id:o.id,floor_id:i.id,start:t,end:e,thickness:8}),window.location.reload()}catch(t){console.error("Error creating wall:",t)}}_checkForClosedShape(t){const e=Vt.value;if(!e||e.walls.length<2)return;const i=this._findClosedPolygon(e.walls,t);i&&i.length>=3&&this._promptCreateRoom(i)}_findClosedPolygon(t,e){const i=new Set,o=[e],r=(e,s,n)=>{if(n>20)return!1;const a=`${e.x},${e.y}`;if(i.has(a))return!1;if(i.add(a),o.length>=3){if(Math.sqrt(Math.pow(e.x-s.x,2)+Math.pow(e.y-s.y,2))<5)return!0}for(const i of t){let t=null;if(Math.abs(i.start.x-e.x)<5&&Math.abs(i.start.y-e.y)<5?t=i.end:Math.abs(i.end.x-e.x)<5&&Math.abs(i.end.y-e.y)<5&&(t=i.start),t){if(o.push(t),r(t,s,n+1))return!0;o.pop()}}return!1};for(const e of t)if(i.clear(),o.length=0,o.push(e.start),r(e.start,e.start,0))return[...o];return null}async _promptCreateRoom(t){if(!this.hass)return;const e=Vt.value,i=qt.value;if(!e||!i)return;const o=prompt("Closed shape detected! Enter room name (or cancel to skip):");if(!o)return;let r=null;if(this._haAreas.length>0){const t=this._haAreas.map(t=>t.name).join(", "),e=prompt(`Link to Home Assistant area? (${t}) or leave empty:`);if(e){const t=this._haAreas.find(t=>t.name.toLowerCase()===e.toLowerCase());t&&(r=t.area_id)}}try{await this.hass.callWS({type:"inhabit/rooms/add",floor_plan_id:i.id,floor_id:e.id,name:o,polygon:{vertices:t},color:this._getRandomRoomColor(),ha_area_id:r}),window.location.reload()}catch(t){console.error("Error creating room:",t),alert(`Failed to create room: ${t}`)}}async _completePolygon(){if(!this.hass||this._drawingPoints.length<3)return;const t=Vt.value,e=qt.value;if(!t||!e)return;const i=prompt("Enter room name:");if(!i)return void(this._drawingPoints=[]);let o=null;if(this._haAreas.length>0){const t=this._haAreas.map(t=>t.name).join(", "),e=prompt(`Link to Home Assistant area? (${t}) or leave empty:`);if(e){const t=this._haAreas.find(t=>t.name.toLowerCase()===e.toLowerCase());t&&(o=t.area_id)}}try{await this.hass.callWS({type:"inhabit/rooms/add",floor_plan_id:e.id,floor_id:t.id,name:i,polygon:{vertices:this._drawingPoints},color:this._getRandomRoomColor(),ha_area_id:o}),this._drawingPoints=[],window.location.reload()}catch(t){console.error("Error creating room:",t),alert(`Failed to create room: ${t}`)}}_screenToSvg(t){if(!this._svg)return t;const e=this._svg.getBoundingClientRect(),i=this._viewBox.width/e.width,o=this._viewBox.height/e.height;return{x:this._viewBox.x+(t.x-e.left)*i,y:this._viewBox.y+(t.y-e.top)*o}}_pointInPolygon(t,e){if(e.length<3)return!1;let i=!1;const o=e.length;for(let r=0,s=o-1;r<o;s=r++){const o=e[r],n=e[s];o.y>t.y!=n.y>t.y&&t.x<(n.x-o.x)*(t.y-o.y)/(n.y-o.y)+o.x&&(i=!i)}return i}_getRandomRoomColor(){const t=["#e8e8e8","#fce4ec","#e8f5e9","#e3f2fd","#fff3e0","#f3e5f5","#e0f7fa","#fff8e1"];return t[Math.floor(Math.random()*t.length)]}_calculateWallLength(t,e){return Math.sqrt(Math.pow(e.x-t.x,2)+Math.pow(e.y-t.y,2))}_formatLength(t){return t>=100?`${(t/100).toFixed(2)}m`:`${Math.round(t)}cm`}_renderFloor(){const t=Vt.value;if(!t)return null;const e=Xt.value,i=Gt.value;return q`
+  `}connectedCallback(){super.connectedCallback(),this._cleanupEffects.push(Lt(()=>{this._viewBox=Yt.value})),this._loadHaAreas()}disconnectedCallback(){super.disconnectedCallback(),this._cleanupEffects.forEach(t=>t()),this._cleanupEffects=[]}async _loadHaAreas(){if(this.hass)try{const t=await this.hass.callWS({type:"config/area_registry/list"});this._haAreas=t}catch(t){console.error("Error loading HA areas:",t)}}_handleWheel(t){t.preventDefault();const e=t.deltaY>0?1.1:.9,i=this._screenToSvg({x:t.clientX,y:t.clientY}),o=this._viewBox.width*e,r=this._viewBox.height*e;if(o<100||o>1e4)return;const s={x:i.x-(i.x-this._viewBox.x)*e,y:i.y-(i.y-this._viewBox.y)*e,width:o,height:r};Yt.value=s,this._viewBox=s}_handlePointerDown(t){const e=this._screenToSvg({x:t.clientX,y:t.clientY}),i=this._getSnappedPoint(e);if(1===t.button||0===t.button&&t.shiftKey)return this._isPanning=!0,this._panStart={x:t.clientX,y:t.clientY},void this._svg?.setPointerCapture(t.pointerId);const o=Zt.value;"select"===o?this._handleSelectClick(e):"wall"===o?this._handleWallClick(i):"room"!==o&&"polygon"!==o||this._handlePolygonClick(i)}_handlePointerMove(t){const e=this._screenToSvg({x:t.clientX,y:t.clientY});if(this._cursorPos=this._getSnappedPoint(e),this._isPanning){const e=(t.clientX-this._panStart.x)*(this._viewBox.width/this._svg.clientWidth),i=(t.clientY-this._panStart.y)*(this._viewBox.height/this._svg.clientHeight),o={...this._viewBox,x:this._viewBox.x-e,y:this._viewBox.y-i};return this._panStart={x:t.clientX,y:t.clientY},Yt.value=o,void(this._viewBox=o)}this._wallStartPoint||"select"!==Zt.value||this._checkEndpointHover(e)}_checkEndpointHover(t){const e=Vt.value;if(!e)return void(this._hoveredEndpoint=null);for(const i of e.walls){if(Math.sqrt(Math.pow(t.x-i.start.x,2)+Math.pow(t.y-i.start.y,2))<20)return void(this._hoveredEndpoint={wallId:i.id,point:"start",coords:i.start});if(Math.sqrt(Math.pow(t.x-i.end.x,2)+Math.pow(t.y-i.end.y,2))<20)return void(this._hoveredEndpoint={wallId:i.id,point:"end",coords:i.end})}this._hoveredEndpoint=null}_handlePointerUp(t){this._isPanning&&(this._isPanning=!1,this._svg?.releasePointerCapture(t.pointerId))}_handleKeyDown(t){"Escape"===t.key&&(this._wallStartPoint=null,this._drawingPoints=[],this._hoveredEndpoint=null,Xt.value={type:"none",ids:[]})}_handleExtendWall(t){this._wallStartPoint=t,this._hoveredEndpoint=null,Zt.value="wall"}_getSnappedPoint(t){const e=Vt.value;if(!e)return Jt.value?Ht(t,Kt.value):t;for(const i of e.walls)for(const e of[i.start,i.end]){if(Math.sqrt(Math.pow(t.x-e.x,2)+Math.pow(t.y-e.y,2))<15)return e}return Jt.value?Ht(t,Kt.value):t}_handleSelectClick(t){const e=Vt.value;if(!e)return;for(const i of e.rooms)if(this._pointInPolygon(t,i.polygon.vertices))return void(Xt.value={type:"room",ids:[i.id]});const i=Qt.value.filter(t=>t.floor_id===e.id);for(const e of i){if(Math.sqrt(Math.pow(t.x-e.position.x,2)+Math.pow(t.y-e.position.y,2))<15)return void(Xt.value={type:"device",ids:[e.id]})}Xt.value={type:"none",ids:[]}}_handleWallClick(t){this._wallStartPoint?(this._completeWall(this._wallStartPoint,t),this._checkForClosedShape(t),this._wallStartPoint=t):this._wallStartPoint=t}_handlePolygonClick(t){if(this._drawingPoints.length>=3){const e=this._drawingPoints[0];if(Math.sqrt(Math.pow(t.x-e.x,2)+Math.pow(t.y-e.y,2))<15)return void this._completePolygon()}this._drawingPoints=[...this._drawingPoints,t]}async _completeWall(t,e){if(!this.hass)return;const i=Vt.value,o=qt.value;if(i&&o)try{await this.hass.callWS({type:"inhabit/walls/add",floor_plan_id:o.id,floor_id:i.id,start:t,end:e,thickness:8}),window.location.reload()}catch(t){console.error("Error creating wall:",t)}}_checkForClosedShape(t){const e=Vt.value;if(!e||e.walls.length<2)return;const i=this._findClosedPolygon(e.walls,t);i&&i.length>=3&&this._promptCreateRoom(i)}_findClosedPolygon(t,e){const i=new Set,o=[e],r=(e,s,n)=>{if(n>20)return!1;const a=`${e.x},${e.y}`;if(i.has(a))return!1;if(i.add(a),o.length>=3){if(Math.sqrt(Math.pow(e.x-s.x,2)+Math.pow(e.y-s.y,2))<5)return!0}for(const i of t){let t=null;if(Math.abs(i.start.x-e.x)<5&&Math.abs(i.start.y-e.y)<5?t=i.end:Math.abs(i.end.x-e.x)<5&&Math.abs(i.end.y-e.y)<5&&(t=i.start),t){if(o.push(t),r(t,s,n+1))return!0;o.pop()}}return!1};for(const e of t)if(i.clear(),o.length=0,o.push(e.start),r(e.start,e.start,0))return[...o];return null}async _promptCreateRoom(t){if(!this.hass)return;const e=Vt.value,i=qt.value;if(!e||!i)return;const o=prompt("Closed shape detected! Enter room name (or cancel to skip):");if(!o)return;let r=null;if(this._haAreas.length>0){const t=this._haAreas.map(t=>t.name).join(", "),e=prompt(`Link to Home Assistant area? (${t}) or leave empty:`);if(e){const t=this._haAreas.find(t=>t.name.toLowerCase()===e.toLowerCase());t&&(r=t.area_id)}}try{await this.hass.callWS({type:"inhabit/rooms/add",floor_plan_id:i.id,floor_id:e.id,name:o,polygon:{vertices:t},color:this._getRandomRoomColor(),ha_area_id:r}),window.location.reload()}catch(t){console.error("Error creating room:",t),alert(`Failed to create room: ${t}`)}}async _completePolygon(){if(!this.hass||this._drawingPoints.length<3)return;const t=Vt.value,e=qt.value;if(!t||!e)return;const i=prompt("Enter room name:");if(!i)return void(this._drawingPoints=[]);let o=null;if(this._haAreas.length>0){const t=this._haAreas.map(t=>t.name).join(", "),e=prompt(`Link to Home Assistant area? (${t}) or leave empty:`);if(e){const t=this._haAreas.find(t=>t.name.toLowerCase()===e.toLowerCase());t&&(o=t.area_id)}}try{await this.hass.callWS({type:"inhabit/rooms/add",floor_plan_id:e.id,floor_id:t.id,name:i,polygon:{vertices:this._drawingPoints},color:this._getRandomRoomColor(),ha_area_id:o}),this._drawingPoints=[],window.location.reload()}catch(t){console.error("Error creating room:",t),alert(`Failed to create room: ${t}`)}}_screenToSvg(t){if(!this._svg)return t;const e=this._svg.getBoundingClientRect(),i=this._viewBox.width/e.width,o=this._viewBox.height/e.height;return{x:this._viewBox.x+(t.x-e.left)*i,y:this._viewBox.y+(t.y-e.top)*o}}_pointInPolygon(t,e){if(e.length<3)return!1;let i=!1;const o=e.length;for(let r=0,s=o-1;r<o;s=r++){const o=e[r],n=e[s];o.y>t.y!=n.y>t.y&&t.x<(n.x-o.x)*(t.y-o.y)/(n.y-o.y)+o.x&&(i=!i)}return i}_getRandomRoomColor(){const t=["rgba(156, 156, 156, 0.3)","rgba(244, 143, 177, 0.3)","rgba(129, 199, 132, 0.3)","rgba(100, 181, 246, 0.3)","rgba(255, 183, 77, 0.3)","rgba(186, 104, 200, 0.3)","rgba(77, 208, 225, 0.3)","rgba(255, 213, 79, 0.3)"];return t[Math.floor(Math.random()*t.length)]}_calculateWallLength(t,e){return Math.sqrt(Math.pow(e.x-t.x,2)+Math.pow(e.y-t.y,2))}_formatLength(t){return t>=100?`${(t/100).toFixed(2)}m`:`${Math.round(t)}cm`}_renderFloor(){const t=Vt.value;if(!t)return null;const e=Xt.value,i=Gt.value;return q`
       <!-- Background layer -->
       ${i.find(t=>"background"===t.id)?.visible&&t.background_image?q`
         <image href="${t.background_image}"
@@ -224,7 +224,7 @@ const dt=t=>(e,i)=>{void 0!==i?i.addInitializer(()=>{customElements.define(t,e)}
             <path class="room ${"room"===e.type&&e.ids.includes(t.id)?"selected":""}"
                   d="${function(t){const e=t.vertices;if(0===e.length)return"";const i=e.map((t,e)=>`${0===e?"M":"L"}${t.x},${t.y}`);return i.join(" ")+" Z"}(t.polygon)}"
                   fill="${t.color}"
-                  stroke="#999"
+                  stroke="var(--divider-color, #999)"
                   stroke-width="1"/>
           `)}
 
@@ -281,8 +281,8 @@ const dt=t=>(e,i)=>{void 0!==i?i.addInitializer(()=>{customElements.define(t,e)}
             <g class="extend-button"
                transform="translate(${t.coords.x}, ${t.coords.y})"
                @click=${e=>{e.stopPropagation(),this._handleExtendWall(t.coords)}}>
-              <circle class="extend-bg" r="${e?12:8}" fill="#f0f0f0" stroke="#999" stroke-width="2"/>
-              <text class="extend-icon" text-anchor="middle" dominant-baseline="central" font-size="14" fill="#666">+</text>
+              <circle class="extend-bg" r="${e?12:8}" fill="var(--secondary-background-color, #f0f0f0)" stroke="var(--divider-color, #999)" stroke-width="2"/>
+              <text class="extend-icon" text-anchor="middle" dominant-baseline="central" font-size="14" fill="var(--secondary-text-color, #666)">+</text>
             </g>
           `})}
       </g>
