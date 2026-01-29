@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Background -->
+  <rect width="512" height="512" rx="64" fill="#4A90D9"/>
+
+  <!-- Floor plan outline -->
+  <g fill="none" stroke="#FFFFFF" stroke-width="16" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Outer walls -->
+    <rect x="80" y="80" width="352" height="352" rx="8"/>
+
+    <!-- Horizontal divider (top rooms from bottom) -->
+    <line x1="80" y1="240" x2="320" y2="240"/>
+
+    <!-- Vertical divider (left rooms from right) -->
+    <line x1="280" y1="80" x2="280" y2="240"/>
+
+    <!-- Bottom vertical divider -->
+    <line x1="220" y1="320" x2="220" y2="432"/>
+
+    <!-- Horizontal line for bottom section -->
+    <line x1="80" y1="320" x2="432" y2="320"/>
+  </g>
+
+  <!-- Door openings (gaps in walls) -->
+  <g fill="#4A90D9">
+    <!-- Door to top-left room -->
+    <rect x="140" y="232" width="50" height="16"/>
+    <!-- Door to top-right room -->
+    <rect x="320" y="232" width="50" height="16"/>
+    <!-- Door between bottom rooms -->
+    <rect x="212" y="360" width="16" height="50"/>
+    <!-- Main entrance -->
+    <rect x="340" y="424" width="60" height="16"/>
+  </g>
+
+  <!-- Door arcs/swings -->
+  <g fill="none" stroke="#FFFFFF" stroke-width="6" opacity="0.6">
+    <path d="M 145 240 A 35 35 0 0 1 180 275"/>
+    <path d="M 325 240 A 35 35 0 0 0 360 275"/>
+    <path d="M 220 365 A 35 35 0 0 1 255 400"/>
+  </g>
+
+  <!-- Room indicators (small filled circles) -->
+  <g fill="#FFFFFF" opacity="0.4">
+    <!-- Living room indicator -->
+    <circle cx="160" cy="160" r="20"/>
+    <!-- Bedroom indicator -->
+    <circle cx="356" cy="160" r="20"/>
+    <!-- Kitchen indicator -->
+    <circle cx="140" cy="376" r="20"/>
+    <!-- Dining indicator -->
+    <circle cx="340" cy="376" r="20"/>
+  </g>
+</svg>
