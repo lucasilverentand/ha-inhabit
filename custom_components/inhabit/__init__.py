@@ -87,7 +87,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         async_register_built_in_panel(
             hass,
             component_name="custom",
-            sidebar_title="Floor Plan",
+            sidebar_title="Inhabit",
             sidebar_icon="mdi:floor-plan",
             frontend_url_path="inhabit",
             require_admin=False,
