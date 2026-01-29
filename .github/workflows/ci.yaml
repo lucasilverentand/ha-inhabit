@@ -188,6 +188,8 @@ jobs:
         uses: hacs/action@main
         with:
           category: integration
+          # Skip brands check - requires external registration at https://github.com/home-assistant/brands
+          ignore: brands
 
   release:
     name: Release
