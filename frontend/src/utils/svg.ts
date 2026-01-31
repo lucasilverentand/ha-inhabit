@@ -140,7 +140,7 @@ export function doorSwingPath(
 }
 
 /**
- * Create wall path with thickness
+ * Create wall path with thickness (for single walls)
  */
 export function wallPath(
   start: Coordinates,
@@ -162,6 +162,207 @@ export function wallPath(
           L${end.x - nx},${end.y - ny}
           L${start.x - nx},${start.y - ny}
           Z`;
+}
+
+/**
+ * Group walls into connected chains
+ */
+export function groupWallsIntoChains(
+  walls: Array<{ id: string; start: Coordinates; end: Coordinates; thickness: number }>
+): Array<Array<{ id: string; start: Coordinates; end: Coordinates; thickness: number }>> {
+  if (walls.length === 0) return [];
+
+  const used = new Set<string>();
+  const chains: Array<Array<typeof walls[0]>> = [];
+  const tolerance = 1; // Connection tolerance
+
+  const pointsMatch = (p1: Coordinates, p2: Coordinates): boolean => {
+    return Math.abs(p1.x - p2.x) < tolerance && Math.abs(p1.y - p2.y) < tolerance;
+  };
+
+  for (const startWall of walls) {
+    if (used.has(startWall.id)) continue;
+
+    const chain: typeof walls = [startWall];
+    used.add(startWall.id);
+
+    // Extend forward from end
+    let currentEnd = startWall.end;
+    let found = true;
+    while (found) {
+      found = false;
+      for (const wall of walls) {
+        if (used.has(wall.id)) continue;
+        if (pointsMatch(wall.start, currentEnd)) {
+          chain.push(wall);
+          used.add(wall.id);
+          currentEnd = wall.end;
+          found = true;
+          break;
+        } else if (pointsMatch(wall.end, currentEnd)) {
+          // Reverse the wall
+          chain.push({ ...wall, start: wall.end, end: wall.start });
+          used.add(wall.id);
+          currentEnd = wall.start;
+          found = true;
+          break;
+        }
+      }
+    }
+
+    // Extend backward from start
+    let currentStart = startWall.start;
+    found = true;
+    while (found) {
+      found = false;
+      for (const wall of walls) {
+        if (used.has(wall.id)) continue;
+        if (pointsMatch(wall.end, currentStart)) {
+          chain.unshift(wall);
+          used.add(wall.id);
+          currentStart = wall.start;
+          found = true;
+          break;
+        } else if (pointsMatch(wall.start, currentStart)) {
+          // Reverse the wall
+          chain.unshift({ ...wall, start: wall.end, end: wall.start });
+          used.add(wall.id);
+          currentStart = wall.end;
+          found = true;
+          break;
+        }
+      }
+    }
+
+    chains.push(chain);
+  }
+
+  return chains;
+}
+
+/**
+ * Create a wall chain path with proper miter joints at corners
+ */
+export function wallChainPath(
+  chain: Array<{ start: Coordinates; end: Coordinates; thickness: number }>
+): string {
+  if (chain.length === 0) return "";
+
+  const thickness = chain[0].thickness;
+  const halfThick = thickness / 2;
+
+  // Build list of vertices along the centerline
+  const centerline: Coordinates[] = [chain[0].start];
+  for (const wall of chain) {
+    centerline.push(wall.end);
+  }
+
+  // Check if it's a closed loop
+  const isClosed = centerline.length > 2 &&
+    Math.abs(centerline[0].x - centerline[centerline.length - 1].x) < 1 &&
+    Math.abs(centerline[0].y - centerline[centerline.length - 1].y) < 1;
+
+  // Calculate offset points on both sides
+  const leftPoints: Coordinates[] = [];
+  const rightPoints: Coordinates[] = [];
+
+  for (let i = 0; i < centerline.length; i++) {
+    const curr = centerline[i];
+
+    // Get directions to prev and next points
+    let prevDir: Coordinates | null = null;
+    let nextDir: Coordinates | null = null;
+
+    if (i > 0 || isClosed) {
+      const prevIdx = i > 0 ? i - 1 : centerline.length - 2;
+      const prev = centerline[prevIdx];
+      const dx = curr.x - prev.x;
+      const dy = curr.y - prev.y;
+      const len = Math.sqrt(dx * dx + dy * dy);
+      if (len > 0) {
+        prevDir = { x: dx / len, y: dy / len };
+      }
+    }
+
+    if (i < centerline.length - 1 || isClosed) {
+      const nextIdx = i < centerline.length - 1 ? i + 1 : 1;
+      const next = centerline[nextIdx];
+      const dx = next.x - curr.x;
+      const dy = next.y - curr.y;
+      const len = Math.sqrt(dx * dx + dy * dy);
+      if (len > 0) {
+        nextDir = { x: dx / len, y: dy / len };
+      }
+    }
+
+    // Calculate the offset direction (bisector of the angle)
+    let offsetDir: Coordinates;
+
+    if (prevDir && nextDir) {
+      // Average the perpendiculars to get the miter direction
+      const prevPerp = { x: -prevDir.y, y: prevDir.x };
+      const nextPerp = { x: -nextDir.y, y: nextDir.x };
+
+      // Bisector
+      const bisX = prevPerp.x + nextPerp.x;
+      const bisY = prevPerp.y + nextPerp.y;
+      const bisLen = Math.sqrt(bisX * bisX + bisY * bisY);
+
+      if (bisLen < 0.01) {
+        // Parallel lines, just use perpendicular
+        offsetDir = prevPerp;
+      } else {
+        offsetDir = { x: bisX / bisLen, y: bisY / bisLen };
+
+        // Scale to maintain wall thickness at the miter
+        // The miter length = thickness / (2 * cos(angle/2))
+        const dot = prevPerp.x * offsetDir.x + prevPerp.y * offsetDir.y;
+        if (Math.abs(dot) > 0.1) {
+          const scale = 1 / dot;
+          // Limit miter extension to avoid very long points
+          const limitedScale = Math.min(Math.abs(scale), 3) * Math.sign(scale);
+          offsetDir = { x: offsetDir.x * limitedScale, y: offsetDir.y * limitedScale };
+        }
+      }
+    } else if (prevDir) {
+      offsetDir = { x: -prevDir.y, y: prevDir.x };
+    } else if (nextDir) {
+      offsetDir = { x: -nextDir.y, y: nextDir.x };
+    } else {
+      offsetDir = { x: 1, y: 0 };
+    }
+
+    leftPoints.push({
+      x: curr.x + offsetDir.x * halfThick,
+      y: curr.y + offsetDir.y * halfThick,
+    });
+    rightPoints.push({
+      x: curr.x - offsetDir.x * halfThick,
+      y: curr.y - offsetDir.y * halfThick,
+    });
+  }
+
+  // Build path: left side forward, then right side backward
+  let path = `M${leftPoints[0].x},${leftPoints[0].y}`;
+  for (let i = 1; i < leftPoints.length; i++) {
+    path += ` L${leftPoints[i].x},${leftPoints[i].y}`;
+  }
+
+  // If not closed, connect to right side
+  if (!isClosed) {
+    for (let i = rightPoints.length - 1; i >= 0; i--) {
+      path += ` L${rightPoints[i].x},${rightPoints[i].y}`;
+    }
+  } else {
+    // For closed paths, we need to handle differently
+    path += ` L${rightPoints[rightPoints.length - 1].x},${rightPoints[rightPoints.length - 1].y}`;
+    for (let i = rightPoints.length - 2; i >= 0; i--) {
+      path += ` L${rightPoints[i].x},${rightPoints[i].y}`;
+    }
+  }
+
+  path += " Z";
+  return path;
 }
 
 /**

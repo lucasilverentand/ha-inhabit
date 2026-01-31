@@ -5,7 +5,7 @@
 import { LitElement, html, css, svg } from "lit";
 import { customElement, property, state, query } from "lit/decorators.js";
 import { effect } from "@preact/signals-core";
-import type { HomeAssistant, Coordinates, ViewBox, Floor, Wall } from "../../types";
+import type { HomeAssistant, Coordinates, ViewBox, Wall } from "../../types";
 import {
   currentFloor,
   currentFloorPlan,
@@ -16,15 +16,11 @@ import {
   activeTool,
   selection,
   devicePlacements,
+  reloadFloorData,
 } from "../../ha-floorplan-builder";
-import { polygonToPath, wallPath, viewBoxToString } from "../../utils/svg";
+import { polygonToPath, viewBoxToString, groupWallsIntoChains, wallChainPath } from "../../utils/svg";
 import { snapToGrid as snapPoint } from "../../utils/geometry";
-
-interface WallSegment {
-  start: Coordinates;
-  end: Coordinates;
-  id?: string;
-}
+import { buildConnectionGraph, solveWallLengthChange, solveWallMovement } from "../../utils/wall-solver";
 
 @customElement("fpb-canvas")
 export class FpbCanvas extends LitElement {
@@ -56,16 +52,22 @@ export class FpbCanvas extends LitElement {
   private _haAreas: Array<{ area_id: string; name: string }> = [];
 
   @state()
-  private _hoveredEndpoint: { wallId: string; point: "start" | "end"; coords: Coordinates } | null = null;
+  private _hoveredEndpoint: { coords: Coordinates; wallIds: string[] } | null = null;
 
   @state()
-  private _selectedWall: Wall | null = null;
+  private _draggingEndpoint: { coords: Coordinates; wallIds: string[]; originalCoords: Coordinates; startX: number; startY: number; hasMoved: boolean } | null = null;
 
   @state()
   private _wallEditor: { wall: Wall; position: Coordinates; length: number } | null = null;
 
   @state()
   private _editingLength: string = "";
+
+  @state()
+  private _pendingDevice: { position: Coordinates } | null = null;
+
+  @state()
+  private _entitySearch: string = "";
 
   private _cleanupEffects: (() => void)[] = [];
 
@@ -83,6 +85,11 @@ export class FpbCanvas extends LitElement {
       width: 100%;
       height: 100%;
       cursor: crosshair;
+      outline: none;
+    }
+
+    svg:focus {
+      outline: none;
     }
 
     svg.panning {
@@ -111,15 +118,13 @@ export class FpbCanvas extends LitElement {
     .wall {
       fill: var(--primary-text-color, #333);
       stroke: none;
-      cursor: pointer;
+      pointer-events: none;
     }
 
-    .wall:hover {
+    .wall-selected-highlight {
       fill: var(--primary-color, #2196f3);
-    }
-
-    .wall.selected {
-      fill: var(--primary-color, #2196f3);
+      stroke: none;
+      pointer-events: none;
     }
 
     .door {
@@ -201,64 +206,88 @@ export class FpbCanvas extends LitElement {
     }
 
     .wall-endpoint {
-      cursor: pointer;
-      transition: all 0.2s ease;
-    }
-
-    .wall-endpoint circle {
-      fill: var(--card-background-color, white);
-      stroke: var(--divider-color, #666);
-      stroke-width: 2;
-    }
-
-    .wall-endpoint:hover circle {
       fill: var(--primary-color, #2196f3);
-      stroke: var(--primary-color, #2196f3);
-      r: 10;
+      stroke: white;
+      stroke-width: 2;
+      cursor: pointer;
     }
 
-    .wall-endpoint text {
+    .wall-endpoint.dragging {
+      cursor: grabbing;
+    }
+
+    .wall-original-ghost {
       fill: var(--secondary-text-color, #666);
-      font-size: 16px;
-      font-weight: bold;
+      fill-opacity: 0.3;
+      stroke: none;
       pointer-events: none;
     }
 
-    .wall-endpoint:hover text {
-      fill: var(--text-primary-color, white);
-    }
-
-    .extend-button {
-      cursor: pointer;
-      transition: all 0.15s ease;
-    }
-
-    .extend-button:hover .extend-bg {
-      fill: var(--primary-color, #2196f3);
-    }
-
-    .extend-button:hover .extend-icon {
-      fill: var(--text-primary-color, white);
+    .wall-preview-shape {
+      fill: var(--primary-text-color, #333);
+      stroke: none;
+      pointer-events: none;
     }
 
     .wall-editor {
       position: absolute;
+      bottom: 16px;
+      right: 16px;
+      width: 280px;
       background: var(--card-background-color, white);
       border: 1px solid var(--divider-color, #ccc);
-      border-radius: 8px;
-      padding: 8px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+      border-radius: 12px;
+      padding: 16px;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+      z-index: 100;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .wall-editor-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .wall-editor-title {
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--primary-text-color, #333);
+    }
+
+    .wall-editor-close {
+      background: none;
+      border: none;
+      cursor: pointer;
+      padding: 4px;
+      color: var(--secondary-text-color, #666);
+      font-size: 16px;
+      line-height: 1;
+    }
+
+    .wall-editor-close:hover {
+      color: var(--primary-text-color, #333);
+    }
+
+    .wall-editor-row {
       display: flex;
       align-items: center;
       gap: 8px;
-      z-index: 100;
+    }
+
+    .wall-editor-label {
+      font-size: 12px;
+      color: var(--secondary-text-color, #666);
+      min-width: 50px;
     }
 
     .wall-editor input {
-      width: 70px;
-      padding: 4px 8px;
+      flex: 1;
+      padding: 8px 12px;
       border: 1px solid var(--divider-color, #ccc);
-      border-radius: 4px;
+      border-radius: 6px;
       font-size: 14px;
       background: var(--primary-background-color, white);
       color: var(--primary-text-color, #333);
@@ -269,17 +298,57 @@ export class FpbCanvas extends LitElement {
       border-color: var(--primary-color, #2196f3);
     }
 
-    .wall-editor span {
+    .wall-editor-unit {
       font-size: 12px;
       color: var(--secondary-text-color, #666);
     }
 
-    .wall-editor button {
-      padding: 4px 8px;
-      border: none;
-      border-radius: 4px;
+    .wall-editor-constraints {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .wall-editor .constraint-btn {
+      padding: 6px 10px;
+      border: 1px solid var(--divider-color, #ccc);
+      border-radius: 6px;
+      background: var(--secondary-background-color, #e0e0e0);
+      color: var(--primary-text-color, #333);
       cursor: pointer;
       font-size: 12px;
+      line-height: 1;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .wall-editor .constraint-btn:hover {
+      background: var(--primary-color, #2196f3);
+      color: white;
+      border-color: var(--primary-color, #2196f3);
+    }
+
+    .wall-editor .constraint-btn.active {
+      background: var(--primary-color, #2196f3);
+      color: white;
+      border-color: var(--primary-color, #2196f3);
+    }
+
+    .wall-editor-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 4px;
+    }
+
+    .wall-editor-actions button {
+      flex: 1;
+      padding: 8px 12px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 500;
     }
 
     .wall-editor .save-btn {
@@ -287,14 +356,106 @@ export class FpbCanvas extends LitElement {
       color: white;
     }
 
+    .wall-editor .save-btn:hover {
+      opacity: 0.9;
+    }
+
     .wall-editor .delete-btn {
       background: var(--error-color, #f44336);
       color: white;
     }
 
-    .wall-editor .cancel-btn {
-      background: var(--secondary-background-color, #e0e0e0);
+    .wall-editor .delete-btn:hover {
+      opacity: 0.9;
+    }
+
+    .wall-constraint-indicator {
+      font-size: 10px;
+      fill: var(--primary-color, #2196f3);
+      text-anchor: middle;
+      dominant-baseline: middle;
+      pointer-events: none;
+    }
+
+    .wall-constraint-bg {
+      fill: var(--card-background-color, white);
+      stroke: var(--primary-color, #2196f3);
+      stroke-width: 1;
+    }
+
+    .entity-picker {
+      position: absolute;
+      background: var(--card-background-color, white);
+      border: 1px solid var(--divider-color, #ccc);
+      border-radius: 8px;
+      padding: 8px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+      z-index: 100;
+      width: 250px;
+      max-height: 300px;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .entity-picker input {
+      width: 100%;
+      padding: 8px;
+      border: 1px solid var(--divider-color, #ccc);
+      border-radius: 4px;
+      font-size: 14px;
+      background: var(--primary-background-color, white);
       color: var(--primary-text-color, #333);
+      box-sizing: border-box;
+      margin-bottom: 8px;
+    }
+
+    .entity-picker input:focus {
+      outline: none;
+      border-color: var(--primary-color, #2196f3);
+    }
+
+    .entity-list {
+      overflow-y: auto;
+      max-height: 220px;
+    }
+
+    .entity-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 13px;
+    }
+
+    .entity-item:hover {
+      background: var(--secondary-background-color, #f0f0f0);
+    }
+
+    .entity-item ha-icon {
+      --mdc-icon-size: 18px;
+      color: var(--secondary-text-color, #666);
+    }
+
+    .entity-item.on ha-icon {
+      color: var(--state-light-active-color, #ffd600);
+    }
+
+    .entity-item .name {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .entity-item .state {
+      font-size: 11px;
+      color: var(--secondary-text-color, #666);
+    }
+
+    .device-preview {
+      pointer-events: none;
     }
   `;
 
@@ -351,11 +512,9 @@ export class FpbCanvas extends LitElement {
     const point = this._screenToSvg({ x: e.clientX, y: e.clientY });
     const snappedPoint = this._getSnappedPoint(point);
 
-    // Close wall editor if clicking outside
-    if (this._wallEditor) {
-      // Don't close if clicking on the editor itself (handled by stopPropagation)
-      this._wallEditor = null;
-      selection.value = { type: "none", ids: [] };
+    // Close entity picker if clicking outside (but not when in device mode placing a new one)
+    if (this._pendingDevice && activeTool.value !== "device") {
+      this._pendingDevice = null;
     }
 
     // Middle button always pans
@@ -371,20 +530,34 @@ export class FpbCanvas extends LitElement {
     // Left click behavior depends on tool
     if (e.button === 0) {
       if (tool === "select") {
+        // Close wall editor first (will be reopened if clicking on a wall)
+        const hadEditor = !!this._wallEditor;
+        this._wallEditor = null;
+
         // Check if clicking on something selectable
         const clickedSomething = this._handleSelectClick(point);
         if (!clickedSomething) {
+          // Clear selection if we had an editor open
+          if (hadEditor) {
+            selection.value = { type: "none", ids: [] };
+          }
           // Start panning if clicking on empty space
           this._isPanning = true;
           this._panStart = { x: e.clientX, y: e.clientY };
           this._svg?.setPointerCapture(e.pointerId);
         }
       } else if (tool === "wall") {
+        this._wallEditor = null;
         this._handleWallClick(snappedPoint);
       } else if (tool === "room" || tool === "polygon") {
+        this._wallEditor = null;
         this._handlePolygonClick(snappedPoint);
+      } else if (tool === "device") {
+        this._wallEditor = null;
+        this._handleDeviceClick(snappedPoint);
       } else {
         // Other tools - pan on empty space
+        this._wallEditor = null;
         this._isPanning = true;
         this._panStart = { x: e.clientX, y: e.clientY };
         this._svg?.setPointerCapture(e.pointerId);
@@ -392,9 +565,32 @@ export class FpbCanvas extends LitElement {
     }
   }
 
+  private _handleDeviceClick(point: Coordinates): void {
+    // Open entity picker at this position
+    this._pendingDevice = { position: point };
+    this._entitySearch = "";
+  }
+
   private _handlePointerMove(e: PointerEvent): void {
     const point = this._screenToSvg({ x: e.clientX, y: e.clientY });
-    this._cursorPos = this._getSnappedPoint(point);
+    const tool = activeTool.value;
+    // Enable wall segment snapping for device tool
+    this._cursorPos = this._getSnappedPoint(point, tool === "device");
+
+    // Handle endpoint dragging
+    if (this._draggingEndpoint) {
+      // Check if we've moved enough to count as a drag (not just a click)
+      const dx = e.clientX - this._draggingEndpoint.startX;
+      const dy = e.clientY - this._draggingEndpoint.startY;
+      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
+        this._draggingEndpoint.hasMoved = true;
+      }
+
+      // Snap to 1cm (integer coordinates) and other endpoints while dragging
+      this._cursorPos = this._getSnappedPointForEndpoint(point);
+      this.requestUpdate();
+      return;
+    }
 
     if (this._isPanning) {
       const dx = (e.clientX - this._panStart.x) * (this._viewBox.width / this._svg!.clientWidth);
@@ -413,36 +609,21 @@ export class FpbCanvas extends LitElement {
     }
 
     // Check for hovering over wall endpoints (only when not drawing)
-    if (!this._wallStartPoint && activeTool.value === "select") {
+    if (!this._wallStartPoint && tool === "select") {
       this._checkEndpointHover(point);
     }
   }
 
   private _checkEndpointHover(point: Coordinates): void {
-    const floor = currentFloor.value;
-    if (!floor) {
-      this._hoveredEndpoint = null;
-      return;
-    }
+    const endpoints = this._getWallEndpoints();
+    const hoverDistance = 15;
 
-    const hoverDistance = 20;
-
-    for (const wall of floor.walls) {
-      // Check start point
-      const distStart = Math.sqrt(
-        Math.pow(point.x - wall.start.x, 2) + Math.pow(point.y - wall.start.y, 2)
+    for (const ep of endpoints.values()) {
+      const dist = Math.sqrt(
+        Math.pow(point.x - ep.coords.x, 2) + Math.pow(point.y - ep.coords.y, 2)
       );
-      if (distStart < hoverDistance) {
-        this._hoveredEndpoint = { wallId: wall.id, point: "start", coords: wall.start };
-        return;
-      }
-
-      // Check end point
-      const distEnd = Math.sqrt(
-        Math.pow(point.x - wall.end.x, 2) + Math.pow(point.y - wall.end.y, 2)
-      );
-      if (distEnd < hoverDistance) {
-        this._hoveredEndpoint = { wallId: wall.id, point: "end", coords: wall.end };
+      if (dist < hoverDistance) {
+        this._hoveredEndpoint = ep;
         return;
       }
     }
@@ -451,10 +632,111 @@ export class FpbCanvas extends LitElement {
   }
 
   private _handlePointerUp(e: PointerEvent): void {
+    if (this._draggingEndpoint) {
+      if (this._draggingEndpoint.hasMoved) {
+        // It was a drag - move the endpoint
+        this._finishEndpointDrag();
+      } else {
+        // It was a click - start a new wall from this point
+        this._startWallFromEndpoint();
+      }
+      this._svg?.releasePointerCapture(e.pointerId);
+      return;
+    }
+
     if (this._isPanning) {
       this._isPanning = false;
       this._svg?.releasePointerCapture(e.pointerId);
     }
+  }
+
+  private _startWallFromEndpoint(): void {
+    if (!this._draggingEndpoint) return;
+
+    // Start drawing a new wall from this endpoint
+    this._wallStartPoint = this._draggingEndpoint.originalCoords;
+    activeTool.value = "wall";
+    this._draggingEndpoint = null;
+    this._hoveredEndpoint = null;
+  }
+
+  private async _finishEndpointDrag(): Promise<void> {
+    if (!this._draggingEndpoint || !this.hass) {
+      this._draggingEndpoint = null;
+      return;
+    }
+
+    const floor = currentFloor.value;
+    const floorPlan = currentFloorPlan.value;
+    if (!floor || !floorPlan) {
+      this._draggingEndpoint = null;
+      return;
+    }
+
+    const newPos = this._cursorPos;
+    const originalPos = this._draggingEndpoint.originalCoords;
+
+    // Check if position actually changed
+    if (Math.abs(newPos.x - originalPos.x) < 1 && Math.abs(newPos.y - originalPos.y) < 1) {
+      this._draggingEndpoint = null;
+      return;
+    }
+
+    // Use the wall solver for constraint-aware movement
+    const graph = buildConnectionGraph(floor.walls);
+    const draggedWallIds = this._draggingEndpoint.wallIds.map((ref) => ref.split(":")[0]);
+
+    const result = solveWallMovement(
+      graph,
+      draggedWallIds,
+      "start", // The endpoint type is determined by position matching in the solver
+      originalPos,
+      newPos
+    );
+
+    if (result.blocked) {
+      alert(`Cannot move endpoint: wall "${result.blockedBy}" is locked.`);
+      this._draggingEndpoint = null;
+      return;
+    }
+
+    if (result.updates.length === 0) {
+      this._draggingEndpoint = null;
+      return;
+    }
+
+    try {
+      // Use batch update for atomic operation
+      if (result.updates.length > 1) {
+        await this.hass.callWS({
+          type: "inhabit/walls/batch_update",
+          floor_plan_id: floorPlan.id,
+          floor_id: floor.id,
+          updates: result.updates.map((u) => ({
+            wall_id: u.wallId,
+            start: u.newStart,
+            end: u.newEnd,
+          })),
+        });
+      } else {
+        const update = result.updates[0];
+        await this.hass.callWS({
+          type: "inhabit/walls/update",
+          floor_plan_id: floorPlan.id,
+          floor_id: floor.id,
+          wall_id: update.wallId,
+          start: update.newStart,
+          end: update.newEnd,
+        });
+      }
+
+      await reloadFloorData();
+    } catch (err) {
+      console.error("Error updating wall endpoint:", err);
+      alert(`Failed to update wall: ${err}`);
+    }
+
+    this._draggingEndpoint = null;
   }
 
   private _handleKeyDown(e: KeyboardEvent): void {
@@ -462,38 +744,11 @@ export class FpbCanvas extends LitElement {
       this._wallStartPoint = null;
       this._drawingPoints = [];
       this._hoveredEndpoint = null;
+      this._draggingEndpoint = null;
+      this._pendingDevice = null;
+      this._wallEditor = null;
       selection.value = { type: "none", ids: [] };
     }
-  }
-
-  private _handleExtendWall(endpoint: Coordinates): void {
-    // Start drawing a new wall from this endpoint
-    this._wallStartPoint = endpoint;
-    this._hoveredEndpoint = null;
-    activeTool.value = "wall";
-  }
-
-  private _handleWallSelect(e: Event, wall: Wall): void {
-    e.stopPropagation();
-
-    // Select the wall
-    this._selectedWall = wall;
-    selection.value = { type: "wall", ids: [wall.id] };
-
-    // Calculate current length and midpoint for editor position
-    const currentLength = this._calculateWallLength(wall.start, wall.end);
-    const midpoint: Coordinates = {
-      x: (wall.start.x + wall.end.x) / 2,
-      y: (wall.start.y + wall.end.y) / 2,
-    };
-
-    // Show inline editor
-    this._wallEditor = {
-      wall,
-      position: midpoint,
-      length: currentLength,
-    };
-    this._editingLength = Math.round(currentLength).toString();
   }
 
   private _handleEditorSave(): void {
@@ -510,7 +765,6 @@ export class FpbCanvas extends LitElement {
 
   private _handleEditorCancel(): void {
     this._wallEditor = null;
-    this._selectedWall = null;
     selection.value = { type: "none", ids: [] };
   }
 
@@ -528,13 +782,12 @@ export class FpbCanvas extends LitElement {
         floor_id: floor.id,
         wall_id: this._wallEditor.wall.id,
       });
-      window.location.reload();
+      await reloadFloorData();
     } catch (err) {
       console.error("Error deleting wall:", err);
     }
 
     this._wallEditor = null;
-    this._selectedWall = null;
     selection.value = { type: "none", ids: [] };
   }
 
@@ -553,45 +806,82 @@ export class FpbCanvas extends LitElement {
     const floorPlan = currentFloorPlan.value;
     if (!floor || !floorPlan) return;
 
-    // Calculate direction vector
-    const dx = wall.end.x - wall.start.x;
-    const dy = wall.end.y - wall.start.y;
-    const currentLength = Math.sqrt(dx * dx + dy * dy);
+    // Use the wall solver for center-based length editing
+    const graph = buildConnectionGraph(floor.walls);
+    const result = solveWallLengthChange(graph, wall.id, newLength);
 
-    if (currentLength === 0) return;
+    if (result.blocked) {
+      alert(`Cannot change length: wall "${result.blockedBy}" has a constraint that blocks this change.`);
+      return;
+    }
 
-    // Scale to new length
-    const scale = newLength / currentLength;
-    const newEnd: Coordinates = {
-      x: wall.start.x + dx * scale,
-      y: wall.start.y + dy * scale,
-    };
+    if (result.updates.length === 0) return;
 
     try {
-      await this.hass.callWS({
-        type: "inhabit/walls/update",
-        floor_plan_id: floorPlan.id,
-        floor_id: floor.id,
-        wall_id: wall.id,
-        start: wall.start,
-        end: newEnd,
-      });
-      window.location.reload();
+      // Use batch update if multiple walls need updating
+      if (result.updates.length > 1) {
+        await this.hass.callWS({
+          type: "inhabit/walls/batch_update",
+          floor_plan_id: floorPlan.id,
+          floor_id: floor.id,
+          updates: result.updates.map((u) => ({
+            wall_id: u.wallId,
+            start: u.newStart,
+            end: u.newEnd,
+          })),
+        });
+      } else {
+        const update = result.updates[0];
+        await this.hass.callWS({
+          type: "inhabit/walls/update",
+          floor_plan_id: floorPlan.id,
+          floor_id: floor.id,
+          wall_id: update.wallId,
+          start: update.newStart,
+          end: update.newEnd,
+        });
+      }
+      await reloadFloorData();
     } catch (err) {
       console.error("Error updating wall:", err);
       alert(`Failed to update wall: ${err}`);
     }
 
-    this._selectedWall = null;
     selection.value = { type: "none", ids: [] };
   }
 
-  private _getSnappedPoint(point: Coordinates): Coordinates {
+  private _getSnappedPointForEndpoint(point: Coordinates): Coordinates {
+    const floor = currentFloor.value;
+
+    // First check for snapping to other wall endpoints
+    if (floor) {
+      const snapDistance = 15;
+      for (const wall of floor.walls) {
+        for (const endpoint of [wall.start, wall.end]) {
+          const dist = Math.sqrt(
+            Math.pow(point.x - endpoint.x, 2) + Math.pow(point.y - endpoint.y, 2)
+          );
+          if (dist < snapDistance) {
+            return endpoint;
+          }
+        }
+      }
+    }
+
+    // Snap to 1cm (round to nearest integer)
+    return {
+      x: Math.round(point.x),
+      y: Math.round(point.y),
+    };
+  }
+
+  private _getSnappedPoint(point: Coordinates, snapToWallSegments = false): Coordinates {
     const floor = currentFloor.value;
     if (!floor) return snapToGrid.value ? snapPoint(point, gridSize.value) : point;
 
-    // Snap to existing wall endpoints
     const snapDistance = 15;
+
+    // Snap to existing wall endpoints first (highest priority)
     for (const wall of floor.walls) {
       for (const endpoint of [wall.start, wall.end]) {
         const dist = Math.sqrt(
@@ -603,17 +893,69 @@ export class FpbCanvas extends LitElement {
       }
     }
 
+    // Snap to wall segments (for device placement)
+    if (snapToWallSegments) {
+      let closestPoint: Coordinates | null = null;
+      let closestDist = snapDistance;
+
+      for (const wall of floor.walls) {
+        const snapped = this._getClosestPointOnSegment(point, wall.start, wall.end);
+        const dist = Math.sqrt(
+          Math.pow(point.x - snapped.x, 2) + Math.pow(point.y - snapped.y, 2)
+        );
+        if (dist < closestDist) {
+          closestDist = dist;
+          closestPoint = snapped;
+        }
+      }
+
+      if (closestPoint) {
+        return closestPoint;
+      }
+    }
+
     return snapToGrid.value ? snapPoint(point, gridSize.value) : point;
+  }
+
+  private _getClosestPointOnSegment(point: Coordinates, start: Coordinates, end: Coordinates): Coordinates {
+    const dx = end.x - start.x;
+    const dy = end.y - start.y;
+    const lengthSq = dx * dx + dy * dy;
+
+    if (lengthSq === 0) return start;
+
+    // Calculate projection parameter t
+    const t = Math.max(0, Math.min(1, ((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSq));
+
+    return {
+      x: start.x + t * dx,
+      y: start.y + t * dy,
+    };
   }
 
   private _handleSelectClick(point: Coordinates): boolean {
     const floor = currentFloor.value;
     if (!floor) return false;
 
-    // Check rooms
-    for (const room of floor.rooms) {
-      if (this._pointInPolygon(point, room.polygon.vertices)) {
-        selection.value = { type: "room", ids: [room.id] };
+    // Check walls first (they're on top visually)
+    for (const wall of floor.walls) {
+      const dist = this._pointToSegmentDistance(point, wall.start, wall.end);
+      if (dist < (wall.thickness / 2 + 5)) {
+        selection.value = { type: "wall", ids: [wall.id] };
+        // Show wall editor
+        const currentLength = this._calculateWallLength(wall.start, wall.end);
+        const midpoint: Coordinates = {
+          x: (wall.start.x + wall.end.x) / 2,
+          y: (wall.start.y + wall.end.y) / 2,
+        };
+        this._wallEditor = {
+          wall,
+          position: midpoint,
+          length: currentLength,
+        };
+        this._editingLength = Math.round(currentLength).toString();
+        // Center the wall in the available space (left of the popover)
+        this._centerWallInView(wall);
         return true;
       }
     }
@@ -631,8 +973,32 @@ export class FpbCanvas extends LitElement {
       }
     }
 
+    // Check rooms
+    for (const room of floor.rooms) {
+      if (this._pointInPolygon(point, room.polygon.vertices)) {
+        selection.value = { type: "room", ids: [room.id] };
+        return true;
+      }
+    }
+
     selection.value = { type: "none", ids: [] };
     return false;
+  }
+
+  private _pointToSegmentDistance(point: Coordinates, start: Coordinates, end: Coordinates): number {
+    const dx = end.x - start.x;
+    const dy = end.y - start.y;
+    const lengthSq = dx * dx + dy * dy;
+
+    if (lengthSq === 0) {
+      return Math.sqrt(Math.pow(point.x - start.x, 2) + Math.pow(point.y - start.y, 2));
+    }
+
+    const t = Math.max(0, Math.min(1, ((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSq));
+    const projX = start.x + t * dx;
+    const projY = start.y + t * dy;
+
+    return Math.sqrt(Math.pow(point.x - projX, 2) + Math.pow(point.y - projY, 2));
   }
 
   private _handleWallClick(point: Coordinates): void {
@@ -678,7 +1044,7 @@ export class FpbCanvas extends LitElement {
         thickness: 8,
       });
       // Reload to get updated floor
-      window.location.reload();
+      await reloadFloorData();
     } catch (err) {
       console.error("Error creating wall:", err);
     }
@@ -783,7 +1149,7 @@ export class FpbCanvas extends LitElement {
         color: this._getRandomRoomColor(),
         ha_area_id: haAreaId,
       });
-      window.location.reload();
+      await reloadFloorData();
     } catch (err) {
       console.error("Error creating room:", err);
       alert(`Failed to create room: ${err}`);
@@ -828,7 +1194,7 @@ export class FpbCanvas extends LitElement {
       });
 
       this._drawingPoints = [];
-      window.location.reload();
+      await reloadFloorData();
     } catch (err) {
       console.error("Error creating room:", err);
       alert(`Failed to create room: ${err}`);
@@ -884,6 +1250,112 @@ export class FpbCanvas extends LitElement {
     return colors[Math.floor(Math.random() * colors.length)];
   }
 
+  private _renderWallChains(walls: Wall[], sel: import("../../types").SelectionState) {
+    // If dragging an endpoint, modify the wall positions for rendering
+    let wallsToRender = walls;
+    if (this._draggingEndpoint) {
+      const draggedPos = this._cursorPos;
+      wallsToRender = walls.map(wall => {
+        // Check if this wall is being dragged
+        const startRef = wall.id + ":start";
+        const endRef = wall.id + ":end";
+
+        if (this._draggingEndpoint!.wallIds.includes(startRef)) {
+          return { ...wall, start: draggedPos };
+        } else if (this._draggingEndpoint!.wallIds.includes(endRef)) {
+          return { ...wall, end: draggedPos };
+        }
+        return wall;
+      });
+    }
+
+    const chains = groupWallsIntoChains(wallsToRender);
+
+    // Find the selected wall for individual highlight
+    const selectedWall = sel.type === "wall" && sel.ids.length > 0
+      ? wallsToRender.find(w => w.id === sel.ids[0])
+      : null;
+
+    return svg`
+      <!-- Base walls rendered as chains for proper corners -->
+      ${chains.map((chain, idx) => svg`
+        <path class="wall"
+              d="${wallChainPath(chain)}"
+              data-chain-idx="${idx}"/>
+      `)}
+
+      <!-- Individual selected wall highlight -->
+      ${selectedWall ? svg`
+        <path class="wall-selected-highlight"
+              d="${this._singleWallPath(selectedWall)}"/>
+      ` : null}
+
+      <!-- Constraint indicators -->
+      ${this._renderWallConstraintIndicators(wallsToRender)}
+    `;
+  }
+
+  private _renderWallConstraintIndicators(walls: Wall[]) {
+    // Only show constraint indicators for walls that have constraints
+    const constrainedWalls = walls.filter((w) => w.constraint && w.constraint !== "none");
+
+    if (constrainedWalls.length === 0) return null;
+
+    return svg`
+      <g class="constraint-indicators">
+        ${constrainedWalls.map((wall) => {
+          const midX = (wall.start.x + wall.end.x) / 2;
+          const midY = (wall.start.y + wall.end.y) / 2;
+
+          // Offset perpendicular to wall
+          const dx = wall.end.x - wall.start.x;
+          const dy = wall.end.y - wall.start.y;
+          const len = Math.sqrt(dx * dx + dy * dy);
+          if (len === 0) return null;
+
+          // Perpendicular offset (above the wall)
+          const offsetX = (-dy / len) * 15;
+          const offsetY = (dx / len) * 15;
+
+          const iconX = midX + offsetX;
+          const iconY = midY + offsetY;
+
+          let icon = "";
+          if (wall.constraint === "horizontal") icon = "―";
+          else if (wall.constraint === "vertical") icon = "|";
+          else if (wall.constraint === "length") icon = "↔";
+          else if (wall.constraint === "angle") icon = "∠";
+          else if (wall.constraint === "fixed") icon = "🔒";
+
+          return svg`
+            <g transform="translate(${iconX}, ${iconY})">
+              <circle class="wall-constraint-bg" r="8" cx="0" cy="0"/>
+              <text class="wall-constraint-indicator" x="0" y="1">${icon}</text>
+            </g>
+          `;
+        })}
+      </g>
+    `;
+  }
+
+  private _singleWallPath(wall: Wall): string {
+    const { start, end, thickness } = wall;
+    const dx = end.x - start.x;
+    const dy = end.y - start.y;
+    const len = Math.sqrt(dx * dx + dy * dy);
+
+    if (len === 0) return "";
+
+    const nx = (-dy / len) * (thickness / 2);
+    const ny = (dx / len) * (thickness / 2);
+
+    return `M${start.x + nx},${start.y + ny}
+            L${end.x + nx},${end.y + ny}
+            L${end.x - nx},${end.y - ny}
+            L${start.x - nx},${start.y - ny}
+            Z`;
+  }
+
   private _calculateWallLength(start: Coordinates, end: Coordinates): number {
     return Math.sqrt(Math.pow(end.x - start.x, 2) + Math.pow(end.y - start.y, 2));
   }
@@ -925,12 +1397,8 @@ export class FpbCanvas extends LitElement {
                   stroke-width="1"/>
           `)}
 
-          <!-- Walls -->
-          ${floor.walls.map(wall => svg`
-            <path class="wall ${sel.type === "wall" && sel.ids.includes(wall.id) ? "selected" : ""}"
-                  d="${wallPath(wall.start, wall.end, wall.thickness)}"
-                  @click=${(e: Event) => this._handleWallSelect(e, wall)}/>
-          `)}
+          <!-- Walls (rendered as chains for proper corners) -->
+          ${this._renderWallChains(floor.walls, sel)}
 
           <!-- Doors -->
           ${floor.doors.map(door => {
@@ -1004,54 +1472,190 @@ export class FpbCanvas extends LitElement {
     `;
   }
 
-  private _renderWallEndpoints() {
+  private _getWallEndpoints(): Map<string, { coords: Coordinates; wallIds: string[] }> {
     const floor = currentFloor.value;
-    if (!floor || floor.walls.length === 0) return null;
+    if (!floor) return new Map();
 
-    // Collect all unique endpoints
     const endpoints: Map<string, { coords: Coordinates; wallIds: string[] }> = new Map();
 
     for (const wall of floor.walls) {
-      const startKey = `${wall.start.x},${wall.start.y}`;
-      const endKey = `${wall.end.x},${wall.end.y}`;
+      const startKey = `${Math.round(wall.start.x)},${Math.round(wall.start.y)}`;
+      const endKey = `${Math.round(wall.end.x)},${Math.round(wall.end.y)}`;
 
       if (!endpoints.has(startKey)) {
         endpoints.set(startKey, { coords: wall.start, wallIds: [] });
       }
-      endpoints.get(startKey)!.wallIds.push(wall.id);
+      endpoints.get(startKey)!.wallIds.push(wall.id + ":start");
 
       if (!endpoints.has(endKey)) {
         endpoints.set(endKey, { coords: wall.end, wallIds: [] });
       }
-      endpoints.get(endKey)!.wallIds.push(wall.id);
+      endpoints.get(endKey)!.wallIds.push(wall.id + ":end");
     }
 
-    // Only show extend buttons on endpoints with 1 connection (end of a wall chain)
-    const extendableEndpoints = Array.from(endpoints.values()).filter(
-      (ep) => ep.wallIds.length === 1
-    );
+    return endpoints;
+  }
+
+  private _renderWallEndpoints() {
+    const floor = currentFloor.value;
+    if (!floor || floor.walls.length === 0) return null;
+
+    // Only show the hovered endpoint or the one being dragged
+    const endpointsToShow: Array<{ coords: Coordinates; wallIds: string[]; isDragging: boolean }> = [];
+
+    if (this._draggingEndpoint) {
+      endpointsToShow.push({
+        coords: this._cursorPos, // Show at cursor position while dragging
+        wallIds: this._draggingEndpoint.wallIds,
+        isDragging: true,
+      });
+    } else if (this._hoveredEndpoint) {
+      endpointsToShow.push({
+        coords: this._hoveredEndpoint.coords,
+        wallIds: this._hoveredEndpoint.wallIds,
+        isDragging: false,
+      });
+    }
+
+    if (endpointsToShow.length === 0) return null;
 
     return svg`
       <g class="wall-endpoints-layer">
-        ${extendableEndpoints.map((ep) => {
-          const isHovered = this._hoveredEndpoint &&
-            Math.abs(this._hoveredEndpoint.coords.x - ep.coords.x) < 1 &&
-            Math.abs(this._hoveredEndpoint.coords.y - ep.coords.y) < 1;
-
-          return svg`
-            <g class="extend-button"
-               transform="translate(${ep.coords.x}, ${ep.coords.y})"
-               @click=${(e: Event) => {
-                 e.stopPropagation();
-                 this._handleExtendWall(ep.coords);
-               }}>
-              <circle class="extend-bg" r="${isHovered ? 12 : 8}" fill="var(--secondary-background-color, #f0f0f0)" stroke="var(--divider-color, #999)" stroke-width="2"/>
-              <text class="extend-icon" text-anchor="middle" dominant-baseline="central" font-size="14" fill="var(--secondary-text-color, #666)">+</text>
-            </g>
-          `;
-        })}
+        ${endpointsToShow.map((ep) => svg`
+          <circle
+            class="wall-endpoint ${ep.isDragging ? "dragging" : ""}"
+            cx="${ep.coords.x}"
+            cy="${ep.coords.y}"
+            r="6"
+            @pointerdown=${(e: PointerEvent) => this._handleEndpointPointerDown(e, ep)}
+          />
+        `)}
+        ${this._draggingEndpoint ? this._renderDraggedWallLengths(floor) : null}
       </g>
     `;
+  }
+
+  private _renderDraggedWallLengths(floor: import("../../types").Floor) {
+    if (!this._draggingEndpoint) return null;
+
+    const draggedPos = this._cursorPos;
+    const originalPos = this._draggingEndpoint.originalCoords;
+    const wallData: Array<{
+      start: Coordinates;
+      end: Coordinates;
+      origStart: Coordinates;
+      origEnd: Coordinates;
+      length: number;
+      angle: number;
+      thickness: number
+    }> = [];
+
+    for (const wallRef of this._draggingEndpoint.wallIds) {
+      const [wallId, endpoint] = wallRef.split(":");
+      const wall = floor.walls.find(w => w.id === wallId);
+      if (!wall) continue;
+
+      // Calculate the new wall positions
+      const newStart = endpoint === "start" ? draggedPos : wall.start;
+      const newEnd = endpoint === "end" ? draggedPos : wall.end;
+      const length = this._calculateWallLength(newStart, newEnd);
+      const angle = Math.atan2(newEnd.y - newStart.y, newEnd.x - newStart.x);
+
+      // Original positions
+      const origStart = endpoint === "start" ? originalPos : wall.start;
+      const origEnd = endpoint === "end" ? originalPos : wall.end;
+
+      wallData.push({ start: newStart, end: newEnd, origStart, origEnd, length, angle, thickness: wall.thickness });
+    }
+
+    // Check for 90-degree angles between walls at the dragged point
+    const rightAngles: Array<{ point: Coordinates; angle: number }> = [];
+    for (let i = 0; i < wallData.length; i++) {
+      for (let j = i + 1; j < wallData.length; j++) {
+        const angleDiff = Math.abs(wallData[i].angle - wallData[j].angle);
+        const normalizedDiff = angleDiff % Math.PI;
+        // Check if angle is close to 90 degrees (PI/2)
+        if (Math.abs(normalizedDiff - Math.PI / 2) < 0.02) { // ~1 degree tolerance
+          rightAngles.push({
+            point: draggedPos,
+            angle: Math.min(wallData[i].angle, wallData[j].angle),
+          });
+        }
+      }
+    }
+
+    return svg`
+      <!-- Original wall positions (ghost) -->
+      ${wallData.map(({ origStart, origEnd, thickness }) => {
+        const dx = origEnd.x - origStart.x;
+        const dy = origEnd.y - origStart.y;
+        const len = Math.sqrt(dx * dx + dy * dy);
+        if (len === 0) return null;
+
+        const nx = (-dy / len) * (thickness / 2);
+        const ny = (dx / len) * (thickness / 2);
+
+        return svg`
+          <path
+            class="wall-original-ghost"
+            d="M${origStart.x + nx},${origStart.y + ny}
+               L${origEnd.x + nx},${origEnd.y + ny}
+               L${origEnd.x - nx},${origEnd.y - ny}
+               L${origStart.x - nx},${origStart.y - ny}
+               Z"
+          />
+        `;
+      })}
+
+      <!-- Wall length labels -->
+      ${wallData.map(({ start, end, length }) => {
+        const midX = (start.x + end.x) / 2;
+        const midY = (start.y + end.y) / 2;
+
+        // Calculate angle for label rotation
+        const angle = Math.atan2(end.y - start.y, end.x - start.x) * (180 / Math.PI);
+        const labelAngle = angle > 90 || angle < -90 ? angle + 180 : angle;
+
+        return svg`
+          <g transform="translate(${midX}, ${midY}) rotate(${labelAngle})">
+            <rect class="wall-length-bg" x="-30" y="-10" width="60" height="20" rx="4"/>
+            <text class="wall-length-label" x="0" y="0">${this._formatLength(length)}</text>
+          </g>
+        `;
+      })}
+
+      <!-- 90-degree angle indicators -->
+      ${rightAngles.map(({ point, angle }) => svg`
+        <g transform="translate(${point.x}, ${point.y}) rotate(${angle * 180 / Math.PI})">
+          <path
+            class="right-angle-indicator"
+            d="M 12 0 L 12 12 L 0 12"
+            fill="none"
+            stroke="var(--primary-color, #2196f3)"
+            stroke-width="2"
+          />
+        </g>
+      `)}
+    `;
+  }
+
+  private _handleEndpointPointerDown(e: PointerEvent, endpoint: { coords: Coordinates; wallIds: string[] }): void {
+    e.stopPropagation();
+    e.preventDefault();
+
+    // Get the original coords from hovered endpoint (not the display coords which might be cursor pos)
+    const originalCoords = this._hoveredEndpoint?.coords || endpoint.coords;
+
+    this._draggingEndpoint = {
+      coords: originalCoords,
+      wallIds: endpoint.wallIds,
+      originalCoords: { ...originalCoords },
+      startX: e.clientX,
+      startY: e.clientY,
+      hasMoved: false,
+    };
+
+    this._svg?.setPointerCapture(e.pointerId);
   }
 
   private _renderDrawingPreview() {
@@ -1139,27 +1743,241 @@ export class FpbCanvas extends LitElement {
     };
   }
 
+  private _centerWallInView(wall: Wall): void {
+    if (!this._svg) return;
+
+    const rect = this._svg.getBoundingClientRect();
+    const popoverWidth = 312; // 280px width + 16px margin + 16px padding
+
+    // Calculate available width (left of the popover)
+    const availableWidth = rect.width - popoverWidth;
+    const availableHeight = rect.height;
+
+    // Wall center point
+    const wallCenterX = (wall.start.x + wall.end.x) / 2;
+    const wallCenterY = (wall.start.y + wall.end.y) / 2;
+
+    // Calculate the center of the available area in SVG coordinates
+    // The available area center in screen coords is at (availableWidth / 2, availableHeight / 2)
+    const scaleX = this._viewBox.width / rect.width;
+    const scaleY = this._viewBox.height / rect.height;
+
+    // New viewBox position to center the wall in the available space
+    const newViewBox = {
+      ...this._viewBox,
+      x: wallCenterX - (availableWidth / 2) * scaleX,
+      y: wallCenterY - (availableHeight / 2) * scaleY,
+    };
+
+    viewBox.value = newViewBox;
+    this._viewBox = newViewBox;
+  }
+
   private _renderWallEditor() {
     if (!this._wallEditor) return null;
 
-    const screenPos = this._svgToScreen(this._wallEditor.position);
+    const wall = this._wallEditor.wall;
+    const constraint = wall.constraint || "none";
 
     return html`
       <div class="wall-editor"
-           style="left: ${screenPos.x + 10}px; top: ${screenPos.y - 20}px;"
+           @click=${(e: Event) => e.stopPropagation()}
+           @pointerdown=${(e: Event) => e.stopPropagation()}>
+        <div class="wall-editor-header">
+          <span class="wall-editor-title">Wall Properties</span>
+          <button class="wall-editor-close" @click=${this._handleEditorCancel}>✕</button>
+        </div>
+
+        <div class="wall-editor-row">
+          <span class="wall-editor-label">Length</span>
+          <input
+            type="number"
+            .value=${this._editingLength}
+            @input=${(e: InputEvent) => this._editingLength = (e.target as HTMLInputElement).value}
+            @keydown=${this._handleEditorKeyDown}
+            autofocus
+          />
+          <span class="wall-editor-unit">cm</span>
+        </div>
+
+        <div class="wall-editor-row">
+          <span class="wall-editor-label">Lock</span>
+          <div class="wall-editor-constraints">
+            <button
+              class="constraint-btn ${constraint === "horizontal" ? "active" : ""}"
+              @click=${() => this._toggleConstraint("horizontal")}
+              title="Lock horizontal"
+            ><span>―</span> H</button>
+            <button
+              class="constraint-btn ${constraint === "vertical" ? "active" : ""}"
+              @click=${() => this._toggleConstraint("vertical")}
+              title="Lock vertical"
+            ><span>|</span> V</button>
+            <button
+              class="constraint-btn ${constraint === "length" ? "active" : ""}"
+              @click=${() => this._toggleConstraint("length")}
+              title="Lock length"
+            ><span>↔</span> Len</button>
+            <button
+              class="constraint-btn ${constraint === "angle" ? "active" : ""}"
+              @click=${() => this._toggleConstraint("angle")}
+              title="Lock angle"
+            ><span>∠</span> Ang</button>
+            <button
+              class="constraint-btn ${constraint === "fixed" ? "active" : ""}"
+              @click=${() => this._toggleConstraint("fixed")}
+              title="Fully locked"
+            >🔒 Fix</button>
+          </div>
+        </div>
+
+        <div class="wall-editor-actions">
+          <button class="save-btn" @click=${this._handleEditorSave}>Apply</button>
+          <button class="delete-btn" @click=${this._handleWallDelete}>Delete</button>
+        </div>
+      </div>
+    `;
+  }
+
+  private async _toggleConstraint(constraintType: import("../../types").WallConstraint): Promise<void> {
+    if (!this._wallEditor || !this.hass) return;
+
+    const floor = currentFloor.value;
+    const floorPlan = currentFloorPlan.value;
+    if (!floor || !floorPlan) return;
+
+    const wall = this._wallEditor.wall;
+    const newConstraint = wall.constraint === constraintType ? "none" : constraintType;
+
+    try {
+      await this.hass.callWS({
+        type: "inhabit/walls/update",
+        floor_plan_id: floorPlan.id,
+        floor_id: floor.id,
+        wall_id: wall.id,
+        constraint: newConstraint,
+      });
+      await reloadFloorData();
+
+      // Update local wall editor state
+      const updatedFloor = currentFloor.value;
+      if (updatedFloor) {
+        const updatedWall = updatedFloor.walls.find((w) => w.id === wall.id);
+        if (updatedWall) {
+          this._wallEditor = {
+            ...this._wallEditor,
+            wall: updatedWall,
+          };
+        }
+      }
+    } catch (err) {
+      console.error("Error updating wall constraint:", err);
+      alert(`Failed to update wall constraint: ${err}`);
+    }
+  }
+
+  private _getFilteredEntities(): import("../../types").HassEntity[] {
+    if (!this.hass) return [];
+
+    const placableDomains = ["light", "switch", "sensor", "binary_sensor", "climate", "fan", "cover", "camera", "media_player"];
+    let entities = Object.values(this.hass.states).filter((e) =>
+      placableDomains.some((d) => e.entity_id.startsWith(d + "."))
+    );
+
+    if (this._entitySearch) {
+      const search = this._entitySearch.toLowerCase();
+      entities = entities.filter(
+        (e) =>
+          e.entity_id.toLowerCase().includes(search) ||
+          ((e.attributes.friendly_name as string) || "").toLowerCase().includes(search)
+      );
+    }
+
+    return entities.slice(0, 30);
+  }
+
+  private _getEntityIcon(entity: import("../../types").HassEntity): string {
+    const domain = entity.entity_id.split(".")[0];
+    const iconMap: Record<string, string> = {
+      light: "mdi:lightbulb",
+      switch: "mdi:toggle-switch",
+      sensor: "mdi:eye",
+      binary_sensor: "mdi:radiobox-marked",
+      climate: "mdi:thermostat",
+      fan: "mdi:fan",
+      cover: "mdi:window-shutter",
+      camera: "mdi:camera",
+      media_player: "mdi:cast",
+    };
+    return (entity.attributes.icon as string) || iconMap[domain] || "mdi:devices";
+  }
+
+  private async _placeDevice(entityId: string): Promise<void> {
+    if (!this.hass || !this._pendingDevice) return;
+
+    const floor = currentFloor.value;
+    const floorPlan = currentFloorPlan.value;
+    if (!floor || !floorPlan) return;
+
+    try {
+      await this.hass.callWS({
+        type: "inhabit/devices/add",
+        floor_plan_id: floorPlan.id,
+        floor_id: floor.id,
+        entity_id: entityId,
+        position: this._pendingDevice.position,
+        rotation: 0,
+        scale: 1,
+        show_state: true,
+        show_label: true,
+        contributes_to_occupancy: entityId.startsWith("binary_sensor.") || entityId.startsWith("sensor."),
+      });
+      await reloadFloorData();
+    } catch (err) {
+      console.error("Error placing device:", err);
+      alert(`Failed to place device: ${err}`);
+    }
+
+    this._pendingDevice = null;
+  }
+
+  private _cancelDevicePlacement(): void {
+    this._pendingDevice = null;
+  }
+
+  private _renderEntityPicker() {
+    if (!this._pendingDevice) return null;
+
+    const screenPos = this._svgToScreen(this._pendingDevice.position);
+    const entities = this._getFilteredEntities();
+
+    return html`
+      <div class="entity-picker"
+           style="left: ${screenPos.x + 20}px; top: ${screenPos.y - 10}px;"
            @click=${(e: Event) => e.stopPropagation()}
            @pointerdown=${(e: Event) => e.stopPropagation()}>
         <input
-          type="number"
-          .value=${this._editingLength}
-          @input=${(e: InputEvent) => this._editingLength = (e.target as HTMLInputElement).value}
-          @keydown=${this._handleEditorKeyDown}
+          type="text"
+          placeholder="Search entities..."
+          .value=${this._entitySearch}
+          @input=${(e: InputEvent) => this._entitySearch = (e.target as HTMLInputElement).value}
+          @keydown=${(e: KeyboardEvent) => e.key === "Escape" && this._cancelDevicePlacement()}
           autofocus
         />
-        <span>cm</span>
-        <button class="save-btn" @click=${this._handleEditorSave}>✓</button>
-        <button class="delete-btn" @click=${this._handleWallDelete}>🗑</button>
-        <button class="cancel-btn" @click=${this._handleEditorCancel}>✕</button>
+        <div class="entity-list">
+          ${entities.map(
+            (entity) => html`
+              <div
+                class="entity-item ${entity.state === "on" ? "on" : ""}"
+                @click=${() => this._placeDevice(entity.entity_id)}
+              >
+                <ha-icon icon=${this._getEntityIcon(entity)}></ha-icon>
+                <span class="name">${entity.attributes.friendly_name || entity.entity_id}</span>
+                <span class="state">${entity.state}</span>
+              </div>
+            `
+          )}
+        </div>
       </div>
     `;
   }
@@ -1179,8 +1997,37 @@ export class FpbCanvas extends LitElement {
         ${this._renderFloor()}
         ${this._renderWallEndpoints()}
         ${this._renderDrawingPreview()}
+        ${this._renderDevicePreview()}
       </svg>
       ${this._renderWallEditor()}
+      ${this._renderEntityPicker()}
+    `;
+  }
+
+  private _renderDevicePreview() {
+    const tool = activeTool.value;
+    if (tool !== "device" || this._pendingDevice) return null;
+
+    // Show a preview cursor at the snapped position
+    return svg`
+      <g class="device-preview">
+        <circle
+          cx="${this._cursorPos.x}"
+          cy="${this._cursorPos.y}"
+          r="12"
+          fill="var(--primary-color, #2196f3)"
+          fill-opacity="0.3"
+          stroke="var(--primary-color, #2196f3)"
+          stroke-width="2"
+          stroke-dasharray="4,2"
+        />
+        <circle
+          cx="${this._cursorPos.x}"
+          cy="${this._cursorPos.y}"
+          r="3"
+          fill="var(--primary-color, #2196f3)"
+        />
+      </g>
     `;
   }
 }

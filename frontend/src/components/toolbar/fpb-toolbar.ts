@@ -3,7 +3,7 @@
  */
 
 import { LitElement, html, css } from "lit";
-import { customElement, property } from "lit/decorators.js";
+import { customElement, property, state } from "lit/decorators.js";
 import type { HomeAssistant, FloorPlan, ToolType } from "../../types";
 import {
   currentFloorPlan,
@@ -11,22 +11,18 @@ import {
 } from "../../ha-floorplan-builder";
 import { canUndo, canRedo, undo, redo } from "../../stores/history-store";
 
-interface ToolConfig {
+interface AddMenuItem {
   id: ToolType;
   icon: string;
   label: string;
 }
 
-const TOOLS: ToolConfig[] = [
-  { id: "select", icon: "mdi:cursor-default", label: "Select" },
+const ADD_MENU_ITEMS: AddMenuItem[] = [
   { id: "wall", icon: "mdi:wall", label: "Wall" },
   { id: "room", icon: "mdi:floor-plan", label: "Room" },
   { id: "door", icon: "mdi:door", label: "Door" },
   { id: "window", icon: "mdi:window-closed-variant", label: "Window" },
-  { id: "rectangle", icon: "mdi:rectangle-outline", label: "Rectangle" },
-  { id: "ellipse", icon: "mdi:ellipse-outline", label: "Ellipse" },
-  { id: "text", icon: "mdi:format-text", label: "Text" },
-  { id: "device", icon: "mdi:devices", label: "Place Device" },
+  { id: "device", icon: "mdi:devices", label: "Device" },
 ];
 
 @customElement("fpb-toolbar")
@@ -36,6 +32,9 @@ export class FpbToolbar extends LitElement {
 
   @property({ attribute: false })
   floorPlans: FloorPlan[] = [];
+
+  @state()
+  private _addMenuOpen = false;
 
   static override styles = css`
     :host {
@@ -104,27 +103,93 @@ export class FpbToolbar extends LitElement {
       flex: 1;
     }
 
+    .add-button-container {
+      position: relative;
+    }
+
     .add-button {
       display: flex;
       align-items: center;
-      gap: 4px;
-      padding: 6px 12px;
+      justify-content: center;
+      width: 36px;
+      height: 36px;
       border: none;
       border-radius: 4px;
       background: var(--primary-color);
       color: var(--text-primary-color);
       cursor: pointer;
-      font-size: 12px;
+      font-size: 20px;
+      font-weight: 500;
     }
 
     .add-button:hover {
       opacity: 0.9;
     }
+
+    .add-button.menu-open {
+      border-radius: 4px 4px 0 0;
+    }
+
+    .add-menu {
+      position: absolute;
+      top: 100%;
+      left: 0;
+      background: var(--card-background-color);
+      border: 1px solid var(--divider-color);
+      border-radius: 0 4px 4px 4px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+      min-width: 140px;
+      z-index: 100;
+      overflow: hidden;
+    }
+
+    .add-menu-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 12px;
+      border: none;
+      background: transparent;
+      color: var(--primary-text-color);
+      cursor: pointer;
+      font-size: 14px;
+      width: 100%;
+      text-align: left;
+    }
+
+    .add-menu-item:hover {
+      background: var(--secondary-background-color);
+    }
+
+    .add-menu-item.active {
+      background: var(--primary-color);
+      color: var(--text-primary-color);
+    }
+
+    .add-menu-item ha-icon {
+      --mdc-icon-size: 18px;
+    }
+
+    .floor-button {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 6px 12px;
+      border: 1px solid var(--divider-color);
+      border-radius: 4px;
+      background: transparent;
+      color: var(--primary-text-color);
+      cursor: pointer;
+      font-size: 12px;
+    }
+
+    .floor-button:hover {
+      background: var(--secondary-background-color);
+    }
   `;
 
   private _handleFloorChange(e: Event): void {
     const select = e.target as HTMLSelectElement;
-    // Each floor plan represents a floor, so we select by floor plan id
     this.dispatchEvent(
       new CustomEvent("floor-plan-select", {
         detail: { id: select.value },
@@ -136,6 +201,7 @@ export class FpbToolbar extends LitElement {
 
   private _handleToolSelect(tool: ToolType): void {
     activeTool.value = tool;
+    this._addMenuOpen = false;
   }
 
   private _handleUndo(): void {
@@ -155,12 +221,38 @@ export class FpbToolbar extends LitElement {
     );
   }
 
+  private _toggleAddMenu(): void {
+    this._addMenuOpen = !this._addMenuOpen;
+  }
+
+  private _closeAddMenu(): void {
+    this._addMenuOpen = false;
+  }
+
+  override connectedCallback(): void {
+    super.connectedCallback();
+    document.addEventListener("click", this._handleDocumentClick);
+  }
+
+  override disconnectedCallback(): void {
+    super.disconnectedCallback();
+    document.removeEventListener("click", this._handleDocumentClick);
+  }
+
+  private _handleDocumentClick = (e: MouseEvent): void => {
+    const path = e.composedPath();
+    if (!path.includes(this)) {
+      this._closeAddMenu();
+    }
+  };
+
   override render() {
     const fp = currentFloorPlan.value;
     const tool = activeTool.value;
+    const isAddToolActive = ADD_MENU_ITEMS.some((item) => item.id === tool);
 
     return html`
-      <!-- Floor Selector (each floor plan = one floor) -->
+      <!-- Floor Selector -->
       <select
         class="floor-select"
         .value=${fp?.id || ""}
@@ -171,9 +263,9 @@ export class FpbToolbar extends LitElement {
         )}
       </select>
 
-      <button class="add-button" @click=${this._handleCreateFloor}>
+      <button class="floor-button" @click=${this._handleCreateFloor}>
         <ha-icon icon="mdi:plus"></ha-icon>
-        Add Floor
+        Floor
       </button>
 
       <div class="divider"></div>
@@ -200,19 +292,43 @@ export class FpbToolbar extends LitElement {
 
       <div class="divider"></div>
 
-      <!-- Drawing Tools -->
-      <div class="tool-group">
-        ${TOOLS.map(
-          (t) => html`
-            <button
-              class="tool-button ${tool === t.id ? "active" : ""}"
-              @click=${() => this._handleToolSelect(t.id)}
-              title=${t.label}
-            >
-              <ha-icon icon=${t.icon}></ha-icon>
-            </button>
-          `
-        )}
+      <!-- Select Tool -->
+      <button
+        class="tool-button ${tool === "select" ? "active" : ""}"
+        @click=${() => this._handleToolSelect("select")}
+        title="Select"
+      >
+        <ha-icon icon="mdi:cursor-default"></ha-icon>
+      </button>
+
+      <div class="divider"></div>
+
+      <!-- Add Menu -->
+      <div class="add-button-container">
+        <button
+          class="add-button ${this._addMenuOpen ? "menu-open" : ""} ${isAddToolActive ? "active" : ""}"
+          @click=${this._toggleAddMenu}
+          title="Add"
+        >
+          <ha-icon icon="mdi:plus"></ha-icon>
+        </button>
+        ${this._addMenuOpen
+          ? html`
+              <div class="add-menu">
+                ${ADD_MENU_ITEMS.map(
+                  (item) => html`
+                    <button
+                      class="add-menu-item ${tool === item.id ? "active" : ""}"
+                      @click=${() => this._handleToolSelect(item.id)}
+                    >
+                      <ha-icon icon=${item.icon}></ha-icon>
+                      ${item.label}
+                    </button>
+                  `
+                )}
+              </div>
+            `
+          : null}
       </div>
 
       <div class="spacer"></div>

@@ -53,12 +53,15 @@ export interface Polygon {
 }
 
 // Floor plan types
+export type WallConstraint = 'none' | 'length' | 'angle' | 'horizontal' | 'vertical' | 'fixed';
+
 export interface Wall {
   id: string;
   start: Coordinates;
   end: Coordinates;
   thickness: number;
   is_exterior: boolean;
+  constraint: WallConstraint;
 }
 
 export interface Door {
@@ -88,6 +91,7 @@ export interface Room {
   motion_timeout: number;
   checking_timeout: number;
   connected_rooms: string[];
+  ha_area_id?: string;
 }
 
 export interface Floor {
@@ -217,10 +221,7 @@ export type ToolType =
   | "room"
   | "door"
   | "window"
-  | "rectangle"
-  | "ellipse"
   | "polygon"
-  | "text"
   | "device";
 
 export type ToolState = "ready" | "drawing" | "dragging";

@@ -2,16 +2,15 @@
  * Main Floor Plan Builder Panel Component
  */
 
-import { LitElement, html, css, PropertyValues, nothing } from "lit";
+import { LitElement, html, css, PropertyValues } from "lit";
 import { property, state } from "lit/decorators.js";
-import { signal, computed } from "@preact/signals-core";
+import { signal } from "@preact/signals-core";
 import type {
   HomeAssistant,
   FloorPlan,
   Floor,
   ToolType,
   LayerConfig,
-  Coordinates,
   ViewBox,
   SelectionState,
   DevicePlacement,
@@ -20,7 +19,6 @@ import type {
 // Import sub-components
 import "./components/canvas/fpb-canvas";
 import "./components/toolbar/fpb-toolbar";
-import "./components/sidebar/fpb-sidebar";
 
 // Global state signals
 export const currentFloorPlan = signal<FloorPlan | null>(null);
@@ -44,6 +42,19 @@ export const layers = signal<LayerConfig[]>([
 
 export const devicePlacements = signal<DevicePlacement[]>([]);
 
+// Function to reload current floor plan data (called after modifications)
+let _reloadFloorData: (() => Promise<void>) | null = null;
+
+export function setReloadFunction(fn: () => Promise<void>): void {
+  _reloadFloorData = fn;
+}
+
+export async function reloadFloorData(): Promise<void> {
+  if (_reloadFloorData) {
+    await _reloadFloorData();
+  }
+}
+
 export class HaFloorplanBuilder extends LitElement {
   @property({ attribute: false })
   hass?: HomeAssistant;
@@ -60,9 +71,6 @@ export class HaFloorplanBuilder extends LitElement {
   @state()
   private _error: string | null = null;
 
-  @state()
-  private _sidebarCollapsed = false;
-
   static override styles = css`
     :host {
       display: flex;
@@ -70,7 +78,6 @@ export class HaFloorplanBuilder extends LitElement {
       height: 100%;
       background: var(--primary-background-color);
       color: var(--primary-text-color);
-      --sidebar-width: 300px;
       --toolbar-height: 48px;
     }
 
@@ -96,17 +103,6 @@ export class HaFloorplanBuilder extends LitElement {
       flex: 1;
       position: relative;
       overflow: hidden;
-    }
-
-    fpb-sidebar {
-      width: var(--sidebar-width);
-      border-left: 1px solid var(--divider-color);
-      overflow-y: auto;
-      transition: width 0.2s ease;
-    }
-
-    fpb-sidebar.collapsed {
-      width: 48px;
     }
 
     .loading,
@@ -161,26 +157,52 @@ export class HaFloorplanBuilder extends LitElement {
     .empty-state button:hover {
       opacity: 0.9;
     }
-
-    /* Narrow mode adjustments */
-    :host([narrow]) fpb-sidebar {
-      position: absolute;
-      right: 0;
-      top: var(--toolbar-height);
-      bottom: 0;
-      z-index: 10;
-      background: var(--card-background-color);
-      box-shadow: -2px 0 8px rgba(0, 0, 0, 0.1);
-    }
-
-    :host([narrow]) fpb-sidebar.collapsed {
-      transform: translateX(calc(100% - 48px));
-    }
   `;
 
   override connectedCallback(): void {
     super.connectedCallback();
     this._loadFloorPlans();
+    setReloadFunction(() => this._reloadCurrentFloor());
+  }
+
+  private async _reloadCurrentFloor(): Promise<void> {
+    if (!this.hass) return;
+
+    const fp = currentFloorPlan.value;
+    if (!fp) return;
+
+    try {
+      // Reload all floor plans to get fresh data
+      const result = await this.hass.callWS<FloorPlan[]>({
+        type: "inhabit/floor_plans/list",
+      });
+
+      this._floorPlans = result;
+
+      // Find and update the current floor plan
+      const updatedFp = result.find(p => p.id === fp.id);
+      if (updatedFp) {
+        currentFloorPlan.value = updatedFp;
+
+        // Find and update the current floor
+        const currentFloorId = currentFloor.value?.id;
+        if (currentFloorId) {
+          const updatedFloor = updatedFp.floors.find(f => f.id === currentFloorId);
+          if (updatedFloor) {
+            currentFloor.value = updatedFloor;
+          } else if (updatedFp.floors.length > 0) {
+            currentFloor.value = updatedFp.floors[0];
+          }
+        } else if (updatedFp.floors.length > 0) {
+          currentFloor.value = updatedFp.floors[0];
+        }
+
+        // Reload device placements
+        await this._loadDevicePlacements(updatedFp.id);
+      }
+    } catch (err) {
+      console.error("Error reloading floor data:", err);
+    }
   }
 
   override updated(changedProps: PropertyValues): void {
@@ -299,10 +321,6 @@ export class HaFloorplanBuilder extends LitElement {
     }
   }
 
-  private _toggleSidebar(): void {
-    this._sidebarCollapsed = !this._sidebarCollapsed;
-  }
-
   override render() {
     if (this._loading) {
       return html`
@@ -354,13 +372,6 @@ export class HaFloorplanBuilder extends LitElement {
             <fpb-canvas .hass=${this.hass}></fpb-canvas>
           </div>
         </div>
-
-        <fpb-sidebar
-          class=${this._sidebarCollapsed ? "collapsed" : ""}
-          .hass=${this.hass}
-          .collapsed=${this._sidebarCollapsed}
-          @toggle-sidebar=${this._toggleSidebar}
-        ></fpb-sidebar>
       </div>
     `;
   }
