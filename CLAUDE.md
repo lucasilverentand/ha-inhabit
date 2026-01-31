@@ -2,6 +2,11 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Workflow Preferences
+
+- **Do NOT commit automatically** - wait for explicit user approval before running git commit/push
+- When making changes, build and restart (`npm run build && docker compose restart`) to test
+
 ## Project Overview
 
 Inhabit is a Home Assistant custom integration for creating visual floor plans with device placement and virtual occupancy sensors. It's a full-stack project with a Python backend (Home Assistant integration) and TypeScript/Lit 3.x frontend.
