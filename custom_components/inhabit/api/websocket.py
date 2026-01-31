@@ -43,6 +43,7 @@ def async_register_websocket_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_walls_add)
     websocket_api.async_register_command(hass, ws_walls_update)
     websocket_api.async_register_command(hass, ws_walls_delete)
+    websocket_api.async_register_command(hass, ws_walls_batch_update)
     websocket_api.async_register_command(hass, ws_doors_add)
     websocket_api.async_register_command(hass, ws_windows_add)
     websocket_api.async_register_command(hass, ws_devices_place)
@@ -411,6 +412,7 @@ def ws_rooms_delete(
         vol.Required("end"): dict,
         vol.Optional("thickness", default=10.0): vol.Coerce(float),
         vol.Optional("is_exterior", default=False): bool,
+        vol.Optional("constraint", default="none"): str,
     }
 )
 @callback
@@ -426,6 +428,7 @@ def ws_walls_add(
         end=Coordinates.from_dict(msg["end"]),
         thickness=msg["thickness"],
         is_exterior=msg["is_exterior"],
+        constraint=msg["constraint"],
     )
     result = store.add_wall(msg["floor_plan_id"], msg["floor_id"], wall)
     if result:
@@ -443,6 +446,7 @@ def ws_walls_add(
         vol.Optional("start"): dict,
         vol.Optional("end"): dict,
         vol.Optional("thickness"): vol.Coerce(float),
+        vol.Optional("constraint"): str,
     }
 )
 @callback
@@ -474,6 +478,8 @@ def ws_walls_update(
         wall.end = Coordinates.from_dict(msg["end"])
     if "thickness" in msg:
         wall.thickness = msg["thickness"]
+    if "constraint" in msg:
+        wall.constraint = msg["constraint"]
 
     result = store.update_floor_plan(floor_plan)
     if result:
@@ -519,6 +525,58 @@ def ws_walls_delete(
         connection.send_result(msg["id"], {"success": True})
     else:
         connection.send_error(msg["id"], "delete_failed", "Failed to delete wall")
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{WS_PREFIX}/walls/batch_update",
+        vol.Required("floor_plan_id"): str,
+        vol.Required("floor_id"): str,
+        vol.Required("updates"): list,  # List of {wall_id, start?, end?, thickness?, constraint?}
+    }
+)
+@callback
+def ws_walls_batch_update(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Batch update multiple walls atomically."""
+    store = hass.data[DOMAIN]["store"]
+    floor_plan = store.get_floor_plan(msg["floor_plan_id"])
+    if not floor_plan:
+        connection.send_error(msg["id"], "not_found", "Floor plan not found")
+        return
+
+    floor = floor_plan.get_floor(msg["floor_id"])
+    if not floor:
+        connection.send_error(msg["id"], "not_found", "Floor not found")
+        return
+
+    updated_walls = []
+    for update in msg["updates"]:
+        wall = next((w for w in floor.walls if w.id == update["wall_id"]), None)
+        if not wall:
+            connection.send_error(
+                msg["id"], "not_found", f"Wall {update['wall_id']} not found"
+            )
+            return
+
+        if "start" in update:
+            wall.start = Coordinates.from_dict(update["start"])
+        if "end" in update:
+            wall.end = Coordinates.from_dict(update["end"])
+        if "thickness" in update:
+            wall.thickness = update["thickness"]
+        if "constraint" in update:
+            wall.constraint = update["constraint"]
+        updated_walls.append(wall)
+
+    result = store.update_floor_plan(floor_plan)
+    if result:
+        connection.send_result(msg["id"], [w.to_dict() for w in updated_walls])
+    else:
+        connection.send_error(msg["id"], "update_failed", "Failed to batch update walls")
 
 
 @websocket_api.websocket_command(

@@ -139,6 +139,7 @@ class Wall:
     end: Coordinates = field(default_factory=lambda: Coordinates(0, 0))
     thickness: float = 10.0
     is_exterior: bool = False
+    constraint: str = "none"  # "none", "length", "angle", "horizontal", "vertical", "fixed"
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
@@ -148,6 +149,7 @@ class Wall:
             "end": self.end.to_dict(),
             "thickness": self.thickness,
             "is_exterior": self.is_exterior,
+            "constraint": self.constraint,
         }
 
     @classmethod
@@ -159,6 +161,7 @@ class Wall:
             end=Coordinates.from_dict(data["end"]),
             thickness=float(data.get("thickness", 10.0)),
             is_exterior=bool(data.get("is_exterior", False)),
+            constraint=data.get("constraint", "none"),
         )
 
 

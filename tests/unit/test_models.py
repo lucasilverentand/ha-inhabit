@@ -198,6 +198,65 @@ class TestWall:
         assert wall.id is not None
         assert len(wall.id) > 0
 
+    def test_default_constraint(self):
+        """Test default constraint value."""
+        wall = Wall(start=Coordinates(0, 0), end=Coordinates(100, 0))
+        assert wall.constraint == "none"
+
+    def test_constraint_none(self):
+        """Test wall with no constraint."""
+        wall = Wall(
+            start=Coordinates(0, 0),
+            end=Coordinates(100, 0),
+            constraint="none",
+        )
+        assert wall.constraint == "none"
+
+    def test_constraint_horizontal(self):
+        """Test wall with horizontal constraint."""
+        wall = Wall(
+            start=Coordinates(0, 0),
+            end=Coordinates(100, 0),
+            constraint="horizontal",
+        )
+        assert wall.constraint == "horizontal"
+
+    def test_constraint_vertical(self):
+        """Test wall with vertical constraint."""
+        wall = Wall(
+            start=Coordinates(0, 0),
+            end=Coordinates(0, 100),
+            constraint="vertical",
+        )
+        assert wall.constraint == "vertical"
+
+    def test_constraint_length(self):
+        """Test wall with length constraint."""
+        wall = Wall(
+            start=Coordinates(0, 0),
+            end=Coordinates(100, 0),
+            constraint="length",
+        )
+        assert wall.constraint == "length"
+
+    def test_constraint_angle(self):
+        """Test wall with angle constraint."""
+        wall = Wall(
+            start=Coordinates(0, 0),
+            end=Coordinates(100, 100),
+            constraint="angle",
+        )
+        assert wall.constraint == "angle"
+
+    def test_constraint_fixed(self):
+        """Test wall with fixed constraint."""
+        wall = Wall(
+            start=Coordinates(0, 0),
+            end=Coordinates(100, 0),
+            constraint="fixed",
+        )
+        assert wall.constraint == "fixed"
+
     def test_to_dict(self):
         """Test serialization."""
         wall = Wall(
@@ -210,6 +269,17 @@ class TestWall:
         assert data["id"] == "wall_1"
         assert data["thickness"] == 10
 
+    def test_to_dict_includes_constraint(self):
+        """Test serialization includes constraint."""
+        wall = Wall(
+            id="wall_1",
+            start=Coordinates(0, 0),
+            end=Coordinates(100, 0),
+            constraint="horizontal",
+        )
+        data = wall.to_dict()
+        assert data["constraint"] == "horizontal"
+
     def test_from_dict(self):
         """Test deserialization."""
         data = {
@@ -221,6 +291,48 @@ class TestWall:
         wall = Wall.from_dict(data)
         assert wall.id == "wall_1"
         assert wall.thickness == 15
+
+    def test_from_dict_with_constraint(self):
+        """Test deserialization with constraint."""
+        data = {
+            "id": "wall_1",
+            "start": {"x": 0, "y": 0},
+            "end": {"x": 100, "y": 0},
+            "thickness": 10,
+            "constraint": "vertical",
+        }
+        wall = Wall.from_dict(data)
+        assert wall.constraint == "vertical"
+
+    def test_from_dict_default_constraint(self):
+        """Test deserialization defaults constraint to 'none'."""
+        data = {
+            "id": "wall_1",
+            "start": {"x": 0, "y": 0},
+            "end": {"x": 100, "y": 0},
+        }
+        wall = Wall.from_dict(data)
+        assert wall.constraint == "none"
+
+    def test_serialization_round_trip_with_constraint(self):
+        """Test full serialization cycle preserves constraint."""
+        original = Wall(
+            id="wall_1",
+            start=Coordinates(0, 0),
+            end=Coordinates(100, 50),
+            thickness=8,
+            constraint="length",
+        )
+        data = original.to_dict()
+        restored = Wall.from_dict(data)
+
+        assert restored.id == original.id
+        assert restored.start.x == original.start.x
+        assert restored.start.y == original.start.y
+        assert restored.end.x == original.end.x
+        assert restored.end.y == original.end.y
+        assert restored.thickness == original.thickness
+        assert restored.constraint == original.constraint
 
 
 class TestDoor:
