@@ -748,6 +748,7 @@ export class FpbCanvas extends LitElement {
       this._pendingDevice = null;
       this._wallEditor = null;
       selection.value = { type: "none", ids: [] };
+      activeTool.value = "select";
     }
   }
 

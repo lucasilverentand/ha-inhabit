@@ -71,6 +71,9 @@ export class HaFloorplanBuilder extends LitElement {
   @state()
   private _error: string | null = null;
 
+  @state()
+  private _floorCount = 1;
+
   static override styles = css`
     :host {
       display: flex;
@@ -142,9 +145,31 @@ export class HaFloorplanBuilder extends LitElement {
       max-width: 400px;
     }
 
-    .empty-state button {
+    .empty-state .init-form {
+      display: flex;
+      align-items: center;
+      gap: 12px;
       margin-top: 16px;
-      padding: 12px 24px;
+    }
+
+    .empty-state .init-form label {
+      font-size: 14px;
+      color: var(--secondary-text-color);
+    }
+
+    .empty-state .init-form input {
+      width: 60px;
+      padding: 8px 12px;
+      border: 1px solid var(--divider-color);
+      border-radius: 4px;
+      font-size: 14px;
+      text-align: center;
+      background: var(--primary-background-color);
+      color: var(--primary-text-color);
+    }
+
+    .empty-state button {
+      padding: 10px 20px;
       background: var(--primary-color);
       color: var(--text-primary-color);
       border: none;
@@ -269,45 +294,65 @@ export class HaFloorplanBuilder extends LitElement {
     this.requestUpdate();
   }
 
-  private async _createFloor(): Promise<void> {
+  private async _initializeFloors(count: number): Promise<void> {
     if (!this.hass) return;
 
-    const name = prompt("Floor name:", `Floor ${this._floorPlans.length + 1}`);
-    if (!name) return;
-
     try {
-      // Each "floor" is a floor plan with a single floor
+      // Create one floor plan (the "home")
       const result = await this.hass.callWS<FloorPlan>({
         type: "inhabit/floor_plans/create",
-        name: name,
+        name: "Home",
         unit: "cm",
         grid_size: 10,
       });
 
-      // Create the floor inside
-      const floor = await this.hass.callWS<Floor>({
-        type: "inhabit/floors/add",
-        floor_plan_id: result.id,
-        name: name,
-        level: this._floorPlans.length,
-      });
+      result.floors = [];
 
-      result.floors = [floor];
-      this._floorPlans = [...this._floorPlans, result];
+      // Create N floors inside
+      for (let i = 0; i < count; i++) {
+        const floor = await this.hass.callWS<Floor>({
+          type: "inhabit/floors/add",
+          floor_plan_id: result.id,
+          name: `Floor ${i + 1}`,
+          level: i,
+        });
+        result.floors.push(floor);
+      }
+
+      this._floorPlans = [result];
       currentFloorPlan.value = result;
-      currentFloor.value = floor;
+      currentFloor.value = result.floors[0];
+      gridSize.value = result.grid_size;
     } catch (err) {
-      console.error("Error creating floor:", err);
-      alert(`Failed to create floor: ${err}`);
+      console.error("Error creating floors:", err);
+      alert(`Failed to create floors: ${err}`);
     }
   }
 
-  private _handleFloorPlanSelect(floorPlanId: string): void {
-    const fp = this._floorPlans.find((p) => p.id === floorPlanId);
-    if (fp) {
-      currentFloorPlan.value = fp;
-      currentFloor.value = fp.floors[0] || null;
-      this._loadDevicePlacements(fp.id);
+  private async _addFloor(): Promise<void> {
+    if (!this.hass) return;
+
+    const fp = currentFloorPlan.value;
+    if (!fp) return;
+
+    const name = prompt("Floor name:", `Floor ${fp.floors.length + 1}`);
+    if (!name) return;
+
+    try {
+      const floor = await this.hass.callWS<Floor>({
+        type: "inhabit/floors/add",
+        floor_plan_id: fp.id,
+        name: name,
+        level: fp.floors.length,
+      });
+
+      const updatedFp = { ...fp, floors: [...fp.floors, floor] };
+      this._floorPlans = this._floorPlans.map(p => p.id === fp.id ? updatedFp : p);
+      currentFloorPlan.value = updatedFp;
+      currentFloor.value = floor;
+    } catch (err) {
+      console.error("Error adding floor:", err);
+      alert(`Failed to add floor: ${err}`);
     }
   }
 
@@ -350,7 +395,20 @@ export class HaFloorplanBuilder extends LitElement {
             Create visual floor plans of your home, place devices, and set up
             spatial automations with occupancy detection.
           </p>
-          <button @click=${this._createFloor}>Create Floor</button>
+          <div class="init-form">
+            <label>Floors</label>
+            <input
+              type="number"
+              min="1"
+              max="10"
+              .value=${String(this._floorCount)}
+              @input=${(e: InputEvent) => {
+                const val = parseInt((e.target as HTMLInputElement).value, 10);
+                if (val >= 1 && val <= 10) this._floorCount = val;
+              }}
+            />
+            <button @click=${() => this._initializeFloors(this._floorCount)}>Get Started</button>
+          </div>
         </div>
       `;
     }
@@ -361,11 +419,9 @@ export class HaFloorplanBuilder extends LitElement {
           <fpb-toolbar
             .hass=${this.hass}
             .floorPlans=${this._floorPlans}
-            @floor-plan-select=${(e: CustomEvent) =>
-              this._handleFloorPlanSelect(e.detail.id)}
             @floor-select=${(e: CustomEvent) =>
               this._handleFloorSelect(e.detail.id)}
-            @create-floor=${this._createFloor}
+            @add-floor=${this._addFloor}
           ></fpb-toolbar>
 
           <div class="canvas-container">
