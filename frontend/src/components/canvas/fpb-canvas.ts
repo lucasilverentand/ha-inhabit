@@ -21,6 +21,7 @@ import {
 import { polygonToPath, viewBoxToString, groupWallsIntoChains, wallChainPath } from "../../utils/svg";
 import { snapToGrid as snapPoint } from "../../utils/geometry";
 import { buildConnectionGraph, solveWallLengthChange, solveWallMovement, solveConstraintSnap, previewEndpointDrag } from "../../utils/wall-solver";
+import { pushAction, undo, redo } from "../../stores/history-store";
 
 @customElement("fpb-canvas")
 export class FpbCanvas extends LitElement {
@@ -534,7 +535,11 @@ export class FpbCanvas extends LitElement {
         }
       } else if (tool === "wall") {
         this._wallEditor = null;
-        this._handleWallClick(snappedPoint);
+        // Use _cursorPos which has Shift-constraint applied from pointer move
+        const wallPoint = this._wallStartPoint && e.shiftKey
+          ? this._cursorPos
+          : snappedPoint;
+        this._handleWallClick(wallPoint, e.shiftKey);
       } else if (tool === "room" || tool === "polygon") {
         this._wallEditor = null;
         this._handlePolygonClick(snappedPoint);
@@ -561,7 +566,20 @@ export class FpbCanvas extends LitElement {
     const point = this._screenToSvg({ x: e.clientX, y: e.clientY });
     const tool = activeTool.value;
     // Enable wall segment snapping for device tool
-    this._cursorPos = this._getSnappedPoint(point, tool === "device");
+    let snapped = this._getSnappedPoint(point, tool === "device");
+
+    // Shift constrains to horizontal/vertical when drawing a wall
+    if (e.shiftKey && tool === "wall" && this._wallStartPoint) {
+      const dx = Math.abs(snapped.x - this._wallStartPoint.x);
+      const dy = Math.abs(snapped.y - this._wallStartPoint.y);
+      if (dx >= dy) {
+        snapped = { x: snapped.x, y: this._wallStartPoint.y };
+      } else {
+        snapped = { x: this._wallStartPoint.x, y: snapped.y };
+      }
+    }
+
+    this._cursorPos = snapped;
 
     // Handle endpoint dragging
     if (this._draggingEndpoint) {
@@ -691,32 +709,34 @@ export class FpbCanvas extends LitElement {
       return;
     }
 
-    try {
-      // Use batch update for atomic operation
-      if (result.updates.length > 1) {
-        await this.hass.callWS({
-          type: "inhabit/walls/batch_update",
-          floor_plan_id: floorPlan.id,
-          floor_id: floor.id,
-          updates: result.updates.map((u) => ({
-            wall_id: u.wallId,
-            start: u.newStart,
-            end: u.newEnd,
-          })),
-        });
-      } else {
-        const update = result.updates[0];
-        await this.hass.callWS({
-          type: "inhabit/walls/update",
-          floor_plan_id: floorPlan.id,
-          floor_id: floor.id,
-          wall_id: update.wallId,
-          start: update.newStart,
-          end: update.newEnd,
-        });
-      }
+    const affectedIds = result.updates.map((u) => u.wallId);
 
-      await reloadFloorData();
+    try {
+      await this._withWallUndo(affectedIds, "Move wall endpoint", async () => {
+        if (result.updates.length > 1) {
+          await this.hass!.callWS({
+            type: "inhabit/walls/batch_update",
+            floor_plan_id: floorPlan.id,
+            floor_id: floor.id,
+            updates: result.updates.map((u) => ({
+              wall_id: u.wallId,
+              start: u.newStart,
+              end: u.newEnd,
+            })),
+          });
+        } else {
+          const update = result.updates[0];
+          await this.hass!.callWS({
+            type: "inhabit/walls/update",
+            floor_plan_id: floorPlan.id,
+            floor_id: floor.id,
+            wall_id: update.wallId,
+            start: update.newStart,
+            end: update.newEnd,
+          });
+        }
+        await reloadFloorData();
+      });
     } catch (err) {
       console.error("Error updating wall endpoint:", err);
       alert(`Failed to update wall: ${err}`);
@@ -735,6 +755,18 @@ export class FpbCanvas extends LitElement {
       this._wallEditor = null;
       selection.value = { type: "none", ids: [] };
       activeTool.value = "select";
+    } else if ((e.key === "Backspace" || e.key === "Delete") && this._wallEditor) {
+      e.preventDefault();
+      this._handleWallDelete();
+    } else if (e.key === "z" && (e.ctrlKey || e.metaKey) && !e.shiftKey) {
+      e.preventDefault();
+      undo();
+    } else if (
+      (e.key === "z" && (e.ctrlKey || e.metaKey) && e.shiftKey) ||
+      (e.key === "y" && (e.ctrlKey || e.metaKey))
+    ) {
+      e.preventDefault();
+      redo();
     }
   }
 
@@ -762,14 +794,52 @@ export class FpbCanvas extends LitElement {
     const floorPlan = currentFloorPlan.value;
     if (!floor || !floorPlan) return;
 
+    const hass = this.hass;
+    const fpId = floorPlan.id;
+    const fId = floor.id;
+    const wall = this._wallEditor.wall;
+    const snapshot = {
+      start: { ...wall.start },
+      end: { ...wall.end },
+      thickness: wall.thickness,
+      is_exterior: wall.is_exterior,
+      length_locked: wall.length_locked,
+      direction: wall.direction,
+    };
+    const wallRef = { id: wall.id };
+
     try {
-      await this.hass.callWS({
+      await hass.callWS({
         type: "inhabit/walls/delete",
-        floor_plan_id: floorPlan.id,
-        floor_id: floor.id,
-        wall_id: this._wallEditor.wall.id,
+        floor_plan_id: fpId,
+        floor_id: fId,
+        wall_id: wallRef.id,
       });
       await reloadFloorData();
+
+      pushAction({
+        type: "wall_delete",
+        description: "Delete wall",
+        undo: async () => {
+          const r = await hass.callWS<{ id: string }>({
+            type: "inhabit/walls/add",
+            floor_plan_id: fpId,
+            floor_id: fId,
+            ...snapshot,
+          });
+          wallRef.id = r.id;
+          await reloadFloorData();
+        },
+        redo: async () => {
+          await hass.callWS({
+            type: "inhabit/walls/delete",
+            floor_plan_id: fpId,
+            floor_id: fId,
+            wall_id: wallRef.id,
+          });
+          await reloadFloorData();
+        },
+      });
     } catch (err) {
       console.error("Error deleting wall:", err);
     }
@@ -784,6 +854,79 @@ export class FpbCanvas extends LitElement {
     } else if (e.key === "Escape") {
       this._handleEditorCancel();
     }
+  }
+
+  private async _withWallUndo(
+    wallIds: string[],
+    description: string,
+    perform: () => Promise<void>,
+  ): Promise<void> {
+    if (!this.hass) return;
+
+    const floor = currentFloor.value;
+    const floorPlan = currentFloorPlan.value;
+    if (!floor || !floorPlan) return;
+
+    const hass = this.hass;
+    const fpId = floorPlan.id;
+    const fId = floor.id;
+
+    // Snapshot wall states before
+    const before = new Map<string, { start: Coordinates; end: Coordinates; length_locked: boolean; direction: import("../../types").WallDirection }>();
+    for (const id of wallIds) {
+      const w = floor.walls.find((w) => w.id === id);
+      if (w) {
+        before.set(id, { start: { ...w.start }, end: { ...w.end }, length_locked: w.length_locked, direction: w.direction });
+      }
+    }
+
+    await perform();
+
+    // Capture new states after reload
+    const updatedFloor = currentFloor.value;
+    if (!updatedFloor) return;
+
+    const after = new Map<string, { start: Coordinates; end: Coordinates; length_locked: boolean; direction: import("../../types").WallDirection }>();
+    for (const id of wallIds) {
+      const w = updatedFloor.walls.find((w) => w.id === id);
+      if (w) {
+        after.set(id, { start: { ...w.start }, end: { ...w.end }, length_locked: w.length_locked, direction: w.direction });
+      }
+    }
+
+    const restoreStates = async (states: Map<string, { start: Coordinates; end: Coordinates; length_locked: boolean; direction: import("../../types").WallDirection }>) => {
+      const updates = Array.from(states.entries()).map(([wall_id, s]) => ({
+        wall_id,
+        start: s.start,
+        end: s.end,
+        length_locked: s.length_locked,
+        direction: s.direction,
+      }));
+      if (updates.length > 1) {
+        await hass.callWS({
+          type: "inhabit/walls/batch_update",
+          floor_plan_id: fpId,
+          floor_id: fId,
+          updates,
+        });
+      } else if (updates.length === 1) {
+        const u = updates[0];
+        await hass.callWS({
+          type: "inhabit/walls/update",
+          floor_plan_id: fpId,
+          floor_id: fId,
+          ...u,
+        });
+      }
+      await reloadFloorData();
+    };
+
+    pushAction({
+      type: "wall_update",
+      description,
+      undo: () => restoreStates(before),
+      redo: () => restoreStates(after),
+    });
   }
 
   private async _updateWallLength(wall: Wall, newLength: number): Promise<void> {
@@ -804,31 +947,34 @@ export class FpbCanvas extends LitElement {
 
     if (result.updates.length === 0) return;
 
+    const affectedIds = result.updates.map((u) => u.wallId);
+
     try {
-      // Use batch update if multiple walls need updating
-      if (result.updates.length > 1) {
-        await this.hass.callWS({
-          type: "inhabit/walls/batch_update",
-          floor_plan_id: floorPlan.id,
-          floor_id: floor.id,
-          updates: result.updates.map((u) => ({
-            wall_id: u.wallId,
-            start: u.newStart,
-            end: u.newEnd,
-          })),
-        });
-      } else {
-        const update = result.updates[0];
-        await this.hass.callWS({
-          type: "inhabit/walls/update",
-          floor_plan_id: floorPlan.id,
-          floor_id: floor.id,
-          wall_id: update.wallId,
-          start: update.newStart,
-          end: update.newEnd,
-        });
-      }
-      await reloadFloorData();
+      await this._withWallUndo(affectedIds, "Change wall length", async () => {
+        if (result.updates.length > 1) {
+          await this.hass!.callWS({
+            type: "inhabit/walls/batch_update",
+            floor_plan_id: floorPlan.id,
+            floor_id: floor.id,
+            updates: result.updates.map((u) => ({
+              wall_id: u.wallId,
+              start: u.newStart,
+              end: u.newEnd,
+            })),
+          });
+        } else {
+          const update = result.updates[0];
+          await this.hass!.callWS({
+            type: "inhabit/walls/update",
+            floor_plan_id: floorPlan.id,
+            floor_id: floor.id,
+            wall_id: update.wallId,
+            start: update.newStart,
+            end: update.newEnd,
+          });
+        }
+        await reloadFloorData();
+      });
     } catch (err) {
       console.error("Error updating wall:", err);
       alert(`Failed to update wall: ${err}`);
@@ -941,8 +1087,6 @@ export class FpbCanvas extends LitElement {
           length: currentLength,
         };
         this._editingLength = Math.round(currentLength).toString();
-        // Center the wall in the available space (left of the popover)
-        this._centerWallInView(wall);
         return true;
       }
     }
@@ -988,11 +1132,18 @@ export class FpbCanvas extends LitElement {
     return Math.sqrt(Math.pow(point.x - projX, 2) + Math.pow(point.y - projY, 2));
   }
 
-  private _handleWallClick(point: Coordinates): void {
+  private _handleWallClick(point: Coordinates, shiftHeld = false): void {
     if (!this._wallStartPoint) {
       this._wallStartPoint = point;
     } else {
-      this._completeWall(this._wallStartPoint, point);
+      // Determine direction constraint from shift key
+      let direction: import("../../types").WallDirection = "free";
+      if (shiftHeld) {
+        const dx = Math.abs(point.x - this._wallStartPoint.x);
+        const dy = Math.abs(point.y - this._wallStartPoint.y);
+        direction = dx >= dy ? "horizontal" : "vertical";
+      }
+      this._completeWall(this._wallStartPoint, point, direction);
       // Check for closed shape after adding wall
       this._checkForClosedShape(point);
       // Start new wall from this point for continuous drawing
@@ -1014,24 +1165,57 @@ export class FpbCanvas extends LitElement {
     this._drawingPoints = [...this._drawingPoints, point];
   }
 
-  private async _completeWall(start: Coordinates, end: Coordinates): Promise<void> {
+  private async _completeWall(start: Coordinates, end: Coordinates, direction: import("../../types").WallDirection = "free"): Promise<void> {
     if (!this.hass) return;
 
     const floor = currentFloor.value;
     const floorPlan = currentFloorPlan.value;
     if (!floor || !floorPlan) return;
 
+    const hass = this.hass;
+    const fpId = floorPlan.id;
+    const fId = floor.id;
+    const wallRef = { id: "" };
+
     try {
-      await this.hass.callWS({
+      const result = await hass.callWS<{ id: string }>({
         type: "inhabit/walls/add",
-        floor_plan_id: floorPlan.id,
-        floor_id: floor.id,
+        floor_plan_id: fpId,
+        floor_id: fId,
         start,
         end,
         thickness: 8,
+        direction,
       });
-      // Reload to get updated floor
+      wallRef.id = result.id;
       await reloadFloorData();
+
+      pushAction({
+        type: "wall_add",
+        description: "Add wall",
+        undo: async () => {
+          await hass.callWS({
+            type: "inhabit/walls/delete",
+            floor_plan_id: fpId,
+            floor_id: fId,
+            wall_id: wallRef.id,
+          });
+          await reloadFloorData();
+        },
+        redo: async () => {
+          const r = await hass.callWS<{ id: string }>({
+            type: "inhabit/walls/add",
+            floor_plan_id: fpId,
+            floor_id: fId,
+            start,
+            end,
+            thickness: 8,
+            direction,
+          });
+          wallRef.id = r.id;
+          await reloadFloorData();
+        },
+      });
     } catch (err) {
       console.error("Error creating wall:", err);
     }
@@ -1126,17 +1310,50 @@ export class FpbCanvas extends LitElement {
       }
     }
 
+    const hass = this.hass;
+    const fpId = floorPlan.id;
+    const fId = floor.id;
+    const color = this._getRandomRoomColor();
+    const roomRef = { id: "" };
+
     try {
-      await this.hass.callWS({
+      const result = await hass.callWS<{ id: string }>({
         type: "inhabit/rooms/add",
-        floor_plan_id: floorPlan.id,
-        floor_id: floor.id,
+        floor_plan_id: fpId,
+        floor_id: fId,
         name: roomName,
         polygon: { vertices: polygon },
-        color: this._getRandomRoomColor(),
+        color,
         ha_area_id: haAreaId,
       });
+      roomRef.id = result.id;
       await reloadFloorData();
+
+      pushAction({
+        type: "room_add",
+        description: "Add room",
+        undo: async () => {
+          await hass.callWS({
+            type: "inhabit/rooms/delete",
+            floor_plan_id: fpId,
+            room_id: roomRef.id,
+          });
+          await reloadFloorData();
+        },
+        redo: async () => {
+          const r = await hass.callWS<{ id: string }>({
+            type: "inhabit/rooms/add",
+            floor_plan_id: fpId,
+            floor_id: fId,
+            name: roomName,
+            polygon: { vertices: polygon },
+            color,
+            ha_area_id: haAreaId,
+          });
+          roomRef.id = r.id;
+          await reloadFloorData();
+        },
+      });
     } catch (err) {
       console.error("Error creating room:", err);
       alert(`Failed to create room: ${err}`);
@@ -1169,19 +1386,53 @@ export class FpbCanvas extends LitElement {
       }
     }
 
+    const hass = this.hass;
+    const fpId = floorPlan.id;
+    const fId = floor.id;
+    const vertices = [...this._drawingPoints];
+    const color = this._getRandomRoomColor();
+    const roomRef = { id: "" };
+
     try {
-      await this.hass.callWS({
+      const result = await hass.callWS<{ id: string }>({
         type: "inhabit/rooms/add",
-        floor_plan_id: floorPlan.id,
-        floor_id: floor.id,
+        floor_plan_id: fpId,
+        floor_id: fId,
         name: roomName,
-        polygon: { vertices: this._drawingPoints },
-        color: this._getRandomRoomColor(),
+        polygon: { vertices },
+        color,
         ha_area_id: haAreaId,
       });
+      roomRef.id = result.id;
 
       this._drawingPoints = [];
       await reloadFloorData();
+
+      pushAction({
+        type: "room_add",
+        description: "Add room",
+        undo: async () => {
+          await hass.callWS({
+            type: "inhabit/rooms/delete",
+            floor_plan_id: fpId,
+            room_id: roomRef.id,
+          });
+          await reloadFloorData();
+        },
+        redo: async () => {
+          const r = await hass.callWS<{ id: string }>({
+            type: "inhabit/rooms/add",
+            floor_plan_id: fpId,
+            floor_id: fId,
+            name: roomName,
+            polygon: { vertices },
+            color,
+            ha_area_id: haAreaId,
+          });
+          roomRef.id = r.id;
+          await reloadFloorData();
+        },
+      });
     } catch (err) {
       console.error("Error creating room:", err);
       alert(`Failed to create room: ${err}`);
@@ -1191,6 +1442,16 @@ export class FpbCanvas extends LitElement {
   private _screenToSvg(screenPoint: Coordinates): Coordinates {
     if (!this._svg) return screenPoint;
 
+    const ctm = this._svg.getScreenCTM();
+    if (ctm) {
+      const inv = ctm.inverse();
+      return {
+        x: inv.a * screenPoint.x + inv.c * screenPoint.y + inv.e,
+        y: inv.b * screenPoint.x + inv.d * screenPoint.y + inv.f,
+      };
+    }
+
+    // Fallback to manual calculation
     const rect = this._svg.getBoundingClientRect();
     const scaleX = this._viewBox.width / rect.width;
     const scaleY = this._viewBox.height / rect.height;
@@ -1684,6 +1945,20 @@ export class FpbCanvas extends LitElement {
   private _svgToScreen(svgPoint: Coordinates): Coordinates {
     if (!this._svg) return svgPoint;
 
+    const ctm = this._svg.getScreenCTM();
+    if (ctm) {
+      // Get absolute screen position
+      const screenX = ctm.a * svgPoint.x + ctm.c * svgPoint.y + ctm.e;
+      const screenY = ctm.b * svgPoint.x + ctm.d * svgPoint.y + ctm.f;
+      // Convert to position relative to the SVG element
+      const rect = this._svg.getBoundingClientRect();
+      return {
+        x: screenX - rect.left,
+        y: screenY - rect.top,
+      };
+    }
+
+    // Fallback
     const rect = this._svg.getBoundingClientRect();
     const scaleX = rect.width / this._viewBox.width;
     const scaleY = rect.height / this._viewBox.height;
@@ -1692,36 +1967,6 @@ export class FpbCanvas extends LitElement {
       x: (svgPoint.x - this._viewBox.x) * scaleX,
       y: (svgPoint.y - this._viewBox.y) * scaleY,
     };
-  }
-
-  private _centerWallInView(wall: Wall): void {
-    if (!this._svg) return;
-
-    const rect = this._svg.getBoundingClientRect();
-    const popoverWidth = 312; // 280px width + 16px margin + 16px padding
-
-    // Calculate available width (left of the popover)
-    const availableWidth = rect.width - popoverWidth;
-    const availableHeight = rect.height;
-
-    // Wall center point
-    const wallCenterX = (wall.start.x + wall.end.x) / 2;
-    const wallCenterY = (wall.start.y + wall.end.y) / 2;
-
-    // Calculate the center of the available area in SVG coordinates
-    // The available area center in screen coords is at (availableWidth / 2, availableHeight / 2)
-    const scaleX = this._viewBox.width / rect.width;
-    const scaleY = this._viewBox.height / rect.height;
-
-    // New viewBox position to center the wall in the available space
-    const newViewBox = {
-      ...this._viewBox,
-      x: wallCenterX - (availableWidth / 2) * scaleX,
-      y: wallCenterY - (availableHeight / 2) * scaleY,
-    };
-
-    viewBox.value = newViewBox;
-    this._viewBox = newViewBox;
   }
 
   private _renderWallEditor() {
@@ -1793,18 +2038,18 @@ export class FpbCanvas extends LitElement {
     if (!floor || !floorPlan) return;
 
     const wall = this._wallEditor.wall;
-    const newLocked = !wall.length_locked;
 
     try {
-      await this.hass.callWS({
-        type: "inhabit/walls/update",
-        floor_plan_id: floorPlan.id,
-        floor_id: floor.id,
-        wall_id: wall.id,
-        length_locked: newLocked,
+      await this._withWallUndo([wall.id], "Toggle length lock", async () => {
+        await this.hass!.callWS({
+          type: "inhabit/walls/update",
+          floor_plan_id: floorPlan.id,
+          floor_id: floor.id,
+          wall_id: wall.id,
+          length_locked: !wall.length_locked,
+        });
+        await reloadFloorData();
       });
-
-      await reloadFloorData();
       this._refreshWallEditor(wall.id);
     } catch (err) {
       console.error("Error toggling length lock:", err);
@@ -1831,39 +2076,42 @@ export class FpbCanvas extends LitElement {
         return;
       }
 
-      if (result.updates.length > 0) {
-        // Batch update: the wall gets its geometry + direction,
-        // connected walls get their geometry adjusted
-        const updates = result.updates.map((u) => {
-          const update: Record<string, unknown> = {
-            wall_id: u.wallId,
-            start: u.newStart,
-            end: u.newEnd,
-          };
-          if (u.wallId === wall.id) {
-            update.direction = direction;
-          }
-          return update;
-        });
+      const affectedIds = result.updates.length > 0
+        ? result.updates.map((u) => u.wallId)
+        : [wall.id];
 
-        await this.hass.callWS({
-          type: "inhabit/walls/batch_update",
-          floor_plan_id: floorPlan.id,
-          floor_id: floor.id,
-          updates,
-        });
-      } else {
-        // No geometry change needed, just update the direction
-        await this.hass.callWS({
-          type: "inhabit/walls/update",
-          floor_plan_id: floorPlan.id,
-          floor_id: floor.id,
-          wall_id: wall.id,
-          direction,
-        });
-      }
+      await this._withWallUndo(affectedIds, "Set wall direction", async () => {
+        if (result.updates.length > 0) {
+          const updates = result.updates.map((u) => {
+            const update: Record<string, unknown> = {
+              wall_id: u.wallId,
+              start: u.newStart,
+              end: u.newEnd,
+            };
+            if (u.wallId === wall.id) {
+              update.direction = direction;
+            }
+            return update;
+          });
 
-      await reloadFloorData();
+          await this.hass!.callWS({
+            type: "inhabit/walls/batch_update",
+            floor_plan_id: floorPlan.id,
+            floor_id: floor.id,
+            updates,
+          });
+        } else {
+          await this.hass!.callWS({
+            type: "inhabit/walls/update",
+            floor_plan_id: floorPlan.id,
+            floor_id: floor.id,
+            wall_id: wall.id,
+            direction,
+          });
+        }
+        await reloadFloorData();
+      });
+
       this._refreshWallEditor(wall.id);
     } catch (err) {
       console.error("Error setting wall direction:", err);
@@ -1927,20 +2175,57 @@ export class FpbCanvas extends LitElement {
     const floorPlan = currentFloorPlan.value;
     if (!floor || !floorPlan) return;
 
+    const hass = this.hass;
+    const fpId = floorPlan.id;
+    const fId = floor.id;
+    const position = { ...this._pendingDevice.position };
+    const contributesToOccupancy = entityId.startsWith("binary_sensor.") || entityId.startsWith("sensor.");
+    const deviceRef = { id: "" };
+
     try {
-      await this.hass.callWS({
-        type: "inhabit/devices/add",
-        floor_plan_id: floorPlan.id,
-        floor_id: floor.id,
+      const result = await hass.callWS<{ id: string }>({
+        type: "inhabit/devices/place",
+        floor_plan_id: fpId,
+        floor_id: fId,
         entity_id: entityId,
-        position: this._pendingDevice.position,
+        position,
         rotation: 0,
         scale: 1,
         show_state: true,
         show_label: true,
-        contributes_to_occupancy: entityId.startsWith("binary_sensor.") || entityId.startsWith("sensor."),
+        contributes_to_occupancy: contributesToOccupancy,
       });
+      deviceRef.id = result.id;
       await reloadFloorData();
+
+      pushAction({
+        type: "device_place",
+        description: "Place device",
+        undo: async () => {
+          await hass.callWS({
+            type: "inhabit/devices/remove",
+            floor_plan_id: fpId,
+            device_id: deviceRef.id,
+          });
+          await reloadFloorData();
+        },
+        redo: async () => {
+          const r = await hass.callWS<{ id: string }>({
+            type: "inhabit/devices/place",
+            floor_plan_id: fpId,
+            floor_id: fId,
+            entity_id: entityId,
+            position,
+            rotation: 0,
+            scale: 1,
+            show_state: true,
+            show_label: true,
+            contributes_to_occupancy: contributesToOccupancy,
+          });
+          deviceRef.id = r.id;
+          await reloadFloorData();
+        },
+      });
     } catch (err) {
       console.error("Error placing device:", err);
       alert(`Failed to place device: ${err}`);

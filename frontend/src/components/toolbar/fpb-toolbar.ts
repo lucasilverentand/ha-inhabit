@@ -136,6 +136,30 @@ export class FpbToolbar extends LitElement {
       margin: 4px 0;
     }
 
+    .floor-option .delete-btn {
+      display: none;
+      margin-left: auto;
+      padding: 2px;
+      border: none;
+      border-radius: 4px;
+      background: transparent;
+      color: var(--secondary-text-color);
+      cursor: pointer;
+      line-height: 1;
+    }
+
+    .floor-option .delete-btn ha-icon {
+      --mdc-icon-size: 16px;
+    }
+
+    .floor-option:hover .delete-btn {
+      display: flex;
+    }
+
+    .floor-option .delete-btn:hover {
+      color: var(--error-color, #f44336);
+    }
+
     .floor-option.add-floor {
       color: var(--secondary-text-color);
     }
@@ -303,6 +327,19 @@ export class FpbToolbar extends LitElement {
     );
   }
 
+  private _handleDeleteFloor(e: Event, floorId: string, floorName: string): void {
+    e.stopPropagation();
+    if (!confirm(`Delete "${floorName}"? This will remove all walls, rooms, and devices on this floor.`)) return;
+    this._floorMenuOpen = false;
+    this.dispatchEvent(
+      new CustomEvent("delete-floor", {
+        detail: { id: floorId },
+        bubbles: true,
+        composed: true,
+      })
+    );
+  }
+
   private _toggleAddMenu(): void {
     this._addMenuOpen = !this._addMenuOpen;
     this._floorMenuOpen = false;
@@ -362,6 +399,11 @@ export class FpbToolbar extends LitElement {
                   >
                     <ha-icon icon="mdi:layers"></ha-icon>
                     ${f.name}
+                    <span class="delete-btn"
+                          @click=${(e: Event) => this._handleDeleteFloor(e, f.id, f.name)}
+                          title="Delete floor">
+                      <ha-icon icon="mdi:delete-outline"></ha-icon>
+                    </span>
                   </button>
                 `
               )}

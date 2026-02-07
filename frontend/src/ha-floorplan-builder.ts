@@ -356,6 +356,35 @@ export class HaFloorplanBuilder extends LitElement {
     }
   }
 
+  private async _deleteFloor(floorId: string): Promise<void> {
+    if (!this.hass) return;
+
+    const fp = currentFloorPlan.value;
+    if (!fp) return;
+
+    try {
+      await this.hass.callWS({
+        type: "inhabit/floors/delete",
+        floor_plan_id: fp.id,
+        floor_id: floorId,
+      });
+
+      const updatedFloors = fp.floors.filter(f => f.id !== floorId);
+      const updatedFp = { ...fp, floors: updatedFloors };
+      this._floorPlans = this._floorPlans.map(p => p.id === fp.id ? updatedFp : p);
+      currentFloorPlan.value = updatedFp;
+
+      // Switch to another floor or clear
+      if (currentFloor.value?.id === floorId) {
+        clearHistory();
+        currentFloor.value = updatedFloors.length > 0 ? updatedFloors[0] : null;
+      }
+    } catch (err) {
+      console.error("Error deleting floor:", err);
+      alert(`Failed to delete floor: ${err}`);
+    }
+  }
+
   private _handleFloorSelect(floorId: string): void {
     const fp = currentFloorPlan.value;
     if (fp) {
@@ -425,6 +454,8 @@ export class HaFloorplanBuilder extends LitElement {
             @floor-select=${(e: CustomEvent) =>
               this._handleFloorSelect(e.detail.id)}
             @add-floor=${this._addFloor}
+            @delete-floor=${(e: CustomEvent) =>
+              this._deleteFloor(e.detail.id)}
           ></fpb-toolbar>
 
           <div class="canvas-container">
