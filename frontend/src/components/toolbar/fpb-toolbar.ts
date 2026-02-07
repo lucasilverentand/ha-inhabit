@@ -4,6 +4,7 @@
 
 import { LitElement, html, css } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
+import { effect } from "@preact/signals-core";
 import type { HomeAssistant, FloorPlan, ToolType } from "../../types";
 import {
   currentFloorPlan,
@@ -37,45 +38,123 @@ export class FpbToolbar extends LitElement {
   @state()
   private _addMenuOpen = false;
 
+  @state()
+  private _floorMenuOpen = false;
+
   static override styles = css`
     :host {
       display: flex;
       align-items: center;
-      padding: 0 16px;
-      gap: 8px;
-      background: var(--card-background-color);
+      padding: 0 12px;
+      gap: 4px;
+      background: var(--app-header-background-color, var(--primary-color));
+      color: var(--app-header-text-color, var(--text-primary-color));
+      box-sizing: border-box;
     }
 
-    .floor-select {
-      padding: 4px 6px;
+    /* --- Floor selector dropdown --- */
+    .floor-selector {
+      position: relative;
+    }
+
+    .floor-trigger {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 8px;
       border: none;
       border-radius: 4px;
       background: transparent;
-      color: var(--secondary-text-color);
-      font-size: 13px;
+      color: inherit;
+      font-size: 16px;
+      font-weight: 400;
       cursor: pointer;
-      appearance: none;
-      -webkit-appearance: none;
-      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23999'/%3E%3C/svg%3E");
-      background-repeat: no-repeat;
-      background-position: right 4px center;
-      padding-right: 18px;
+      white-space: nowrap;
     }
 
-    .floor-select:hover {
+    .floor-trigger:hover {
+      background: rgba(255, 255, 255, 0.1);
+    }
+
+    .floor-trigger ha-icon {
+      --mdc-icon-size: 18px;
+      transition: transform 0.2s ease;
+    }
+
+    .floor-trigger.open ha-icon {
+      transform: rotate(180deg);
+    }
+
+    .floor-dropdown {
+      position: absolute;
+      top: calc(100% + 4px);
+      left: 0;
+      background: var(--card-background-color);
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+      min-width: 160px;
+      z-index: 100;
+      overflow: hidden;
+      padding: 4px 0;
+    }
+
+    .floor-option {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border: none;
+      background: transparent;
+      color: var(--primary-text-color);
+      cursor: pointer;
+      font-size: 14px;
+      width: 100%;
+      text-align: left;
+    }
+
+    .floor-option:hover {
+      background: var(--secondary-background-color);
+    }
+
+    .floor-option.selected {
+      color: var(--primary-color);
+      font-weight: 500;
+    }
+
+    .floor-option.selected ha-icon {
+      color: var(--primary-color);
+    }
+
+    .floor-option ha-icon {
+      --mdc-icon-size: 18px;
+      color: var(--secondary-text-color);
+    }
+
+    .floor-dropdown-divider {
+      height: 1px;
+      background: var(--divider-color);
+      margin: 4px 0;
+    }
+
+    .floor-option.add-floor {
+      color: var(--secondary-text-color);
+    }
+
+    .floor-option.add-floor:hover {
       color: var(--primary-text-color);
     }
 
+    /* --- Divider --- */
     .divider {
       width: 1px;
       height: 24px;
-      background: var(--divider-color);
-      margin: 0 8px;
+      background: rgba(255, 255, 255, 0.2);
+      margin: 0 4px;
     }
 
     .tool-group {
       display: flex;
-      gap: 4px;
+      gap: 2px;
     }
 
     .tool-button {
@@ -87,23 +166,26 @@ export class FpbToolbar extends LitElement {
       border: none;
       border-radius: 4px;
       background: transparent;
-      color: var(--primary-text-color);
+      color: inherit;
       cursor: pointer;
       transition: background 0.2s ease;
     }
 
     .tool-button:hover {
-      background: var(--secondary-background-color);
+      background: rgba(255, 255, 255, 0.1);
     }
 
     .tool-button.active {
-      background: var(--primary-color);
-      color: var(--text-primary-color);
+      background: rgba(255, 255, 255, 0.2);
     }
 
     .tool-button:disabled {
-      opacity: 0.5;
+      opacity: 0.4;
       cursor: not-allowed;
+    }
+
+    .tool-button:disabled:hover {
+      background: transparent;
     }
 
     .tool-button ha-icon {
@@ -114,6 +196,7 @@ export class FpbToolbar extends LitElement {
       flex: 1;
     }
 
+    /* --- Add button + menu --- */
     .add-button-container {
       position: relative;
     }
@@ -126,19 +209,23 @@ export class FpbToolbar extends LitElement {
       height: 36px;
       border: none;
       border-radius: 4px;
-      background: var(--primary-color);
-      color: var(--text-primary-color);
+      background: rgba(255, 255, 255, 0.15);
+      color: inherit;
       cursor: pointer;
-      font-size: 20px;
-      font-weight: 500;
+      transition: background 0.2s ease;
     }
 
     .add-button:hover {
-      opacity: 0.9;
+      background: rgba(255, 255, 255, 0.25);
     }
 
     .add-button.menu-open {
+      background: rgba(255, 255, 255, 0.25);
       border-radius: 4px 4px 0 0;
+    }
+
+    .add-button ha-icon {
+      --mdc-icon-size: 20px;
     }
 
     .add-menu {
@@ -146,19 +233,19 @@ export class FpbToolbar extends LitElement {
       top: 100%;
       right: 0;
       background: var(--card-background-color);
-      border: 1px solid var(--divider-color);
-      border-radius: 4px 0 4px 4px;
-      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+      border-radius: 0 0 8px 8px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
       min-width: 140px;
       z-index: 100;
       overflow: hidden;
+      padding: 4px 0;
     }
 
     .add-menu-item {
       display: flex;
       align-items: center;
       gap: 8px;
-      padding: 10px 12px;
+      padding: 8px 12px;
       border: none;
       background: transparent;
       color: var(--primary-text-color);
@@ -173,43 +260,20 @@ export class FpbToolbar extends LitElement {
     }
 
     .add-menu-item.active {
-      background: var(--primary-color);
-      color: var(--text-primary-color);
+      color: var(--primary-color);
+      font-weight: 500;
     }
 
     .add-menu-item ha-icon {
       --mdc-icon-size: 18px;
     }
-
-    .add-floor-btn {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      width: 24px;
-      height: 24px;
-      border: none;
-      border-radius: 4px;
-      background: transparent;
-      color: var(--secondary-text-color);
-      cursor: pointer;
-      padding: 0;
-    }
-
-    .add-floor-btn:hover {
-      color: var(--primary-text-color);
-      background: var(--secondary-background-color);
-    }
-
-    .add-floor-btn ha-icon {
-      --mdc-icon-size: 16px;
-    }
   `;
 
-  private _handleFloorChange(e: Event): void {
-    const select = e.target as HTMLSelectElement;
+  private _selectFloor(floorId: string): void {
+    this._floorMenuOpen = false;
     this.dispatchEvent(
       new CustomEvent("floor-select", {
-        detail: { id: select.value },
+        detail: { id: floorId },
         bubbles: true,
         composed: true,
       })
@@ -230,6 +294,7 @@ export class FpbToolbar extends LitElement {
   }
 
   private _handleAddFloor(): void {
+    this._floorMenuOpen = false;
     this.dispatchEvent(
       new CustomEvent("add-floor", {
         bubbles: true,
@@ -240,10 +305,17 @@ export class FpbToolbar extends LitElement {
 
   private _toggleAddMenu(): void {
     this._addMenuOpen = !this._addMenuOpen;
+    this._floorMenuOpen = false;
   }
 
-  private _closeAddMenu(): void {
+  private _toggleFloorMenu(): void {
+    this._floorMenuOpen = !this._floorMenuOpen;
     this._addMenuOpen = false;
+  }
+
+  private _closeMenus(): void {
+    this._addMenuOpen = false;
+    this._floorMenuOpen = false;
   }
 
   override connectedCallback(): void {
@@ -259,7 +331,7 @@ export class FpbToolbar extends LitElement {
   private _handleDocumentClick = (e: MouseEvent): void => {
     const path = e.composedPath();
     if (!path.includes(this)) {
-      this._closeAddMenu();
+      this._closeMenus();
     }
   };
 
@@ -267,28 +339,46 @@ export class FpbToolbar extends LitElement {
     const fp = currentFloorPlan.value;
     const floor = currentFloor.value;
     const tool = activeTool.value;
-    const isAddToolActive = ADD_MENU_ITEMS.some((item) => item.id === tool);
     const floors = fp?.floors || [];
 
     return html`
       <!-- Floor Selector -->
       ${floors.length > 0 ? html`
-        <select
-          class="floor-select"
-          .value=${floor?.id || ""}
-          @change=${this._handleFloorChange}
-        >
-          ${floors.map(
-            (f) => html`<option value=${f.id}>${f.name}</option>`
-          )}
-        </select>
-      ` : null}
-
-      <button class="add-floor-btn" @click=${this._handleAddFloor} title="Add floor">
-        <ha-icon icon="mdi:plus"></ha-icon>
-      </button>
-
-      <div class="divider"></div>
+        <div class="floor-selector">
+          <button
+            class="floor-trigger ${this._floorMenuOpen ? "open" : ""}"
+            @click=${this._toggleFloorMenu}
+          >
+            ${floor?.name || "Select floor"}
+            <ha-icon icon="mdi:chevron-down"></ha-icon>
+          </button>
+          ${this._floorMenuOpen ? html`
+            <div class="floor-dropdown">
+              ${floors.map(
+                (f) => html`
+                  <button
+                    class="floor-option ${f.id === floor?.id ? "selected" : ""}"
+                    @click=${() => this._selectFloor(f.id)}
+                  >
+                    <ha-icon icon="mdi:layers"></ha-icon>
+                    ${f.name}
+                  </button>
+                `
+              )}
+              <div class="floor-dropdown-divider"></div>
+              <button class="floor-option add-floor" @click=${this._handleAddFloor}>
+                <ha-icon icon="mdi:plus"></ha-icon>
+                Add floor
+              </button>
+            </div>
+          ` : null}
+        </div>
+      ` : html`
+        <button class="floor-trigger" @click=${this._handleAddFloor}>
+          <ha-icon icon="mdi:plus" style="--mdc-icon-size: 16px;"></ha-icon>
+          Add floor
+        </button>
+      `}
 
       <div class="spacer"></div>
 
@@ -317,9 +407,9 @@ export class FpbToolbar extends LitElement {
       <!-- Add Menu (right side) -->
       <div class="add-button-container">
         <button
-          class="add-button ${this._addMenuOpen ? "menu-open" : ""} ${isAddToolActive ? "active" : ""}"
+          class="add-button ${this._addMenuOpen ? "menu-open" : ""}"
           @click=${this._toggleAddMenu}
-          title="Add"
+          title="Add element"
         >
           <ha-icon icon="mdi:plus"></ha-icon>
         </button>

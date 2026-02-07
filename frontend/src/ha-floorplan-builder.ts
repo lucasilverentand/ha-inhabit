@@ -19,6 +19,7 @@ import type {
 // Import sub-components
 import "./components/canvas/fpb-canvas";
 import "./components/toolbar/fpb-toolbar";
+import { clearHistory } from "./stores/history-store";
 
 // Global state signals
 export const currentFloorPlan = signal<FloorPlan | null>(null);
@@ -81,7 +82,7 @@ export class HaFloorplanBuilder extends LitElement {
       height: 100%;
       background: var(--primary-background-color);
       color: var(--primary-text-color);
-      --toolbar-height: 48px;
+      --toolbar-height: var(--header-height, 48px);
     }
 
     .container {
@@ -99,7 +100,6 @@ export class HaFloorplanBuilder extends LitElement {
 
     fpb-toolbar {
       height: var(--toolbar-height);
-      border-bottom: 1px solid var(--divider-color);
     }
 
     .canvas-container {
@@ -361,6 +361,9 @@ export class HaFloorplanBuilder extends LitElement {
     if (fp) {
       const floor = fp.floors.find((f) => f.id === floorId);
       if (floor) {
+        if (currentFloor.value?.id !== floor.id) {
+          clearHistory();
+        }
         currentFloor.value = floor;
       }
     }
