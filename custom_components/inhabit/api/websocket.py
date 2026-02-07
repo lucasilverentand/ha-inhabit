@@ -290,6 +290,7 @@ def ws_floors_delete(
         vol.Optional("occupancy_sensor_enabled", default=True): bool,
         vol.Optional("motion_timeout", default=120): int,
         vol.Optional("checking_timeout", default=30): int,
+        vol.Optional("ha_area_id"): vol.Any(str, None),
     }
 )
 @callback
@@ -307,6 +308,7 @@ def ws_rooms_add(
         occupancy_sensor_enabled=msg["occupancy_sensor_enabled"],
         motion_timeout=msg["motion_timeout"],
         checking_timeout=msg["checking_timeout"],
+        ha_area_id=msg.get("ha_area_id"),
     )
     result = store.add_room(msg["floor_plan_id"], msg["floor_id"], room)
     if result:
@@ -339,6 +341,7 @@ def ws_rooms_add(
         vol.Optional("occupancy_sensor_enabled"): bool,
         vol.Optional("motion_timeout"): int,
         vol.Optional("checking_timeout"): int,
+        vol.Optional("ha_area_id"): vol.Any(str, None),
     }
 )
 @callback
@@ -366,6 +369,8 @@ def ws_rooms_update(
         room.motion_timeout = msg["motion_timeout"]
     if "checking_timeout" in msg:
         room.checking_timeout = msg["checking_timeout"]
+    if "ha_area_id" in msg:
+        room.ha_area_id = msg["ha_area_id"]
 
     result = store.update_room(msg["floor_plan_id"], room)
     if result:

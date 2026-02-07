@@ -21,7 +21,6 @@ interface AddMenuItem {
 
 const ADD_MENU_ITEMS: AddMenuItem[] = [
   { id: "wall", icon: "mdi:wall", label: "Wall" },
-  { id: "room", icon: "mdi:floor-plan", label: "Room" },
   { id: "door", icon: "mdi:door", label: "Door" },
   { id: "window", icon: "mdi:window-closed-variant", label: "Window" },
   { id: "device", icon: "mdi:devices", label: "Device" },

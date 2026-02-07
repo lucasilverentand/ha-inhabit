@@ -261,6 +261,7 @@ class Room:
     connected_rooms: list[str] = field(
         default_factory=list
     )  # Room IDs connected via doors
+    ha_area_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
@@ -274,6 +275,7 @@ class Room:
             "motion_timeout": self.motion_timeout,
             "checking_timeout": self.checking_timeout,
             "connected_rooms": self.connected_rooms,
+            "ha_area_id": self.ha_area_id,
         }
 
     @classmethod
@@ -289,6 +291,7 @@ class Room:
             motion_timeout=int(data.get("motion_timeout", 120)),
             checking_timeout=int(data.get("checking_timeout", 30)),
             connected_rooms=data.get("connected_rooms", []),
+            ha_area_id=data.get("ha_area_id"),
         )
 
 

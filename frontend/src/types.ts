@@ -219,10 +219,8 @@ export interface VisualRule {
 export type ToolType =
   | "select"
   | "wall"
-  | "room"
   | "door"
   | "window"
-  | "polygon"
   | "device";
 
 export type ToolState = "ready" | "drawing" | "dragging";

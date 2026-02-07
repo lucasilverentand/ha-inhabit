@@ -5,7 +5,7 @@
 import { LitElement, html, css, svg } from "lit";
 import { customElement, property, state, query } from "lit/decorators.js";
 import { effect } from "@preact/signals-core";
-import type { HomeAssistant, Coordinates, ViewBox, Wall } from "../../types";
+import type { HomeAssistant, Coordinates, ViewBox, Wall, Room } from "../../types";
 import {
   currentFloor,
   currentFloorPlan,
@@ -21,6 +21,7 @@ import {
 import { polygonToPath, viewBoxToString, groupWallsIntoChains, wallChainPath } from "../../utils/svg";
 import { snapToGrid as snapPoint } from "../../utils/geometry";
 import { buildConnectionGraph, solveWallLengthChange, solveWallMovement, solveConstraintSnap, previewEndpointDrag } from "../../utils/wall-solver";
+import { detectRoomsFromWalls } from "../../utils/room-detection";
 import { pushAction, undo, redo } from "../../stores/history-store";
 
 @customElement("fpb-canvas")
@@ -44,10 +45,10 @@ export class FpbCanvas extends LitElement {
   private _cursorPos: Coordinates = { x: 0, y: 0 };
 
   @state()
-  private _drawingPoints: Coordinates[] = [];
+  private _wallStartPoint: Coordinates | null = null;
 
   @state()
-  private _wallStartPoint: Coordinates | null = null;
+  private _roomEditor: { room: Room; editName: string; editColor: string; editAreaId: string | null } | null = null;
 
   @state()
   private _haAreas: Array<{ area_id: string; name: string }> = [];
@@ -520,6 +521,7 @@ export class FpbCanvas extends LitElement {
         // Close wall editor first (will be reopened if clicking on a wall)
         const hadEditor = !!this._wallEditor;
         this._wallEditor = null;
+        this._roomEditor = null;
 
         // Check if clicking on something selectable
         const clickedSomething = this._handleSelectClick(point);
@@ -535,20 +537,19 @@ export class FpbCanvas extends LitElement {
         }
       } else if (tool === "wall") {
         this._wallEditor = null;
+        this._roomEditor = null;
         // Use _cursorPos which has Shift-constraint applied from pointer move
         const wallPoint = this._wallStartPoint && e.shiftKey
           ? this._cursorPos
           : snappedPoint;
         this._handleWallClick(wallPoint, e.shiftKey);
-      } else if (tool === "room" || tool === "polygon") {
-        this._wallEditor = null;
-        this._handlePolygonClick(snappedPoint);
       } else if (tool === "device") {
         this._wallEditor = null;
         this._handleDeviceClick(snappedPoint);
       } else {
         // Other tools - pan on empty space
         this._wallEditor = null;
+        this._roomEditor = null;
         this._isPanning = true;
         this._panStart = { x: e.clientX, y: e.clientY };
         this._svg?.setPointerCapture(e.pointerId);
@@ -748,11 +749,11 @@ export class FpbCanvas extends LitElement {
   private _handleKeyDown(e: KeyboardEvent): void {
     if (e.key === "Escape") {
       this._wallStartPoint = null;
-      this._drawingPoints = [];
       this._hoveredEndpoint = null;
       this._draggingEndpoint = null;
       this._pendingDevice = null;
       this._wallEditor = null;
+      this._roomEditor = null;
       selection.value = { type: "none", ids: [] };
       activeTool.value = "select";
     } else if ((e.key === "Backspace" || e.key === "Delete") && this._wallEditor) {
@@ -816,6 +817,7 @@ export class FpbCanvas extends LitElement {
         wall_id: wallRef.id,
       });
       await reloadFloorData();
+      await this._syncRoomsWithWalls();
 
       pushAction({
         type: "wall_delete",
@@ -829,6 +831,7 @@ export class FpbCanvas extends LitElement {
           });
           wallRef.id = r.id;
           await reloadFloorData();
+          await this._syncRoomsWithWalls();
         },
         redo: async () => {
           await hass.callWS({
@@ -838,6 +841,7 @@ export class FpbCanvas extends LitElement {
             wall_id: wallRef.id,
           });
           await reloadFloorData();
+          await this._syncRoomsWithWalls();
         },
       });
     } catch (err) {
@@ -881,6 +885,7 @@ export class FpbCanvas extends LitElement {
     }
 
     await perform();
+    await this._syncRoomsWithWalls();
 
     // Capture new states after reload
     const updatedFloor = currentFloor.value;
@@ -919,6 +924,7 @@ export class FpbCanvas extends LitElement {
         });
       }
       await reloadFloorData();
+      await this._syncRoomsWithWalls();
     };
 
     pushAction({
@@ -1108,6 +1114,15 @@ export class FpbCanvas extends LitElement {
     for (const room of floor.rooms) {
       if (this._pointInPolygon(point, room.polygon.vertices)) {
         selection.value = { type: "room", ids: [room.id] };
+        const areaName = room.ha_area_id
+          ? this._haAreas.find(a => a.area_id === room.ha_area_id)?.name ?? room.name
+          : room.name;
+        this._roomEditor = {
+          room,
+          editName: areaName,
+          editColor: room.color,
+          editAreaId: room.ha_area_id ?? null,
+        };
         return true;
       }
     }
@@ -1144,25 +1159,9 @@ export class FpbCanvas extends LitElement {
         direction = dx >= dy ? "horizontal" : "vertical";
       }
       this._completeWall(this._wallStartPoint, point, direction);
-      // Check for closed shape after adding wall
-      this._checkForClosedShape(point);
       // Start new wall from this point for continuous drawing
       this._wallStartPoint = point;
     }
-  }
-
-  private _handlePolygonClick(point: Coordinates): void {
-    if (this._drawingPoints.length >= 3) {
-      const firstPoint = this._drawingPoints[0];
-      const dist = Math.sqrt(
-        Math.pow(point.x - firstPoint.x, 2) + Math.pow(point.y - firstPoint.y, 2)
-      );
-      if (dist < 15) {
-        this._completePolygon();
-        return;
-      }
-    }
-    this._drawingPoints = [...this._drawingPoints, point];
   }
 
   private async _completeWall(start: Coordinates, end: Coordinates, direction: import("../../types").WallDirection = "free"): Promise<void> {
@@ -1189,6 +1188,7 @@ export class FpbCanvas extends LitElement {
       });
       wallRef.id = result.id;
       await reloadFloorData();
+      await this._syncRoomsWithWalls();
 
       pushAction({
         type: "wall_add",
@@ -1201,6 +1201,7 @@ export class FpbCanvas extends LitElement {
             wall_id: wallRef.id,
           });
           await reloadFloorData();
+          await this._syncRoomsWithWalls();
         },
         redo: async () => {
           const r = await hass.callWS<{ id: string }>({
@@ -1214,228 +1215,11 @@ export class FpbCanvas extends LitElement {
           });
           wallRef.id = r.id;
           await reloadFloorData();
+          await this._syncRoomsWithWalls();
         },
       });
     } catch (err) {
       console.error("Error creating wall:", err);
-    }
-  }
-
-  private _checkForClosedShape(lastPoint: Coordinates): void {
-    const floor = currentFloor.value;
-    if (!floor || floor.walls.length < 2) return;
-
-    // Find closed polygon from walls
-    const polygon = this._findClosedPolygon(floor.walls, lastPoint);
-    if (polygon && polygon.length >= 3) {
-      this._promptCreateRoom(polygon);
-    }
-  }
-
-  private _findClosedPolygon(walls: Wall[], fromPoint: Coordinates): Coordinates[] | null {
-    // Build adjacency from walls
-    const visited = new Set<string>();
-    const path: Coordinates[] = [fromPoint];
-
-    const findPath = (current: Coordinates, target: Coordinates, depth: number): boolean => {
-      if (depth > 20) return false; // Prevent infinite loops
-
-      const key = `${current.x},${current.y}`;
-      if (visited.has(key)) return false;
-      visited.add(key);
-
-      // Check if we're back at start
-      if (path.length >= 3) {
-        const dist = Math.sqrt(
-          Math.pow(current.x - target.x, 2) + Math.pow(current.y - target.y, 2)
-        );
-        if (dist < 5) return true;
-      }
-
-      // Find connected walls
-      for (const wall of walls) {
-        let nextPoint: Coordinates | null = null;
-
-        if (Math.abs(wall.start.x - current.x) < 5 && Math.abs(wall.start.y - current.y) < 5) {
-          nextPoint = wall.end;
-        } else if (Math.abs(wall.end.x - current.x) < 5 && Math.abs(wall.end.y - current.y) < 5) {
-          nextPoint = wall.start;
-        }
-
-        if (nextPoint) {
-          path.push(nextPoint);
-          if (findPath(nextPoint, target, depth + 1)) return true;
-          path.pop();
-        }
-      }
-
-      return false;
-    };
-
-    // Try to find a closed path starting from any wall endpoint
-    for (const wall of walls) {
-      visited.clear();
-      path.length = 0;
-      path.push(wall.start);
-
-      if (findPath(wall.start, wall.start, 0)) {
-        return [...path];
-      }
-    }
-
-    return null;
-  }
-
-  private async _promptCreateRoom(polygon: Coordinates[]): Promise<void> {
-    if (!this.hass) return;
-
-    const floor = currentFloor.value;
-    const floorPlan = currentFloorPlan.value;
-    if (!floor || !floorPlan) return;
-
-    // Show dialog to create room
-    const roomName = prompt("Closed shape detected! Enter room name (or cancel to skip):");
-    if (!roomName) return;
-
-    // Ask to link to HA area
-    let haAreaId: string | null = null;
-    if (this._haAreas.length > 0) {
-      const areaNames = this._haAreas.map((a) => a.name).join(", ");
-      const areaInput = prompt(`Link to Home Assistant area? (${areaNames}) or leave empty:`);
-      if (areaInput) {
-        const area = this._haAreas.find(
-          (a) => a.name.toLowerCase() === areaInput.toLowerCase()
-        );
-        if (area) haAreaId = area.area_id;
-      }
-    }
-
-    const hass = this.hass;
-    const fpId = floorPlan.id;
-    const fId = floor.id;
-    const color = this._getRandomRoomColor();
-    const roomRef = { id: "" };
-
-    try {
-      const result = await hass.callWS<{ id: string }>({
-        type: "inhabit/rooms/add",
-        floor_plan_id: fpId,
-        floor_id: fId,
-        name: roomName,
-        polygon: { vertices: polygon },
-        color,
-        ha_area_id: haAreaId,
-      });
-      roomRef.id = result.id;
-      await reloadFloorData();
-
-      pushAction({
-        type: "room_add",
-        description: "Add room",
-        undo: async () => {
-          await hass.callWS({
-            type: "inhabit/rooms/delete",
-            floor_plan_id: fpId,
-            room_id: roomRef.id,
-          });
-          await reloadFloorData();
-        },
-        redo: async () => {
-          const r = await hass.callWS<{ id: string }>({
-            type: "inhabit/rooms/add",
-            floor_plan_id: fpId,
-            floor_id: fId,
-            name: roomName,
-            polygon: { vertices: polygon },
-            color,
-            ha_area_id: haAreaId,
-          });
-          roomRef.id = r.id;
-          await reloadFloorData();
-        },
-      });
-    } catch (err) {
-      console.error("Error creating room:", err);
-      alert(`Failed to create room: ${err}`);
-    }
-  }
-
-  private async _completePolygon(): Promise<void> {
-    if (!this.hass || this._drawingPoints.length < 3) return;
-
-    const floor = currentFloor.value;
-    const floorPlan = currentFloorPlan.value;
-    if (!floor || !floorPlan) return;
-
-    const roomName = prompt("Enter room name:");
-    if (!roomName) {
-      this._drawingPoints = [];
-      return;
-    }
-
-    // Ask to link to HA area
-    let haAreaId: string | null = null;
-    if (this._haAreas.length > 0) {
-      const areaNames = this._haAreas.map((a) => a.name).join(", ");
-      const areaInput = prompt(`Link to Home Assistant area? (${areaNames}) or leave empty:`);
-      if (areaInput) {
-        const area = this._haAreas.find(
-          (a) => a.name.toLowerCase() === areaInput.toLowerCase()
-        );
-        if (area) haAreaId = area.area_id;
-      }
-    }
-
-    const hass = this.hass;
-    const fpId = floorPlan.id;
-    const fId = floor.id;
-    const vertices = [...this._drawingPoints];
-    const color = this._getRandomRoomColor();
-    const roomRef = { id: "" };
-
-    try {
-      const result = await hass.callWS<{ id: string }>({
-        type: "inhabit/rooms/add",
-        floor_plan_id: fpId,
-        floor_id: fId,
-        name: roomName,
-        polygon: { vertices },
-        color,
-        ha_area_id: haAreaId,
-      });
-      roomRef.id = result.id;
-
-      this._drawingPoints = [];
-      await reloadFloorData();
-
-      pushAction({
-        type: "room_add",
-        description: "Add room",
-        undo: async () => {
-          await hass.callWS({
-            type: "inhabit/rooms/delete",
-            floor_plan_id: fpId,
-            room_id: roomRef.id,
-          });
-          await reloadFloorData();
-        },
-        redo: async () => {
-          const r = await hass.callWS<{ id: string }>({
-            type: "inhabit/rooms/add",
-            floor_plan_id: fpId,
-            floor_id: fId,
-            name: roomName,
-            polygon: { vertices },
-            color,
-            ha_area_id: haAreaId,
-          });
-          roomRef.id = r.id;
-          await reloadFloorData();
-        },
-      });
-    } catch (err) {
-      console.error("Error creating room:", err);
-      alert(`Failed to create room: ${err}`);
     }
   }
 
@@ -1496,6 +1280,259 @@ export class FpbCanvas extends LitElement {
       "rgba(255, 213, 79, 0.3)",   // yellow
     ];
     return colors[Math.floor(Math.random() * colors.length)];
+  }
+
+  /**
+   * Auto-detect rooms from wall loops and sync with existing rooms.
+   * Called after every wall mutation.
+   */
+  private async _syncRoomsWithWalls(): Promise<void> {
+    if (!this.hass) return;
+
+    const floor = currentFloor.value;
+    const floorPlan = currentFloorPlan.value;
+    if (!floor || !floorPlan) return;
+
+    const detected = detectRoomsFromWalls(floor.walls);
+    const existingRooms = [...floor.rooms];
+    const matchedExistingIds = new Set<string>();
+    const matchThreshold = 50; // cm
+
+    // Match detected rooms to existing rooms by centroid proximity
+    for (const candidate of detected) {
+      let bestMatch: Room | null = null;
+      let bestDist = Infinity;
+
+      for (const room of existingRooms) {
+        if (matchedExistingIds.has(room.id)) continue;
+        const center = this._getPolygonCenter(room.polygon.vertices);
+        if (!center) continue;
+
+        const dist = Math.sqrt(
+          Math.pow(candidate.centroid.x - center.x, 2) +
+          Math.pow(candidate.centroid.y - center.y, 2)
+        );
+        if (dist < matchThreshold && dist < bestDist) {
+          bestDist = dist;
+          bestMatch = room;
+        }
+      }
+
+      if (bestMatch) {
+        matchedExistingIds.add(bestMatch.id);
+        // Update polygon geometry if shape changed
+        const verticesChanged = this._verticesChanged(bestMatch.polygon.vertices, candidate.vertices);
+        if (verticesChanged) {
+          try {
+            await this.hass!.callWS({
+              type: "inhabit/rooms/update",
+              floor_plan_id: floorPlan.id,
+              room_id: bestMatch.id,
+              polygon: { vertices: candidate.vertices },
+            });
+          } catch (err) {
+            console.error("Error updating room polygon:", err);
+          }
+        }
+      } else {
+        // Create new room with auto-name
+        const nextNum = this._getNextRoomNumber(existingRooms);
+        try {
+          await this.hass!.callWS({
+            type: "inhabit/rooms/add",
+            floor_plan_id: floorPlan.id,
+            floor_id: floor.id,
+            name: `Room ${nextNum}`,
+            polygon: { vertices: candidate.vertices },
+            color: this._getRandomRoomColor(),
+          });
+        } catch (err) {
+          console.error("Error creating auto-detected room:", err);
+        }
+      }
+    }
+
+    // Delete rooms whose loops no longer exist
+    for (const room of existingRooms) {
+      if (!matchedExistingIds.has(room.id)) {
+        try {
+          await this.hass!.callWS({
+            type: "inhabit/rooms/delete",
+            floor_plan_id: floorPlan.id,
+            room_id: room.id,
+          });
+        } catch (err) {
+          console.error("Error deleting orphaned room:", err);
+        }
+      }
+    }
+
+    await reloadFloorData();
+  }
+
+  private _verticesChanged(existing: Coordinates[], detected: Coordinates[]): boolean {
+    if (existing.length !== detected.length) return true;
+    for (let i = 0; i < existing.length; i++) {
+      if (Math.abs(existing[i].x - detected[i].x) > 1 ||
+          Math.abs(existing[i].y - detected[i].y) > 1) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private _getNextRoomNumber(existingRooms: Room[]): number {
+    let max = 0;
+    for (const room of existingRooms) {
+      const match = room.name.match(/^Room (\d+)$/);
+      if (match) {
+        max = Math.max(max, parseInt(match[1], 10));
+      }
+    }
+    return max + 1;
+  }
+
+  private async _handleRoomEditorSave(): Promise<void> {
+    if (!this._roomEditor || !this.hass) return;
+
+    const floor = currentFloor.value;
+    const floorPlan = currentFloorPlan.value;
+    if (!floor || !floorPlan) return;
+
+    const { room, editName, editColor, editAreaId } = this._roomEditor;
+
+    try {
+      await this.hass.callWS({
+        type: "inhabit/rooms/update",
+        floor_plan_id: floorPlan.id,
+        room_id: room.id,
+        name: editName,
+        color: editColor,
+        ha_area_id: editAreaId,
+      });
+      await reloadFloorData();
+    } catch (err) {
+      console.error("Error updating room:", err);
+    }
+
+    this._roomEditor = null;
+    selection.value = { type: "none", ids: [] };
+  }
+
+  private _handleRoomEditorCancel(): void {
+    this._roomEditor = null;
+    selection.value = { type: "none", ids: [] };
+  }
+
+  private async _handleRoomDelete(): Promise<void> {
+    if (!this._roomEditor || !this.hass) return;
+
+    const floorPlan = currentFloorPlan.value;
+    if (!floorPlan) return;
+
+    try {
+      await this.hass.callWS({
+        type: "inhabit/rooms/delete",
+        floor_plan_id: floorPlan.id,
+        room_id: this._roomEditor.room.id,
+      });
+      await reloadFloorData();
+    } catch (err) {
+      console.error("Error deleting room:", err);
+    }
+
+    this._roomEditor = null;
+    selection.value = { type: "none", ids: [] };
+  }
+
+  private _renderRoomEditor() {
+    if (!this._roomEditor) return null;
+
+    const ROOM_COLORS = [
+      "rgba(156, 156, 156, 0.3)",
+      "rgba(244, 143, 177, 0.3)",
+      "rgba(129, 199, 132, 0.3)",
+      "rgba(100, 181, 246, 0.3)",
+      "rgba(255, 183, 77, 0.3)",
+      "rgba(186, 104, 200, 0.3)",
+      "rgba(77, 208, 225, 0.3)",
+      "rgba(255, 213, 79, 0.3)",
+    ];
+
+    return html`
+      <div class="wall-editor"
+           @click=${(e: Event) => e.stopPropagation()}
+           @pointerdown=${(e: Event) => e.stopPropagation()}>
+        <div class="wall-editor-header">
+          <span class="wall-editor-title">Room Properties</span>
+          <button class="wall-editor-close" @click=${this._handleRoomEditorCancel}>✕</button>
+        </div>
+
+        <div class="wall-editor-row">
+          <span class="wall-editor-label">HA Area</span>
+          <select
+            .value=${this._roomEditor.editAreaId ?? ""}
+            @change=${(e: Event) => {
+              if (this._roomEditor) {
+                const val = (e.target as HTMLSelectElement).value;
+                const area = this._haAreas.find(a => a.area_id === val);
+                this._roomEditor = {
+                  ...this._roomEditor,
+                  editAreaId: val || null,
+                  editName: area ? area.name : this._roomEditor.editName,
+                };
+              }
+            }}
+            style="flex:1; padding:8px; border:1px solid var(--divider-color,#ccc); border-radius:6px; font-size:14px; background:var(--primary-background-color,white); color:var(--primary-text-color,#333);"
+          >
+            <option value="">None</option>
+            ${this._haAreas.map(a => html`
+              <option value=${a.area_id} ?selected=${this._roomEditor?.editAreaId === a.area_id}>${a.name}</option>
+            `)}
+          </select>
+        </div>
+
+        <div class="wall-editor-row">
+          <span class="wall-editor-label">Name</span>
+          <input
+            type="text"
+            .value=${this._roomEditor.editName}
+            ?disabled=${!!this._roomEditor.editAreaId}
+            @input=${(e: InputEvent) => {
+              if (this._roomEditor) {
+                this._roomEditor = { ...this._roomEditor, editName: (e.target as HTMLInputElement).value };
+              }
+            }}
+            @keydown=${(e: KeyboardEvent) => {
+              if (e.key === "Enter") this._handleRoomEditorSave();
+              else if (e.key === "Escape") this._handleRoomEditorCancel();
+            }}
+            style="${this._roomEditor.editAreaId ? 'opacity:0.5;' : ''}"
+          />
+        </div>
+
+        <div class="wall-editor-row" style="flex-wrap:wrap;">
+          <span class="wall-editor-label">Color</span>
+          <div style="display:flex; gap:4px; flex-wrap:wrap;">
+            ${ROOM_COLORS.map(c => html`
+              <button
+                style="width:24px; height:24px; border-radius:4px; border:2px solid ${this._roomEditor?.editColor === c ? 'var(--primary-color,#2196f3)' : 'transparent'}; background:${c}; cursor:pointer; padding:0;"
+                @click=${() => {
+                  if (this._roomEditor) {
+                    this._roomEditor = { ...this._roomEditor, editColor: c };
+                  }
+                }}
+              ></button>
+            `)}
+          </div>
+        </div>
+
+        <div class="wall-editor-actions">
+          <button class="save-btn" @click=${this._handleRoomEditorSave}>Save</button>
+          <button class="delete-btn" @click=${this._handleRoomDelete}>Delete</button>
+        </div>
+      </div>
+    `;
   }
 
   private _renderWallChains(walls: Wall[], sel: import("../../types").SelectionState) {
@@ -1641,7 +1678,7 @@ export class FpbCanvas extends LitElement {
             if (!center) return null;
             return svg`
               <text class="room-label" x="${center.x}" y="${center.y}">
-                ${room.name}${room.ha_area_id ? " 🏠" : ""}
+                ${room.ha_area_id ? (this._haAreas.find(a => a.area_id === room.ha_area_id)?.name ?? room.name) : room.name}
               </text>
             `;
           })}
@@ -1903,22 +1940,6 @@ export class FpbCanvas extends LitElement {
 
           <!-- End point indicator -->
           <circle class="snap-indicator" cx="${end.x}" cy="${end.y}" r="4" opacity="0.5"/>
-        </g>
-      `;
-    }
-
-    // Room/polygon drawing preview
-    if ((tool === "room" || tool === "polygon") && this._drawingPoints.length > 0) {
-      const points = [...this._drawingPoints, this._cursorPos];
-      const pathData = points.map((p, i) => `${i === 0 ? "M" : "L"}${p.x},${p.y}`).join(" ");
-
-      return svg`
-        <g class="drawing-preview">
-          <path d="${pathData} Z" fill="rgba(33, 150, 243, 0.2)"
-                stroke="var(--primary-color)" stroke-width="2" stroke-dasharray="5,5"/>
-          ${this._drawingPoints.map(p => svg`
-            <circle cx="${p.x}" cy="${p.y}" r="5" fill="var(--primary-color)" stroke="white" stroke-width="2"/>
-          `)}
         </g>
       `;
     }
@@ -2293,6 +2314,7 @@ export class FpbCanvas extends LitElement {
         ${this._renderDevicePreview()}
       </svg>
       ${this._renderWallEditor()}
+      ${this._renderRoomEditor()}
       ${this._renderEntityPicker()}
     `;
   }
