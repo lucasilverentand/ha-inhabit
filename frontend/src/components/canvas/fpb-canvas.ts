@@ -20,7 +20,7 @@ import {
 } from "../../ha-floorplan-builder";
 import { polygonToPath, viewBoxToString, groupWallsIntoChains, wallChainPath } from "../../utils/svg";
 import { snapToGrid as snapPoint } from "../../utils/geometry";
-import { buildConnectionGraph, solveWallLengthChange, solveWallMovement } from "../../utils/wall-solver";
+import { buildConnectionGraph, solveWallLengthChange, solveWallMovement, solveConstraintSnap, previewEndpointDrag } from "../../utils/wall-solver";
 
 @customElement("fpb-canvas")
 export class FpbCanvas extends LitElement {
@@ -367,20 +367,6 @@ export class FpbCanvas extends LitElement {
 
     .wall-editor .delete-btn:hover {
       opacity: 0.9;
-    }
-
-    .wall-constraint-indicator {
-      font-size: 10px;
-      fill: var(--primary-color, #2196f3);
-      text-anchor: middle;
-      dominant-baseline: middle;
-      pointer-events: none;
-    }
-
-    .wall-constraint-bg {
-      fill: var(--card-background-color, white);
-      stroke: var(--primary-color, #2196f3);
-      stroke-width: 1;
     }
 
     .entity-picker {
@@ -1252,19 +1238,22 @@ export class FpbCanvas extends LitElement {
   }
 
   private _renderWallChains(walls: Wall[], sel: import("../../types").SelectionState) {
-    // If dragging an endpoint, modify the wall positions for rendering
+    // If dragging an endpoint, use the solver to preview all affected walls
     let wallsToRender = walls;
     if (this._draggingEndpoint) {
       const draggedPos = this._cursorPos;
-      wallsToRender = walls.map(wall => {
-        // Check if this wall is being dragged
-        const startRef = wall.id + ":start";
-        const endRef = wall.id + ":end";
+      const draggedWallIds = this._draggingEndpoint.wallIds.map((ref) => ref.split(":")[0]);
+      const preview = previewEndpointDrag(
+        walls,
+        this._draggingEndpoint.originalCoords,
+        draggedPos,
+        draggedWallIds
+      );
 
-        if (this._draggingEndpoint!.wallIds.includes(startRef)) {
-          return { ...wall, start: draggedPos };
-        } else if (this._draggingEndpoint!.wallIds.includes(endRef)) {
-          return { ...wall, end: draggedPos };
+      wallsToRender = walls.map(wall => {
+        const p = preview.get(wall.id);
+        if (p) {
+          return { ...wall, start: p.start, end: p.end };
         }
         return wall;
       });
@@ -1290,52 +1279,6 @@ export class FpbCanvas extends LitElement {
         <path class="wall-selected-highlight"
               d="${this._singleWallPath(selectedWall)}"/>
       ` : null}
-
-      <!-- Constraint indicators -->
-      ${this._renderWallConstraintIndicators(wallsToRender)}
-    `;
-  }
-
-  private _renderWallConstraintIndicators(walls: Wall[]) {
-    // Only show constraint indicators for walls that have constraints
-    const constrainedWalls = walls.filter((w) => w.constraint && w.constraint !== "none");
-
-    if (constrainedWalls.length === 0) return null;
-
-    return svg`
-      <g class="constraint-indicators">
-        ${constrainedWalls.map((wall) => {
-          const midX = (wall.start.x + wall.end.x) / 2;
-          const midY = (wall.start.y + wall.end.y) / 2;
-
-          // Offset perpendicular to wall
-          const dx = wall.end.x - wall.start.x;
-          const dy = wall.end.y - wall.start.y;
-          const len = Math.sqrt(dx * dx + dy * dy);
-          if (len === 0) return null;
-
-          // Perpendicular offset (above the wall)
-          const offsetX = (-dy / len) * 15;
-          const offsetY = (dx / len) * 15;
-
-          const iconX = midX + offsetX;
-          const iconY = midY + offsetY;
-
-          let icon = "";
-          if (wall.constraint === "horizontal") icon = "―";
-          else if (wall.constraint === "vertical") icon = "|";
-          else if (wall.constraint === "length") icon = "↔";
-          else if (wall.constraint === "angle") icon = "∠";
-          else if (wall.constraint === "fixed") icon = "🔒";
-
-          return svg`
-            <g transform="translate(${iconX}, ${iconY})">
-              <circle class="wall-constraint-bg" r="8" cx="0" cy="0"/>
-              <text class="wall-constraint-indicator" x="0" y="1">${icon}</text>
-            </g>
-          `;
-        })}
-      </g>
     `;
   }
 
@@ -1540,7 +1483,14 @@ export class FpbCanvas extends LitElement {
     if (!this._draggingEndpoint) return null;
 
     const draggedPos = this._cursorPos;
-    const originalPos = this._draggingEndpoint.originalCoords;
+    const draggedWallIds = this._draggingEndpoint.wallIds.map((ref) => ref.split(":")[0]);
+    const preview = previewEndpointDrag(
+      floor.walls,
+      this._draggingEndpoint.originalCoords,
+      draggedPos,
+      draggedWallIds
+    );
+
     const wallData: Array<{
       start: Coordinates;
       end: Coordinates;
@@ -1551,22 +1501,22 @@ export class FpbCanvas extends LitElement {
       thickness: number
     }> = [];
 
-    for (const wallRef of this._draggingEndpoint.wallIds) {
-      const [wallId, endpoint] = wallRef.split(":");
+    for (const [wallId, positions] of preview) {
       const wall = floor.walls.find(w => w.id === wallId);
       if (!wall) continue;
 
-      // Calculate the new wall positions
-      const newStart = endpoint === "start" ? draggedPos : wall.start;
-      const newEnd = endpoint === "end" ? draggedPos : wall.end;
-      const length = this._calculateWallLength(newStart, newEnd);
-      const angle = Math.atan2(newEnd.y - newStart.y, newEnd.x - newStart.x);
+      const length = this._calculateWallLength(positions.start, positions.end);
+      const angle = Math.atan2(positions.end.y - positions.start.y, positions.end.x - positions.start.x);
 
-      // Original positions
-      const origStart = endpoint === "start" ? originalPos : wall.start;
-      const origEnd = endpoint === "end" ? originalPos : wall.end;
-
-      wallData.push({ start: newStart, end: newEnd, origStart, origEnd, length, angle, thickness: wall.thickness });
+      wallData.push({
+        start: positions.start,
+        end: positions.end,
+        origStart: wall.start,
+        origEnd: wall.end,
+        length,
+        angle,
+        thickness: wall.thickness,
+      });
     }
 
     // Check for 90-degree angles between walls at the dragged point
@@ -1778,7 +1728,6 @@ export class FpbCanvas extends LitElement {
     if (!this._wallEditor) return null;
 
     const wall = this._wallEditor.wall;
-    const constraint = wall.constraint || "none";
 
     return html`
       <div class="wall-editor"
@@ -1796,39 +1745,35 @@ export class FpbCanvas extends LitElement {
             .value=${this._editingLength}
             @input=${(e: InputEvent) => this._editingLength = (e.target as HTMLInputElement).value}
             @keydown=${this._handleEditorKeyDown}
+            ?disabled=${wall.length_locked}
             autofocus
           />
           <span class="wall-editor-unit">cm</span>
+          <button
+            class="constraint-btn ${wall.length_locked ? "active" : ""}"
+            @click=${() => this._toggleLengthLock()}
+            title="${wall.length_locked ? "Unlock length" : "Lock length"}"
+          >${wall.length_locked ? "🔒" : "🔓"}</button>
         </div>
 
         <div class="wall-editor-row">
-          <span class="wall-editor-label">Lock</span>
+          <span class="wall-editor-label">Direction</span>
           <div class="wall-editor-constraints">
             <button
-              class="constraint-btn ${constraint === "horizontal" ? "active" : ""}"
-              @click=${() => this._toggleConstraint("horizontal")}
+              class="constraint-btn ${wall.direction === "free" ? "active" : ""}"
+              @click=${() => this._setDirection("free")}
+              title="Free direction"
+            >Free</button>
+            <button
+              class="constraint-btn ${wall.direction === "horizontal" ? "active" : ""}"
+              @click=${() => this._setDirection("horizontal")}
               title="Lock horizontal"
             ><span>―</span> H</button>
             <button
-              class="constraint-btn ${constraint === "vertical" ? "active" : ""}"
-              @click=${() => this._toggleConstraint("vertical")}
+              class="constraint-btn ${wall.direction === "vertical" ? "active" : ""}"
+              @click=${() => this._setDirection("vertical")}
               title="Lock vertical"
             ><span>|</span> V</button>
-            <button
-              class="constraint-btn ${constraint === "length" ? "active" : ""}"
-              @click=${() => this._toggleConstraint("length")}
-              title="Lock length"
-            ><span>↔</span> Len</button>
-            <button
-              class="constraint-btn ${constraint === "angle" ? "active" : ""}"
-              @click=${() => this._toggleConstraint("angle")}
-              title="Lock angle"
-            ><span>∠</span> Ang</button>
-            <button
-              class="constraint-btn ${constraint === "fixed" ? "active" : ""}"
-              @click=${() => this._toggleConstraint("fixed")}
-              title="Fully locked"
-            >🔒 Fix</button>
           </div>
         </div>
 
@@ -1840,7 +1785,7 @@ export class FpbCanvas extends LitElement {
     `;
   }
 
-  private async _toggleConstraint(constraintType: import("../../types").WallConstraint): Promise<void> {
+  private async _toggleLengthLock(): Promise<void> {
     if (!this._wallEditor || !this.hass) return;
 
     const floor = currentFloor.value;
@@ -1848,7 +1793,7 @@ export class FpbCanvas extends LitElement {
     if (!floor || !floorPlan) return;
 
     const wall = this._wallEditor.wall;
-    const newConstraint = wall.constraint === constraintType ? "none" : constraintType;
+    const newLocked = !wall.length_locked;
 
     try {
       await this.hass.callWS({
@@ -1856,24 +1801,86 @@ export class FpbCanvas extends LitElement {
         floor_plan_id: floorPlan.id,
         floor_id: floor.id,
         wall_id: wall.id,
-        constraint: newConstraint,
+        length_locked: newLocked,
       });
-      await reloadFloorData();
 
-      // Update local wall editor state
-      const updatedFloor = currentFloor.value;
-      if (updatedFloor) {
-        const updatedWall = updatedFloor.walls.find((w) => w.id === wall.id);
-        if (updatedWall) {
-          this._wallEditor = {
-            ...this._wallEditor,
-            wall: updatedWall,
-          };
-        }
-      }
+      await reloadFloorData();
+      this._refreshWallEditor(wall.id);
     } catch (err) {
-      console.error("Error updating wall constraint:", err);
-      alert(`Failed to update wall constraint: ${err}`);
+      console.error("Error toggling length lock:", err);
+      alert(`Failed to toggle length lock: ${err}`);
+    }
+  }
+
+  private async _setDirection(direction: import("../../types").WallDirection): Promise<void> {
+    if (!this._wallEditor || !this.hass) return;
+
+    const floor = currentFloor.value;
+    const floorPlan = currentFloorPlan.value;
+    if (!floor || !floorPlan) return;
+
+    const wall = this._wallEditor.wall;
+
+    try {
+      // Solve constraint snap with connected wall propagation
+      const graph = buildConnectionGraph(floor.walls);
+      const result = solveConstraintSnap(graph, wall.id, direction);
+
+      if (result.blocked) {
+        alert(`Cannot apply direction: blocked by connected walls.`);
+        return;
+      }
+
+      if (result.updates.length > 0) {
+        // Batch update: the wall gets its geometry + direction,
+        // connected walls get their geometry adjusted
+        const updates = result.updates.map((u) => {
+          const update: Record<string, unknown> = {
+            wall_id: u.wallId,
+            start: u.newStart,
+            end: u.newEnd,
+          };
+          if (u.wallId === wall.id) {
+            update.direction = direction;
+          }
+          return update;
+        });
+
+        await this.hass.callWS({
+          type: "inhabit/walls/batch_update",
+          floor_plan_id: floorPlan.id,
+          floor_id: floor.id,
+          updates,
+        });
+      } else {
+        // No geometry change needed, just update the direction
+        await this.hass.callWS({
+          type: "inhabit/walls/update",
+          floor_plan_id: floorPlan.id,
+          floor_id: floor.id,
+          wall_id: wall.id,
+          direction,
+        });
+      }
+
+      await reloadFloorData();
+      this._refreshWallEditor(wall.id);
+    } catch (err) {
+      console.error("Error setting wall direction:", err);
+      alert(`Failed to set wall direction: ${err}`);
+    }
+  }
+
+  private _refreshWallEditor(wallId: string): void {
+    const updatedFloor = currentFloor.value;
+    if (updatedFloor) {
+      const updatedWall = updatedFloor.walls.find((w) => w.id === wallId);
+      if (updatedWall && this._wallEditor) {
+        this._wallEditor = {
+          ...this._wallEditor,
+          wall: updatedWall,
+        };
+      }
     }
   }
 

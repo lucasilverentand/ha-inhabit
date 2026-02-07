@@ -290,6 +290,8 @@ export class FpbToolbar extends LitElement {
 
       <div class="divider"></div>
 
+      <div class="spacer"></div>
+
       <!-- Undo/Redo -->
       <div class="tool-group">
         <button
@@ -310,7 +312,7 @@ export class FpbToolbar extends LitElement {
         </button>
       </div>
 
-      <div class="spacer"></div>
+      <div class="divider"></div>
 
       <!-- Add Menu (right side) -->
       <div class="add-button-container">

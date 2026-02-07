@@ -198,64 +198,51 @@ class TestWall:
         assert wall.id is not None
         assert len(wall.id) > 0
 
-    def test_default_constraint(self):
-        """Test default constraint value."""
+    def test_default_fields(self):
+        """Test default field values."""
         wall = Wall(start=Coordinates(0, 0), end=Coordinates(100, 0))
-        assert wall.constraint == "none"
+        assert wall.length_locked is False
+        assert wall.direction == "free"
 
-    def test_constraint_none(self):
-        """Test wall with no constraint."""
+    def test_length_locked(self):
+        """Test wall with length locked."""
         wall = Wall(
             start=Coordinates(0, 0),
             end=Coordinates(100, 0),
-            constraint="none",
+            length_locked=True,
         )
-        assert wall.constraint == "none"
+        assert wall.length_locked is True
+        assert wall.direction == "free"
 
-    def test_constraint_horizontal(self):
-        """Test wall with horizontal constraint."""
+    def test_direction_horizontal(self):
+        """Test wall with horizontal direction."""
         wall = Wall(
             start=Coordinates(0, 0),
             end=Coordinates(100, 0),
-            constraint="horizontal",
+            direction="horizontal",
         )
-        assert wall.constraint == "horizontal"
+        assert wall.direction == "horizontal"
+        assert wall.length_locked is False
 
-    def test_constraint_vertical(self):
-        """Test wall with vertical constraint."""
+    def test_direction_vertical(self):
+        """Test wall with vertical direction."""
         wall = Wall(
             start=Coordinates(0, 0),
             end=Coordinates(0, 100),
-            constraint="vertical",
+            direction="vertical",
         )
-        assert wall.constraint == "vertical"
+        assert wall.direction == "vertical"
 
-    def test_constraint_length(self):
-        """Test wall with length constraint."""
+    def test_combined_length_locked_and_direction(self):
+        """Test wall with both length_locked and direction."""
         wall = Wall(
             start=Coordinates(0, 0),
             end=Coordinates(100, 0),
-            constraint="length",
+            length_locked=True,
+            direction="horizontal",
         )
-        assert wall.constraint == "length"
-
-    def test_constraint_angle(self):
-        """Test wall with angle constraint."""
-        wall = Wall(
-            start=Coordinates(0, 0),
-            end=Coordinates(100, 100),
-            constraint="angle",
-        )
-        assert wall.constraint == "angle"
-
-    def test_constraint_fixed(self):
-        """Test wall with fixed constraint."""
-        wall = Wall(
-            start=Coordinates(0, 0),
-            end=Coordinates(100, 0),
-            constraint="fixed",
-        )
-        assert wall.constraint == "fixed"
+        assert wall.length_locked is True
+        assert wall.direction == "horizontal"
 
     def test_to_dict(self):
         """Test serialization."""
@@ -269,16 +256,18 @@ class TestWall:
         assert data["id"] == "wall_1"
         assert data["thickness"] == 10
 
-    def test_to_dict_includes_constraint(self):
-        """Test serialization includes constraint."""
+    def test_to_dict_includes_new_fields(self):
+        """Test serialization includes length_locked and direction."""
         wall = Wall(
             id="wall_1",
             start=Coordinates(0, 0),
             end=Coordinates(100, 0),
-            constraint="horizontal",
+            length_locked=True,
+            direction="horizontal",
         )
         data = wall.to_dict()
-        assert data["constraint"] == "horizontal"
+        assert data["length_locked"] is True
+        assert data["direction"] == "horizontal"
 
     def test_from_dict(self):
         """Test deserialization."""
@@ -292,36 +281,126 @@ class TestWall:
         assert wall.id == "wall_1"
         assert wall.thickness == 15
 
-    def test_from_dict_with_constraint(self):
-        """Test deserialization with constraint."""
+    def test_from_dict_with_new_fields(self):
+        """Test deserialization with new fields."""
         data = {
             "id": "wall_1",
             "start": {"x": 0, "y": 0},
             "end": {"x": 100, "y": 0},
             "thickness": 10,
-            "constraint": "vertical",
+            "length_locked": True,
+            "direction": "vertical",
         }
         wall = Wall.from_dict(data)
-        assert wall.constraint == "vertical"
+        assert wall.length_locked is True
+        assert wall.direction == "vertical"
 
-    def test_from_dict_default_constraint(self):
-        """Test deserialization defaults constraint to 'none'."""
+    def test_from_dict_defaults(self):
+        """Test deserialization defaults."""
         data = {
             "id": "wall_1",
             "start": {"x": 0, "y": 0},
             "end": {"x": 100, "y": 0},
         }
         wall = Wall.from_dict(data)
-        assert wall.constraint == "none"
+        assert wall.length_locked is False
+        assert wall.direction == "free"
 
-    def test_serialization_round_trip_with_constraint(self):
-        """Test full serialization cycle preserves constraint."""
+    def test_migration_from_old_constraint_length(self):
+        """Test migration from old 'constraint: length' to length_locked."""
+        data = {
+            "id": "wall_1",
+            "start": {"x": 0, "y": 0},
+            "end": {"x": 100, "y": 0},
+            "constraint": "length",
+        }
+        wall = Wall.from_dict(data)
+        assert wall.length_locked is True
+        assert wall.direction == "free"
+
+    def test_migration_from_old_constraint_horizontal(self):
+        """Test migration from old 'constraint: horizontal' to direction."""
+        data = {
+            "id": "wall_1",
+            "start": {"x": 0, "y": 0},
+            "end": {"x": 100, "y": 0},
+            "constraint": "horizontal",
+        }
+        wall = Wall.from_dict(data)
+        assert wall.length_locked is False
+        assert wall.direction == "horizontal"
+
+    def test_migration_from_old_constraint_vertical(self):
+        """Test migration from old 'constraint: vertical' to direction."""
+        data = {
+            "id": "wall_1",
+            "start": {"x": 0, "y": 0},
+            "end": {"x": 0, "y": 100},
+            "constraint": "vertical",
+        }
+        wall = Wall.from_dict(data)
+        assert wall.length_locked is False
+        assert wall.direction == "vertical"
+
+    def test_migration_from_old_constraint_none(self):
+        """Test migration from old 'constraint: none' to defaults."""
+        data = {
+            "id": "wall_1",
+            "start": {"x": 0, "y": 0},
+            "end": {"x": 100, "y": 0},
+            "constraint": "none",
+        }
+        wall = Wall.from_dict(data)
+        assert wall.length_locked is False
+        assert wall.direction == "free"
+
+    def test_migration_from_old_constraint_fixed(self):
+        """Test migration from old 'constraint: fixed' to defaults."""
+        data = {
+            "id": "wall_1",
+            "start": {"x": 0, "y": 0},
+            "end": {"x": 100, "y": 0},
+            "constraint": "fixed",
+        }
+        wall = Wall.from_dict(data)
+        assert wall.length_locked is False
+        assert wall.direction == "free"
+
+    def test_migration_from_old_constraint_angle(self):
+        """Test migration from old 'constraint: angle' to defaults."""
+        data = {
+            "id": "wall_1",
+            "start": {"x": 0, "y": 0},
+            "end": {"x": 100, "y": 100},
+            "constraint": "angle",
+        }
+        wall = Wall.from_dict(data)
+        assert wall.length_locked is False
+        assert wall.direction == "free"
+
+    def test_new_fields_take_precedence_over_old_constraint(self):
+        """Test that new fields take precedence when both are present."""
+        data = {
+            "id": "wall_1",
+            "start": {"x": 0, "y": 0},
+            "end": {"x": 100, "y": 0},
+            "constraint": "horizontal",
+            "length_locked": True,
+            "direction": "vertical",
+        }
+        wall = Wall.from_dict(data)
+        assert wall.length_locked is True
+        assert wall.direction == "vertical"
+
+    def test_serialization_round_trip(self):
+        """Test full serialization cycle preserves new fields."""
         original = Wall(
             id="wall_1",
             start=Coordinates(0, 0),
             end=Coordinates(100, 50),
             thickness=8,
-            constraint="length",
+            length_locked=True,
+            direction="horizontal",
         )
         data = original.to_dict()
         restored = Wall.from_dict(data)
@@ -332,7 +411,8 @@ class TestWall:
         assert restored.end.x == original.end.x
         assert restored.end.y == original.end.y
         assert restored.thickness == original.thickness
-        assert restored.constraint == original.constraint
+        assert restored.length_locked == original.length_locked
+        assert restored.direction == original.direction
 
 
 class TestDoor:

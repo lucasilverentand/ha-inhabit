@@ -53,7 +53,7 @@ export interface Polygon {
 }
 
 // Floor plan types
-export type WallConstraint = 'none' | 'length' | 'angle' | 'horizontal' | 'vertical' | 'fixed';
+export type WallDirection = 'free' | 'horizontal' | 'vertical';
 
 export interface Wall {
   id: string;
@@ -61,7 +61,8 @@ export interface Wall {
   end: Coordinates;
   thickness: number;
   is_exterior: boolean;
-  constraint: WallConstraint;
+  length_locked: boolean;
+  direction: WallDirection;
 }
 
 export interface Door {

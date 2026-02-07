@@ -1,9 +1,9 @@
 /**
  * Wall constraint solver for propagating endpoint movements
- * Implements Fusion 360-style constraints: length, angle, and fixed
+ * Supports independent length lock (boolean) and direction (free/horizontal/vertical)
  */
 
-import type { Coordinates, Wall } from "../types";
+import type { Coordinates, Wall, WallDirection } from "../types";
 import { distance } from "./geometry";
 
 export interface WallEndpoint {
@@ -101,20 +101,11 @@ export function solveWallMovement(
   // Get all walls connected at the original position
   const connectedEndpoints = graph.endpoints.get(positionKey) || [];
 
-  // Check for fixed walls first - these block all movement
-  for (const ep of connectedEndpoints) {
-    const wall = graph.walls.get(ep.wallId);
-    if (wall && wall.constraint === "fixed") {
-      return {
-        updates: [],
-        blocked: true,
-        blockedBy: wall.id,
-      };
-    }
-  }
-
   // Process each connected wall
   // The shared endpoint moves to newPos; constraints affect the other endpoint
+  // Track other-endpoint moves that need propagation
+  const otherEndpointMoves: { originalPos: Coordinates; newPos: Coordinates }[] = [];
+
   for (const ep of connectedEndpoints) {
     if (visited.has(ep.wallId)) continue;
     visited.add(ep.wallId);
@@ -141,6 +132,22 @@ export function solveWallMovement(
       newStart,
       newEnd,
     });
+
+    // If the other endpoint moved, we need to propagate to walls connected there
+    const otherOriginal = ep.endpoint === "start" ? wall.end : wall.start;
+    const otherMoved =
+      Math.round(otherOriginal.x) !== Math.round(otherEndpointNewPos.x) ||
+      Math.round(otherOriginal.y) !== Math.round(otherEndpointNewPos.y);
+    if (otherMoved) {
+      otherEndpointMoves.push({ originalPos: otherOriginal, newPos: otherEndpointNewPos });
+    }
+  }
+
+  // Propagate other-endpoint movements to connected walls
+  for (const move of otherEndpointMoves) {
+    const result = propagateEndpointMove(graph, move.originalPos, move.newPos, visited);
+    if (result.blocked) return result;
+    updates.push(...result.updates);
   }
 
   return {
@@ -163,13 +170,8 @@ export function solveWallLengthChange(
     return { updates: [], blocked: false };
   }
 
-  // Check if wall is fixed
-  if (wall.constraint === "fixed") {
-    return { updates: [], blocked: true, blockedBy: wall.id };
-  }
-
-  // Check if length is constrained
-  if (wall.constraint === "length") {
+  // Check if length is locked
+  if (wall.length_locked) {
     return { updates: [], blocked: true, blockedBy: wall.id };
   }
 
@@ -199,6 +201,8 @@ export function solveWallLengthChange(
   };
 
   const updates: WallUpdate[] = [];
+  const visited = new Set<string>();
+  visited.add(wallId);
 
   // Add the main wall update
   updates.push({
@@ -207,69 +211,24 @@ export function solveWallLengthChange(
     newEnd,
   });
 
-  // Propagate to connected walls at start
-  // The shared endpoint MUST move to newStart - constraints affect the other endpoint
-  const startKey = coordsToKey(wall.start);
-  const startConnected = graph.endpoints.get(startKey) || [];
-  for (const ep of startConnected) {
-    if (ep.wallId === wallId) continue;
-
-    const connectedWall = graph.walls.get(ep.wallId);
-    if (!connectedWall) continue;
-
-    // Check constraints - fixed walls block the movement entirely
-    if (connectedWall.constraint === "fixed") {
-      return { updates: [], blocked: true, blockedBy: connectedWall.id };
-    }
-
-    // The shared endpoint moves to exactly where the main wall's endpoint is
-    // The other endpoint is adjusted based on constraints
-    const sharedEndpointMovesTo = newStart;
-    const otherEndpointNewPos = computeOtherEndpointAfterMove(
-      connectedWall,
-      ep.endpoint,
-      sharedEndpointMovesTo
-    );
-
-    updates.push({
-      wallId: connectedWall.id,
-      newStart: ep.endpoint === "start" ? sharedEndpointMovesTo : otherEndpointNewPos,
-      newEnd: ep.endpoint === "end" ? sharedEndpointMovesTo : otherEndpointNewPos,
-    });
+  // Propagate start endpoint movement to connected walls
+  const startMoved =
+    Math.round(wall.start.x) !== Math.round(newStart.x) ||
+    Math.round(wall.start.y) !== Math.round(newStart.y);
+  if (startMoved) {
+    const result = propagateEndpointMove(graph, wall.start, newStart, visited);
+    if (result.blocked) return result;
+    updates.push(...result.updates);
   }
 
-  // Propagate to connected walls at end
-  // The shared endpoint MUST move to newEnd - constraints affect the other endpoint
-  const endKey = coordsToKey(wall.end);
-  const endConnected = graph.endpoints.get(endKey) || [];
-  for (const ep of endConnected) {
-    if (ep.wallId === wallId) continue;
-
-    const connectedWall = graph.walls.get(ep.wallId);
-    if (!connectedWall) continue;
-
-    // Check if already processed from start
-    if (updates.some((u) => u.wallId === connectedWall.id)) continue;
-
-    // Check constraints - fixed walls block the movement entirely
-    if (connectedWall.constraint === "fixed") {
-      return { updates: [], blocked: true, blockedBy: connectedWall.id };
-    }
-
-    // The shared endpoint moves to exactly where the main wall's endpoint is
-    // The other endpoint is adjusted based on constraints
-    const sharedEndpointMovesTo = newEnd;
-    const otherEndpointNewPos = computeOtherEndpointAfterMove(
-      connectedWall,
-      ep.endpoint,
-      sharedEndpointMovesTo
-    );
-
-    updates.push({
-      wallId: connectedWall.id,
-      newStart: ep.endpoint === "start" ? sharedEndpointMovesTo : otherEndpointNewPos,
-      newEnd: ep.endpoint === "end" ? sharedEndpointMovesTo : otherEndpointNewPos,
-    });
+  // Propagate end endpoint movement to connected walls
+  const endMoved =
+    Math.round(wall.end.x) !== Math.round(newEnd.x) ||
+    Math.round(wall.end.y) !== Math.round(newEnd.y);
+  if (endMoved) {
+    const result = propagateEndpointMove(graph, wall.end, newEnd, visited);
+    if (result.blocked) return result;
+    updates.push(...result.updates);
   }
 
   return { updates, blocked: false };
@@ -277,11 +236,11 @@ export function solveWallLengthChange(
 
 /**
  * Compute the new position of the "other" endpoint when the shared endpoint moves.
- * This ensures constraints are applied to how the wall stretches/rotates,
- * NOT to where the shared connection point ends up.
+ * Direction is applied first, then length lock.
  *
- * For connected walls, the shared endpoint MUST move to the new position.
- * The constraint determines where the other endpoint goes.
+ * - direction 'horizontal': other endpoint's Y matches the moved endpoint's Y
+ * - direction 'vertical': other endpoint's X matches the moved endpoint's X
+ * - length_locked: after direction, scale so distance equals original length
  */
 function computeOtherEndpointAfterMove(
   wall: Wall,
@@ -290,66 +249,34 @@ function computeOtherEndpointAfterMove(
 ): Coordinates {
   const otherEndpoint = movedEndpoint === "start" ? wall.end : wall.start;
 
-  // For unconstrained walls, the other endpoint stays put
-  if (wall.constraint === "none") {
-    return otherEndpoint;
+  let result: Coordinates = { ...otherEndpoint };
+
+  // Apply direction constraint first
+  if (wall.direction === "horizontal") {
+    // Other endpoint's Y matches moved endpoint's new Y
+    result = { x: result.x, y: newMovedPosition.y };
+  } else if (wall.direction === "vertical") {
+    // Other endpoint's X matches moved endpoint's new X
+    result = { x: newMovedPosition.x, y: result.y };
   }
 
-  // For length constraint, keep length the same - other endpoint moves
-  // to maintain the original distance from the new moved position
-  if (wall.constraint === "length") {
+  // Apply length lock: scale to original length from new moved position
+  if (wall.length_locked) {
     const originalLength = getWallLength(wall);
-    const movedPos = movedEndpoint === "start" ? wall.start : wall.end;
+    const dx = result.x - newMovedPosition.x;
+    const dy = result.y - newMovedPosition.y;
+    const currentDist = Math.sqrt(dx * dx + dy * dy);
 
-    // Direction from moved endpoint to other endpoint
-    const dx = otherEndpoint.x - movedPos.x;
-    const dy = otherEndpoint.y - movedPos.y;
-    const dist = Math.sqrt(dx * dx + dy * dy);
-
-    if (dist === 0) return otherEndpoint;
-
-    // Scale to original length from new position
-    return {
-      x: newMovedPosition.x + (dx / dist) * originalLength,
-      y: newMovedPosition.y + (dy / dist) * originalLength,
-    };
+    if (currentDist > 0 && originalLength > 0) {
+      const scale = originalLength / currentDist;
+      result = {
+        x: newMovedPosition.x + dx * scale,
+        y: newMovedPosition.y + dy * scale,
+      };
+    }
   }
 
-  // For angle constraint, keep angle the same - other endpoint moves
-  // along the same direction from the new moved position
-  if (wall.constraint === "angle") {
-    const movedPos = movedEndpoint === "start" ? wall.start : wall.end;
-
-    // Direction vector from moved to other
-    const dx = otherEndpoint.x - movedPos.x;
-    const dy = otherEndpoint.y - movedPos.y;
-
-    // Keep same relative position
-    return {
-      x: newMovedPosition.x + dx,
-      y: newMovedPosition.y + dy,
-    };
-  }
-
-  // For horizontal constraint, keep wall horizontal
-  // Other endpoint moves to have same Y as new position
-  if (wall.constraint === "horizontal") {
-    return {
-      x: otherEndpoint.x,
-      y: newMovedPosition.y,
-    };
-  }
-
-  // For vertical constraint, keep wall vertical
-  // Other endpoint moves to have same X as new position
-  if (wall.constraint === "vertical") {
-    return {
-      x: newMovedPosition.x,
-      y: otherEndpoint.y,
-    };
-  }
-
-  return otherEndpoint;
+  return result;
 }
 
 /**
@@ -374,6 +301,149 @@ export function previewLengthChange(
   }
 
   return preview;
+}
+
+/**
+ * Compute the snapped start/end for a single wall to satisfy a direction constraint.
+ * Returns null if no geometry change is needed.
+ */
+export function snapWallToConstraint(
+  wall: Wall,
+  direction: WallDirection
+): { start: Coordinates; end: Coordinates } | null {
+  if (direction === "free") {
+    return null;
+  }
+
+  const midX = (wall.start.x + wall.end.x) / 2;
+  const midY = (wall.start.y + wall.end.y) / 2;
+  const len = distance(wall.start, wall.end);
+  const halfLen = len / 2;
+
+  if (direction === "horizontal") {
+    if (Math.round(wall.start.y) === Math.round(wall.end.y)) return null;
+    return {
+      start: { x: midX - halfLen, y: midY },
+      end: { x: midX + halfLen, y: midY },
+    };
+  }
+
+  if (direction === "vertical") {
+    if (Math.round(wall.start.x) === Math.round(wall.end.x)) return null;
+    return {
+      start: { x: midX, y: midY - halfLen },
+      end: { x: midX, y: midY + halfLen },
+    };
+  }
+
+  return null;
+}
+
+/**
+ * Solve all wall updates needed when applying a direction to a wall.
+ * Snaps the wall to satisfy the direction and propagates endpoint
+ * movements to connected walls so they stay connected.
+ */
+export function solveConstraintSnap(
+  graph: ConnectionGraph,
+  wallId: string,
+  direction: WallDirection
+): SolverResult {
+  const wall = graph.walls.get(wallId);
+  if (!wall) {
+    return { updates: [], blocked: false };
+  }
+
+  const snapped = snapWallToConstraint(wall, direction);
+  if (!snapped) {
+    // No geometry change needed
+    return { updates: [], blocked: false };
+  }
+
+  const updates: WallUpdate[] = [];
+  const visited = new Set<string>();
+  visited.add(wallId);
+
+  // Add the primary wall update
+  updates.push({ wallId, newStart: snapped.start, newEnd: snapped.end });
+
+  // Propagate start endpoint movement to connected walls
+  const startMoved =
+    Math.round(wall.start.x) !== Math.round(snapped.start.x) ||
+    Math.round(wall.start.y) !== Math.round(snapped.start.y);
+  if (startMoved) {
+    const result = propagateEndpointMove(
+      graph, wall.start, snapped.start, visited
+    );
+    if (result.blocked) return result;
+    updates.push(...result.updates);
+  }
+
+  // Propagate end endpoint movement to connected walls
+  const endMoved =
+    Math.round(wall.end.x) !== Math.round(snapped.end.x) ||
+    Math.round(wall.end.y) !== Math.round(snapped.end.y);
+  if (endMoved) {
+    const result = propagateEndpointMove(
+      graph, wall.end, snapped.end, visited
+    );
+    if (result.blocked) return result;
+    updates.push(...result.updates);
+  }
+
+  return { updates, blocked: false };
+}
+
+/**
+ * Propagate an endpoint move to all connected walls (excluding already-visited ones).
+ * Uses the same constraint logic as solveWallMovement.
+ */
+function propagateEndpointMove(
+  graph: ConnectionGraph,
+  originalPos: Coordinates,
+  newPos: Coordinates,
+  visited: Set<string>
+): SolverResult {
+  const updates: WallUpdate[] = [];
+  const positionKey = coordsToKey(originalPos);
+  const connectedEndpoints = graph.endpoints.get(positionKey) || [];
+
+  const furtherMoves: { originalPos: Coordinates; newPos: Coordinates }[] = [];
+
+  for (const ep of connectedEndpoints) {
+    if (visited.has(ep.wallId)) continue;
+    visited.add(ep.wallId);
+
+    const connectedWall = graph.walls.get(ep.wallId);
+    if (!connectedWall) continue;
+
+    const otherEndpointNewPos = computeOtherEndpointAfterMove(
+      connectedWall, ep.endpoint, newPos
+    );
+
+    const newStart = ep.endpoint === "start" ? newPos : otherEndpointNewPos;
+    const newEnd = ep.endpoint === "end" ? newPos : otherEndpointNewPos;
+
+    updates.push({ wallId: connectedWall.id, newStart, newEnd });
+
+    // If the other endpoint moved, queue it for further propagation
+    const otherOriginal = ep.endpoint === "start" ? connectedWall.end : connectedWall.start;
+    const otherMoved =
+      Math.round(otherOriginal.x) !== Math.round(otherEndpointNewPos.x) ||
+      Math.round(otherOriginal.y) !== Math.round(otherEndpointNewPos.y);
+    if (otherMoved) {
+      furtherMoves.push({ originalPos: otherOriginal, newPos: otherEndpointNewPos });
+    }
+  }
+
+  // Recursively propagate further moves
+  for (const move of furtherMoves) {
+    const result = propagateEndpointMove(graph, move.originalPos, move.newPos, visited);
+    if (result.blocked) return result;
+    updates.push(...result.updates);
+  }
+
+  return { updates, blocked: false };
 }
 
 /**

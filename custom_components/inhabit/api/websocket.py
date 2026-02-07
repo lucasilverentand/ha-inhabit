@@ -412,7 +412,8 @@ def ws_rooms_delete(
         vol.Required("end"): dict,
         vol.Optional("thickness", default=10.0): vol.Coerce(float),
         vol.Optional("is_exterior", default=False): bool,
-        vol.Optional("constraint", default="none"): str,
+        vol.Optional("length_locked", default=False): bool,
+        vol.Optional("direction", default="free"): str,
     }
 )
 @callback
@@ -428,7 +429,8 @@ def ws_walls_add(
         end=Coordinates.from_dict(msg["end"]),
         thickness=msg["thickness"],
         is_exterior=msg["is_exterior"],
-        constraint=msg["constraint"],
+        length_locked=msg["length_locked"],
+        direction=msg["direction"],
     )
     result = store.add_wall(msg["floor_plan_id"], msg["floor_id"], wall)
     if result:
@@ -446,7 +448,8 @@ def ws_walls_add(
         vol.Optional("start"): dict,
         vol.Optional("end"): dict,
         vol.Optional("thickness"): vol.Coerce(float),
-        vol.Optional("constraint"): str,
+        vol.Optional("length_locked"): bool,
+        vol.Optional("direction"): str,
     }
 )
 @callback
@@ -478,8 +481,10 @@ def ws_walls_update(
         wall.end = Coordinates.from_dict(msg["end"])
     if "thickness" in msg:
         wall.thickness = msg["thickness"]
-    if "constraint" in msg:
-        wall.constraint = msg["constraint"]
+    if "length_locked" in msg:
+        wall.length_locked = msg["length_locked"]
+    if "direction" in msg:
+        wall.direction = msg["direction"]
 
     result = store.update_floor_plan(floor_plan)
     if result:
@@ -532,7 +537,7 @@ def ws_walls_delete(
         vol.Required("type"): f"{WS_PREFIX}/walls/batch_update",
         vol.Required("floor_plan_id"): str,
         vol.Required("floor_id"): str,
-        vol.Required("updates"): list,  # List of {wall_id, start?, end?, thickness?, constraint?}
+        vol.Required("updates"): list,  # List of {wall_id, start?, end?, thickness?, length_locked?, direction?}
     }
 )
 @callback
@@ -568,8 +573,10 @@ def ws_walls_batch_update(
             wall.end = Coordinates.from_dict(update["end"])
         if "thickness" in update:
             wall.thickness = update["thickness"]
-        if "constraint" in update:
-            wall.constraint = update["constraint"]
+        if "length_locked" in update:
+            wall.length_locked = update["length_locked"]
+        if "direction" in update:
+            wall.direction = update["direction"]
         updated_walls.append(wall)
 
     result = store.update_floor_plan(floor_plan)
