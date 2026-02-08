@@ -5,7 +5,7 @@
 import { LitElement, html, css, svg } from "lit";
 import { customElement, property, state, query } from "lit/decorators.js";
 import { effect } from "@preact/signals-core";
-import type { HomeAssistant, Coordinates, ViewBox, Wall, Room } from "../../types";
+import type { HomeAssistant, Coordinates, ViewBox, Edge, Node, Room } from "../../types";
 import {
   currentFloor,
   currentFloorPlan,
@@ -14,14 +14,16 @@ import {
   snapToGrid,
   layers,
   activeTool,
+  canvasMode,
   selection,
   devicePlacements,
   reloadFloorData,
 } from "../../ha-floorplan-builder";
 import { polygonToPath, viewBoxToString, groupWallsIntoChains, wallChainPath } from "../../utils/svg";
 import { snapToGrid as snapPoint } from "../../utils/geometry";
-import { buildConnectionGraph, solveWallLengthChange, solveWallMovement, solveConstraintSnap, previewEndpointDrag } from "../../utils/wall-solver";
-import { detectRoomsFromWalls } from "../../utils/room-detection";
+import { buildNodeGraph, solveNodeMove, solveEdgeLengthChange, solveConstraintSnap, previewNodeDrag } from "../../utils/wall-solver";
+import { resolveFloorEdges, buildNodeMap, findNearestNode } from "../../utils/node-graph";
+import { detectRoomsFromEdges } from "../../utils/room-detection";
 import { pushAction, undo, redo } from "../../stores/history-store";
 
 @customElement("fpb-canvas")
@@ -54,13 +56,16 @@ export class FpbCanvas extends LitElement {
   private _haAreas: Array<{ area_id: string; name: string }> = [];
 
   @state()
-  private _hoveredEndpoint: { coords: Coordinates; wallIds: string[] } | null = null;
+  private _hoveredNode: Node | null = null;
 
   @state()
-  private _draggingEndpoint: { coords: Coordinates; wallIds: string[]; originalCoords: Coordinates; startX: number; startY: number; hasMoved: boolean } | null = null;
+  private _draggingNode: { node: Node; originalCoords: Coordinates; startX: number; startY: number; hasMoved: boolean } | null = null;
 
   @state()
-  private _wallEditor: { wall: Wall; position: Coordinates; length: number } | null = null;
+  private _edgeEditor: { edge: Edge; position: Coordinates; length: number } | null = null;
+
+  @state()
+  private _multiEdgeEditor: { edges: Edge[] } | null = null;
 
   @state()
   private _editingLength: string = "";
@@ -70,6 +75,9 @@ export class FpbCanvas extends LitElement {
 
   @state()
   private _entitySearch: string = "";
+
+  @state()
+  private _canvasMode: import("../../types").CanvasMode = "walls";
 
   private _cleanupEffects: (() => void)[] = [];
 
@@ -95,6 +103,14 @@ export class FpbCanvas extends LitElement {
     }
 
     svg.panning {
+      cursor: grabbing;
+    }
+
+    svg.view-mode {
+      cursor: grab;
+    }
+
+    svg.view-mode.panning {
       cursor: grabbing;
     }
 
@@ -442,6 +458,27 @@ export class FpbCanvas extends LitElement {
       color: var(--secondary-text-color, #666);
     }
 
+    .wall-annotation-bg {
+      fill: var(--card-background-color, white);
+      opacity: 0.85;
+    }
+
+    .wall-annotation-text {
+      font-size: 10px;
+      fill: var(--secondary-text-color, #666);
+      text-anchor: middle;
+      dominant-baseline: middle;
+      pointer-events: none;
+    }
+
+    .wall-annotation-icon {
+      font-size: 9px;
+      fill: var(--primary-color, #2196f3);
+      text-anchor: middle;
+      dominant-baseline: middle;
+      pointer-events: none;
+    }
+
     .device-preview {
       pointer-events: none;
     }
@@ -453,6 +490,9 @@ export class FpbCanvas extends LitElement {
     this._cleanupEffects.push(
       effect(() => {
         this._viewBox = viewBox.value;
+      }),
+      effect(() => {
+        this._canvasMode = canvasMode.value;
       })
     );
 
@@ -499,6 +539,7 @@ export class FpbCanvas extends LitElement {
   private _handlePointerDown(e: PointerEvent): void {
     const point = this._screenToSvg({ x: e.clientX, y: e.clientY });
     const snappedPoint = this._getSnappedPoint(point);
+    const mode = this._canvasMode;
 
     // Close entity picker if clicking outside (but not when in device mode placing a new one)
     if (this._pendingDevice && activeTool.value !== "device") {
@@ -513,18 +554,27 @@ export class FpbCanvas extends LitElement {
       return;
     }
 
+    // Viewing mode: left-click always pans
+    if (mode === "viewing" && e.button === 0) {
+      this._isPanning = true;
+      this._panStart = { x: e.clientX, y: e.clientY };
+      this._svg?.setPointerCapture(e.pointerId);
+      return;
+    }
+
     const tool = activeTool.value;
 
     // Left click behavior depends on tool
     if (e.button === 0) {
       if (tool === "select") {
-        // Close wall editor first (will be reopened if clicking on a wall)
-        const hadEditor = !!this._wallEditor;
-        this._wallEditor = null;
+        // Close edge editor first (will be reopened if clicking on an edge)
+        const hadEditor = !!this._edgeEditor || !!this._multiEdgeEditor;
+        this._edgeEditor = null;
+        this._multiEdgeEditor = null;
         this._roomEditor = null;
 
         // Check if clicking on something selectable
-        const clickedSomething = this._handleSelectClick(point);
+        const clickedSomething = this._handleSelectClick(point, e.shiftKey);
         if (!clickedSomething) {
           // Clear selection if we had an editor open
           if (hadEditor) {
@@ -536,7 +586,8 @@ export class FpbCanvas extends LitElement {
           this._svg?.setPointerCapture(e.pointerId);
         }
       } else if (tool === "wall") {
-        this._wallEditor = null;
+        this._edgeEditor = null;
+        this._multiEdgeEditor = null;
         this._roomEditor = null;
         // Use _cursorPos which has Shift-constraint applied from pointer move
         const wallPoint = this._wallStartPoint && e.shiftKey
@@ -544,11 +595,13 @@ export class FpbCanvas extends LitElement {
           : snappedPoint;
         this._handleWallClick(wallPoint, e.shiftKey);
       } else if (tool === "device") {
-        this._wallEditor = null;
+        this._edgeEditor = null;
+        this._multiEdgeEditor = null;
         this._handleDeviceClick(snappedPoint);
       } else {
         // Other tools - pan on empty space
-        this._wallEditor = null;
+        this._edgeEditor = null;
+        this._multiEdgeEditor = null;
         this._roomEditor = null;
         this._isPanning = true;
         this._panStart = { x: e.clientX, y: e.clientY };
@@ -582,17 +635,17 @@ export class FpbCanvas extends LitElement {
 
     this._cursorPos = snapped;
 
-    // Handle endpoint dragging
-    if (this._draggingEndpoint) {
+    // Handle node dragging
+    if (this._draggingNode) {
       // Check if we've moved enough to count as a drag (not just a click)
-      const dx = e.clientX - this._draggingEndpoint.startX;
-      const dy = e.clientY - this._draggingEndpoint.startY;
+      const dx = e.clientX - this._draggingNode.startX;
+      const dy = e.clientY - this._draggingNode.startY;
       if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
-        this._draggingEndpoint.hasMoved = true;
+        this._draggingNode.hasMoved = true;
       }
 
-      // Snap to 1cm (integer coordinates) and other endpoints while dragging
-      this._cursorPos = this._getSnappedPointForEndpoint(point);
+      // Snap to 1cm (integer coordinates) and other nodes while dragging
+      this._cursorPos = this._getSnappedPointForNode(point);
       this.requestUpdate();
       return;
     }
@@ -613,37 +666,31 @@ export class FpbCanvas extends LitElement {
       return;
     }
 
-    // Check for hovering over wall endpoints (only when not drawing)
-    if (!this._wallStartPoint && tool === "select") {
-      this._checkEndpointHover(point);
+    // Check for hovering over nodes (only in walls mode when not drawing)
+    if (!this._wallStartPoint && tool === "select" && this._canvasMode === "walls") {
+      this._checkNodeHover(point);
     }
   }
 
-  private _checkEndpointHover(point: Coordinates): void {
-    const endpoints = this._getWallEndpoints();
-    const hoverDistance = 15;
-
-    for (const ep of endpoints.values()) {
-      const dist = Math.sqrt(
-        Math.pow(point.x - ep.coords.x, 2) + Math.pow(point.y - ep.coords.y, 2)
-      );
-      if (dist < hoverDistance) {
-        this._hoveredEndpoint = ep;
-        return;
-      }
+  private _checkNodeHover(point: Coordinates): void {
+    const floor = currentFloor.value;
+    if (!floor) {
+      this._hoveredNode = null;
+      return;
     }
 
-    this._hoveredEndpoint = null;
+    const nearest = findNearestNode(point, floor.nodes, 15);
+    this._hoveredNode = nearest;
   }
 
   private _handlePointerUp(e: PointerEvent): void {
-    if (this._draggingEndpoint) {
-      if (this._draggingEndpoint.hasMoved) {
-        // It was a drag - move the endpoint
-        this._finishEndpointDrag();
+    if (this._draggingNode) {
+      if (this._draggingNode.hasMoved) {
+        // It was a drag - move the node
+        this._finishNodeDrag();
       } else {
-        // It was a click - start a new wall from this point
-        this._startWallFromEndpoint();
+        // It was a click - start a new wall from this node
+        this._startWallFromNode();
       }
       this._svg?.releasePointerCapture(e.pointerId);
       return;
@@ -655,110 +702,92 @@ export class FpbCanvas extends LitElement {
     }
   }
 
-  private _startWallFromEndpoint(): void {
-    if (!this._draggingEndpoint) return;
+  private _startWallFromNode(): void {
+    if (!this._draggingNode) return;
 
-    // Start drawing a new wall from this endpoint
-    this._wallStartPoint = this._draggingEndpoint.originalCoords;
+    // Start drawing a new wall from this node
+    this._wallStartPoint = this._draggingNode.originalCoords;
     activeTool.value = "wall";
-    this._draggingEndpoint = null;
-    this._hoveredEndpoint = null;
+    this._draggingNode = null;
+    this._hoveredNode = null;
   }
 
-  private async _finishEndpointDrag(): Promise<void> {
-    if (!this._draggingEndpoint || !this.hass) {
-      this._draggingEndpoint = null;
+  private async _finishNodeDrag(): Promise<void> {
+    if (!this._draggingNode || !this.hass) {
+      this._draggingNode = null;
       return;
     }
 
     const floor = currentFloor.value;
     const floorPlan = currentFloorPlan.value;
     if (!floor || !floorPlan) {
-      this._draggingEndpoint = null;
+      this._draggingNode = null;
       return;
     }
 
     const newPos = this._cursorPos;
-    const originalPos = this._draggingEndpoint.originalCoords;
+    const originalPos = this._draggingNode.originalCoords;
 
     // Check if position actually changed
     if (Math.abs(newPos.x - originalPos.x) < 1 && Math.abs(newPos.y - originalPos.y) < 1) {
-      this._draggingEndpoint = null;
+      this._draggingNode = null;
       return;
     }
 
-    // Use the wall solver for constraint-aware movement
-    const graph = buildConnectionGraph(floor.walls);
-    const draggedWallIds = this._draggingEndpoint.wallIds.map((ref) => ref.split(":")[0]);
-
-    const result = solveWallMovement(
-      graph,
-      draggedWallIds,
-      "start", // The endpoint type is determined by position matching in the solver
-      originalPos,
-      newPos
-    );
+    // Use the node solver for constraint-aware movement
+    const graph = buildNodeGraph(floor.nodes, floor.edges);
+    const result = solveNodeMove(graph, this._draggingNode.node.id, newPos.x, newPos.y);
 
     if (result.blocked) {
-      alert(`Cannot move endpoint: wall "${result.blockedBy}" is locked.`);
-      this._draggingEndpoint = null;
+      alert(`Cannot move node: edge "${result.blockedBy}" has a constraint that blocks this.`);
+      this._draggingNode = null;
       return;
     }
 
     if (result.updates.length === 0) {
-      this._draggingEndpoint = null;
+      this._draggingNode = null;
       return;
     }
 
-    const affectedIds = result.updates.map((u) => u.wallId);
-
     try {
-      await this._withWallUndo(affectedIds, "Move wall endpoint", async () => {
-        if (result.updates.length > 1) {
-          await this.hass!.callWS({
-            type: "inhabit/walls/batch_update",
-            floor_plan_id: floorPlan.id,
-            floor_id: floor.id,
-            updates: result.updates.map((u) => ({
-              wall_id: u.wallId,
-              start: u.newStart,
-              end: u.newEnd,
-            })),
-          });
-        } else {
-          const update = result.updates[0];
-          await this.hass!.callWS({
-            type: "inhabit/walls/update",
-            floor_plan_id: floorPlan.id,
-            floor_id: floor.id,
-            wall_id: update.wallId,
-            start: update.newStart,
-            end: update.newEnd,
-          });
-        }
+      await this._withNodeUndo(result.updates, "Move node", async () => {
+        await this.hass!.callWS({
+          type: "inhabit/nodes/update",
+          floor_plan_id: floorPlan.id,
+          floor_id: floor.id,
+          updates: result.updates.map((u) => ({
+            node_id: u.nodeId,
+            x: u.x,
+            y: u.y,
+          })),
+        });
         await reloadFloorData();
       });
     } catch (err) {
-      console.error("Error updating wall endpoint:", err);
-      alert(`Failed to update wall: ${err}`);
+      console.error("Error updating node:", err);
+      alert(`Failed to update node: ${err}`);
     }
 
-    this._draggingEndpoint = null;
+    this._draggingNode = null;
   }
 
   private _handleKeyDown(e: KeyboardEvent): void {
     if (e.key === "Escape") {
       this._wallStartPoint = null;
-      this._hoveredEndpoint = null;
-      this._draggingEndpoint = null;
+      this._hoveredNode = null;
+      this._draggingNode = null;
       this._pendingDevice = null;
-      this._wallEditor = null;
+      this._edgeEditor = null;
+      this._multiEdgeEditor = null;
       this._roomEditor = null;
       selection.value = { type: "none", ids: [] };
       activeTool.value = "select";
-    } else if ((e.key === "Backspace" || e.key === "Delete") && this._wallEditor) {
+    } else if ((e.key === "Backspace" || e.key === "Delete") && this._multiEdgeEditor) {
       e.preventDefault();
-      this._handleWallDelete();
+      this._handleMultiEdgeDelete();
+    } else if ((e.key === "Backspace" || e.key === "Delete") && this._edgeEditor) {
+      e.preventDefault();
+      this._handleEdgeDelete();
     } else if (e.key === "z" && (e.ctrlKey || e.metaKey) && !e.shiftKey) {
       e.preventDefault();
       undo();
@@ -772,24 +801,24 @@ export class FpbCanvas extends LitElement {
   }
 
   private _handleEditorSave(): void {
-    if (!this._wallEditor) return;
+    if (!this._edgeEditor) return;
 
     const newLength = parseFloat(this._editingLength);
     if (isNaN(newLength) || newLength <= 0) {
       return;
     }
 
-    this._updateWallLength(this._wallEditor.wall, newLength);
-    this._wallEditor = null;
+    this._updateEdgeLength(this._edgeEditor.edge, newLength);
+    this._edgeEditor = null;
   }
 
   private _handleEditorCancel(): void {
-    this._wallEditor = null;
+    this._edgeEditor = null;
     selection.value = { type: "none", ids: [] };
   }
 
-  private async _handleWallDelete(): Promise<void> {
-    if (!this._wallEditor || !this.hass) return;
+  private async _handleEdgeDelete(): Promise<void> {
+    if (!this._edgeEditor || !this.hass) return;
 
     const floor = currentFloor.value;
     const floorPlan = currentFloorPlan.value;
@@ -798,57 +827,60 @@ export class FpbCanvas extends LitElement {
     const hass = this.hass;
     const fpId = floorPlan.id;
     const fId = floor.id;
-    const wall = this._wallEditor.wall;
+    const edge = this._edgeEditor.edge;
+    const nodeMap = buildNodeMap(floor.nodes);
+    const startNode = nodeMap.get(edge.start_node);
+    const endNode = nodeMap.get(edge.end_node);
     const snapshot = {
-      start: { ...wall.start },
-      end: { ...wall.end },
-      thickness: wall.thickness,
-      is_exterior: wall.is_exterior,
-      length_locked: wall.length_locked,
-      direction: wall.direction,
+      start: startNode ? { x: startNode.x, y: startNode.y } : { x: 0, y: 0 },
+      end: endNode ? { x: endNode.x, y: endNode.y } : { x: 0, y: 0 },
+      thickness: edge.thickness,
+      is_exterior: edge.is_exterior,
+      length_locked: edge.length_locked,
+      direction: edge.direction,
     };
-    const wallRef = { id: wall.id };
+    const edgeRef = { id: edge.id };
 
     try {
       await hass.callWS({
-        type: "inhabit/walls/delete",
+        type: "inhabit/edges/delete",
         floor_plan_id: fpId,
         floor_id: fId,
-        wall_id: wallRef.id,
+        edge_id: edgeRef.id,
       });
       await reloadFloorData();
-      await this._syncRoomsWithWalls();
+      await this._syncRoomsWithEdges();
 
       pushAction({
-        type: "wall_delete",
-        description: "Delete wall",
+        type: "edge_delete",
+        description: "Delete edge",
         undo: async () => {
-          const r = await hass.callWS<{ id: string }>({
-            type: "inhabit/walls/add",
+          const r = await hass.callWS<{ edge: { id: string } }>({
+            type: "inhabit/edges/add",
             floor_plan_id: fpId,
             floor_id: fId,
             ...snapshot,
           });
-          wallRef.id = r.id;
+          edgeRef.id = r.edge.id;
           await reloadFloorData();
-          await this._syncRoomsWithWalls();
+          await this._syncRoomsWithEdges();
         },
         redo: async () => {
           await hass.callWS({
-            type: "inhabit/walls/delete",
+            type: "inhabit/edges/delete",
             floor_plan_id: fpId,
             floor_id: fId,
-            wall_id: wallRef.id,
+            edge_id: edgeRef.id,
           });
           await reloadFloorData();
-          await this._syncRoomsWithWalls();
+          await this._syncRoomsWithEdges();
         },
       });
     } catch (err) {
-      console.error("Error deleting wall:", err);
+      console.error("Error deleting edge:", err);
     }
 
-    this._wallEditor = null;
+    this._edgeEditor = null;
     selection.value = { type: "none", ids: [] };
   }
 
@@ -860,8 +892,8 @@ export class FpbCanvas extends LitElement {
     }
   }
 
-  private async _withWallUndo(
-    wallIds: string[],
+  private async _withNodeUndo(
+    nodeUpdates: Array<{ nodeId: string; x: number; y: number }>,
     description: string,
     perform: () => Promise<void>,
   ): Promise<void> {
@@ -875,135 +907,104 @@ export class FpbCanvas extends LitElement {
     const fpId = floorPlan.id;
     const fId = floor.id;
 
-    // Snapshot wall states before
-    const before = new Map<string, { start: Coordinates; end: Coordinates; length_locked: boolean; direction: import("../../types").WallDirection }>();
-    for (const id of wallIds) {
-      const w = floor.walls.find((w) => w.id === id);
-      if (w) {
-        before.set(id, { start: { ...w.start }, end: { ...w.end }, length_locked: w.length_locked, direction: w.direction });
+    // Snapshot node positions before
+    const before = new Map<string, { x: number; y: number }>();
+    for (const u of nodeUpdates) {
+      const n = floor.nodes.find((n) => n.id === u.nodeId);
+      if (n) {
+        before.set(n.id, { x: n.x, y: n.y });
       }
     }
 
     await perform();
-    await this._syncRoomsWithWalls();
+    await this._syncRoomsWithEdges();
 
-    // Capture new states after reload
+    // Capture new positions after reload
     const updatedFloor = currentFloor.value;
     if (!updatedFloor) return;
 
-    const after = new Map<string, { start: Coordinates; end: Coordinates; length_locked: boolean; direction: import("../../types").WallDirection }>();
-    for (const id of wallIds) {
-      const w = updatedFloor.walls.find((w) => w.id === id);
-      if (w) {
-        after.set(id, { start: { ...w.start }, end: { ...w.end }, length_locked: w.length_locked, direction: w.direction });
+    const after = new Map<string, { x: number; y: number }>();
+    for (const u of nodeUpdates) {
+      const n = updatedFloor.nodes.find((n) => n.id === u.nodeId);
+      if (n) {
+        after.set(n.id, { x: n.x, y: n.y });
       }
     }
 
-    const restoreStates = async (states: Map<string, { start: Coordinates; end: Coordinates; length_locked: boolean; direction: import("../../types").WallDirection }>) => {
-      const updates = Array.from(states.entries()).map(([wall_id, s]) => ({
-        wall_id,
-        start: s.start,
-        end: s.end,
-        length_locked: s.length_locked,
-        direction: s.direction,
+    const restoreNodes = async (states: Map<string, { x: number; y: number }>) => {
+      const updates = Array.from(states.entries()).map(([node_id, pos]) => ({
+        node_id,
+        x: pos.x,
+        y: pos.y,
       }));
-      if (updates.length > 1) {
+      if (updates.length > 0) {
         await hass.callWS({
-          type: "inhabit/walls/batch_update",
+          type: "inhabit/nodes/update",
           floor_plan_id: fpId,
           floor_id: fId,
           updates,
         });
-      } else if (updates.length === 1) {
-        const u = updates[0];
-        await hass.callWS({
-          type: "inhabit/walls/update",
-          floor_plan_id: fpId,
-          floor_id: fId,
-          ...u,
-        });
       }
       await reloadFloorData();
-      await this._syncRoomsWithWalls();
+      await this._syncRoomsWithEdges();
     };
 
     pushAction({
-      type: "wall_update",
+      type: "node_update",
       description,
-      undo: () => restoreStates(before),
-      redo: () => restoreStates(after),
+      undo: () => restoreNodes(before),
+      redo: () => restoreNodes(after),
     });
   }
 
-  private async _updateWallLength(wall: Wall, newLength: number): Promise<void> {
+  private async _updateEdgeLength(edge: Edge, newLength: number): Promise<void> {
     if (!this.hass) return;
 
     const floor = currentFloor.value;
     const floorPlan = currentFloorPlan.value;
     if (!floor || !floorPlan) return;
 
-    // Use the wall solver for center-based length editing
-    const graph = buildConnectionGraph(floor.walls);
-    const result = solveWallLengthChange(graph, wall.id, newLength);
+    // Use the node solver for center-based length editing
+    const graph = buildNodeGraph(floor.nodes, floor.edges);
+    const result = solveEdgeLengthChange(graph, edge.id, newLength);
 
     if (result.blocked) {
-      alert(`Cannot change length: wall "${result.blockedBy}" has a constraint that blocks this change.`);
+      alert(`Cannot change length: edge "${result.blockedBy}" has a constraint that blocks this change.`);
       return;
     }
 
     if (result.updates.length === 0) return;
 
-    const affectedIds = result.updates.map((u) => u.wallId);
-
     try {
-      await this._withWallUndo(affectedIds, "Change wall length", async () => {
-        if (result.updates.length > 1) {
-          await this.hass!.callWS({
-            type: "inhabit/walls/batch_update",
-            floor_plan_id: floorPlan.id,
-            floor_id: floor.id,
-            updates: result.updates.map((u) => ({
-              wall_id: u.wallId,
-              start: u.newStart,
-              end: u.newEnd,
-            })),
-          });
-        } else {
-          const update = result.updates[0];
-          await this.hass!.callWS({
-            type: "inhabit/walls/update",
-            floor_plan_id: floorPlan.id,
-            floor_id: floor.id,
-            wall_id: update.wallId,
-            start: update.newStart,
-            end: update.newEnd,
-          });
-        }
+      await this._withNodeUndo(result.updates, "Change edge length", async () => {
+        await this.hass!.callWS({
+          type: "inhabit/nodes/update",
+          floor_plan_id: floorPlan.id,
+          floor_id: floor.id,
+          updates: result.updates.map((u) => ({
+            node_id: u.nodeId,
+            x: u.x,
+            y: u.y,
+          })),
+        });
         await reloadFloorData();
       });
     } catch (err) {
-      console.error("Error updating wall:", err);
-      alert(`Failed to update wall: ${err}`);
+      console.error("Error updating edge length:", err);
+      alert(`Failed to update edge: ${err}`);
     }
 
     selection.value = { type: "none", ids: [] };
   }
 
-  private _getSnappedPointForEndpoint(point: Coordinates): Coordinates {
+  private _getSnappedPointForNode(point: Coordinates): Coordinates {
     const floor = currentFloor.value;
 
-    // First check for snapping to other wall endpoints
+    // First check for snapping to other nodes
     if (floor) {
-      const snapDistance = 15;
-      for (const wall of floor.walls) {
-        for (const endpoint of [wall.start, wall.end]) {
-          const dist = Math.sqrt(
-            Math.pow(point.x - endpoint.x, 2) + Math.pow(point.y - endpoint.y, 2)
-          );
-          if (dist < snapDistance) {
-            return endpoint;
-          }
-        }
+      const nearest = findNearestNode(point, floor.nodes, 15);
+      if (nearest) {
+        return { x: nearest.x, y: nearest.y };
       }
     }
 
@@ -1014,31 +1015,26 @@ export class FpbCanvas extends LitElement {
     };
   }
 
-  private _getSnappedPoint(point: Coordinates, snapToWallSegments = false): Coordinates {
+  private _getSnappedPoint(point: Coordinates, snapToEdgeSegments = false): Coordinates {
     const floor = currentFloor.value;
     if (!floor) return snapToGrid.value ? snapPoint(point, gridSize.value) : point;
 
     const snapDistance = 15;
 
-    // Snap to existing wall endpoints first (highest priority)
-    for (const wall of floor.walls) {
-      for (const endpoint of [wall.start, wall.end]) {
-        const dist = Math.sqrt(
-          Math.pow(point.x - endpoint.x, 2) + Math.pow(point.y - endpoint.y, 2)
-        );
-        if (dist < snapDistance) {
-          return endpoint;
-        }
-      }
+    // Snap to existing nodes first (highest priority)
+    const nearest = findNearestNode(point, floor.nodes, snapDistance);
+    if (nearest) {
+      return { x: nearest.x, y: nearest.y };
     }
 
-    // Snap to wall segments (for device placement)
-    if (snapToWallSegments) {
+    // Snap to edge segments (for device placement)
+    if (snapToEdgeSegments) {
+      const resolved = resolveFloorEdges(floor);
       let closestPoint: Coordinates | null = null;
       let closestDist = snapDistance;
 
-      for (const wall of floor.walls) {
-        const snapped = this._getClosestPointOnSegment(point, wall.start, wall.end);
+      for (const re of resolved) {
+        const snapped = this._getClosestPointOnSegment(point, re.startPos, re.endPos);
         const dist = Math.sqrt(
           Math.pow(point.x - snapped.x, 2) + Math.pow(point.y - snapped.y, 2)
         );
@@ -1072,27 +1068,32 @@ export class FpbCanvas extends LitElement {
     };
   }
 
-  private _handleSelectClick(point: Coordinates): boolean {
+  private _handleSelectClick(point: Coordinates, shiftKey = false): boolean {
     const floor = currentFloor.value;
     if (!floor) return false;
 
-    // Check walls first (they're on top visually)
-    for (const wall of floor.walls) {
-      const dist = this._pointToSegmentDistance(point, wall.start, wall.end);
-      if (dist < (wall.thickness / 2 + 5)) {
-        selection.value = { type: "wall", ids: [wall.id] };
-        // Show wall editor
-        const currentLength = this._calculateWallLength(wall.start, wall.end);
-        const midpoint: Coordinates = {
-          x: (wall.start.x + wall.end.x) / 2,
-          y: (wall.start.y + wall.end.y) / 2,
-        };
-        this._wallEditor = {
-          wall,
-          position: midpoint,
-          length: currentLength,
-        };
-        this._editingLength = Math.round(currentLength).toString();
+    // Check edges first (they're on top visually)
+    const resolved = resolveFloorEdges(floor);
+    for (const re of resolved) {
+      const dist = this._pointToSegmentDistance(point, re.startPos, re.endPos);
+      if (dist < (re.thickness / 2 + 5)) {
+        // Shift-click multi-select in walls mode
+        if (shiftKey && this._canvasMode === "walls" && selection.value.type === "edge") {
+          const currentIds = [...selection.value.ids];
+          const idx = currentIds.indexOf(re.id);
+          if (idx >= 0) {
+            currentIds.splice(idx, 1);
+          } else {
+            currentIds.push(re.id);
+          }
+          selection.value = { type: "edge", ids: currentIds };
+          this._updateEdgeEditorForSelection(currentIds);
+          return true;
+        }
+
+        // Single select
+        selection.value = { type: "edge", ids: [re.id] };
+        this._updateEdgeEditorForSelection([re.id]);
         return true;
       }
     }
@@ -1129,6 +1130,48 @@ export class FpbCanvas extends LitElement {
 
     selection.value = { type: "none", ids: [] };
     return false;
+  }
+
+  private _updateEdgeEditorForSelection(edgeIds: string[]): void {
+    const floor = currentFloor.value;
+    if (!floor) return;
+
+    if (edgeIds.length === 0) {
+      this._edgeEditor = null;
+      this._multiEdgeEditor = null;
+      return;
+    }
+
+    const nodeMap = buildNodeMap(floor.nodes);
+
+    if (edgeIds.length === 1) {
+      const edge = floor.edges.find(e => e.id === edgeIds[0]);
+      if (edge) {
+        const startNode = nodeMap.get(edge.start_node);
+        const endNode = nodeMap.get(edge.end_node);
+        if (startNode && endNode) {
+          const currentLength = this._calculateWallLength(startNode, endNode);
+          this._edgeEditor = {
+            edge,
+            position: {
+              x: (startNode.x + endNode.x) / 2,
+              y: (startNode.y + endNode.y) / 2,
+            },
+            length: currentLength,
+          };
+          this._editingLength = Math.round(currentLength).toString();
+        }
+      }
+      this._multiEdgeEditor = null;
+      return;
+    }
+
+    // 2+ edges: show multi-edge editor
+    const edges = edgeIds
+      .map(id => floor.edges.find(e => e.id === id))
+      .filter((e): e is Edge => !!e);
+    this._multiEdgeEditor = { edges };
+    this._edgeEditor = null;
   }
 
   private _pointToSegmentDistance(point: Coordinates, start: Coordinates, end: Coordinates): number {
@@ -1174,11 +1217,11 @@ export class FpbCanvas extends LitElement {
     const hass = this.hass;
     const fpId = floorPlan.id;
     const fId = floor.id;
-    const wallRef = { id: "" };
+    const edgeRef = { id: "" };
 
     try {
-      const result = await hass.callWS<{ id: string }>({
-        type: "inhabit/walls/add",
+      const result = await hass.callWS<{ edge: { id: string } }>({
+        type: "inhabit/edges/add",
         floor_plan_id: fpId,
         floor_id: fId,
         start,
@@ -1186,26 +1229,26 @@ export class FpbCanvas extends LitElement {
         thickness: 8,
         direction,
       });
-      wallRef.id = result.id;
+      edgeRef.id = result.edge.id;
       await reloadFloorData();
-      await this._syncRoomsWithWalls();
+      await this._syncRoomsWithEdges();
 
       pushAction({
-        type: "wall_add",
+        type: "edge_add",
         description: "Add wall",
         undo: async () => {
           await hass.callWS({
-            type: "inhabit/walls/delete",
+            type: "inhabit/edges/delete",
             floor_plan_id: fpId,
             floor_id: fId,
-            wall_id: wallRef.id,
+            edge_id: edgeRef.id,
           });
           await reloadFloorData();
-          await this._syncRoomsWithWalls();
+          await this._syncRoomsWithEdges();
         },
         redo: async () => {
-          const r = await hass.callWS<{ id: string }>({
-            type: "inhabit/walls/add",
+          const r = await hass.callWS<{ edge: { id: string } }>({
+            type: "inhabit/edges/add",
             floor_plan_id: fpId,
             floor_id: fId,
             start,
@@ -1213,13 +1256,13 @@ export class FpbCanvas extends LitElement {
             thickness: 8,
             direction,
           });
-          wallRef.id = r.id;
+          edgeRef.id = r.edge.id;
           await reloadFloorData();
-          await this._syncRoomsWithWalls();
+          await this._syncRoomsWithEdges();
         },
       });
     } catch (err) {
-      console.error("Error creating wall:", err);
+      console.error("Error creating edge:", err);
     }
   }
 
@@ -1286,14 +1329,14 @@ export class FpbCanvas extends LitElement {
    * Auto-detect rooms from wall loops and sync with existing rooms.
    * Called after every wall mutation.
    */
-  private async _syncRoomsWithWalls(): Promise<void> {
+  private async _syncRoomsWithEdges(): Promise<void> {
     if (!this.hass) return;
 
     const floor = currentFloor.value;
     const floorPlan = currentFloorPlan.value;
     if (!floor || !floorPlan) return;
 
-    const detected = detectRoomsFromWalls(floor.walls);
+    const detected = detectRoomsFromEdges(floor.nodes, floor.edges);
     const existingRooms = [...floor.rooms];
     const matchedExistingIds = new Set<string>();
     const matchThreshold = 50; // cm
@@ -1535,53 +1578,64 @@ export class FpbCanvas extends LitElement {
     `;
   }
 
-  private _renderWallChains(walls: Wall[], sel: import("../../types").SelectionState) {
-    // If dragging an endpoint, use the solver to preview all affected walls
-    let wallsToRender = walls;
-    if (this._draggingEndpoint) {
-      const draggedPos = this._cursorPos;
-      const draggedWallIds = this._draggingEndpoint.wallIds.map((ref) => ref.split(":")[0]);
-      const preview = previewEndpointDrag(
-        walls,
-        this._draggingEndpoint.originalCoords,
-        draggedPos,
-        draggedWallIds
+  private _renderEdgeChains(floor: import("../../types").Floor, sel: import("../../types").SelectionState) {
+    const resolved = resolveFloorEdges(floor);
+
+    // If dragging a node, use the solver to preview all affected node positions
+    let wallsForChains = resolved.map(re => ({
+      id: re.id,
+      start: re.startPos,
+      end: re.endPos,
+      thickness: re.thickness,
+    }));
+
+    if (this._draggingNode) {
+      const preview = previewNodeDrag(
+        floor.nodes,
+        floor.edges,
+        this._draggingNode.node.id,
+        this._cursorPos.x,
+        this._cursorPos.y
       );
 
-      wallsToRender = walls.map(wall => {
-        const p = preview.get(wall.id);
-        if (p) {
-          return { ...wall, start: p.start, end: p.end };
-        }
-        return wall;
+      // Apply preview positions to resolved edges
+      wallsForChains = resolved.map(re => {
+        const startPreview = preview.get(re.start_node);
+        const endPreview = preview.get(re.end_node);
+        return {
+          id: re.id,
+          start: startPreview ?? re.startPos,
+          end: endPreview ?? re.endPos,
+          thickness: re.thickness,
+        };
       });
     }
 
-    const chains = groupWallsIntoChains(wallsToRender);
+    const chains = groupWallsIntoChains(wallsForChains);
 
-    // Find the selected wall for individual highlight
-    const selectedWall = sel.type === "wall" && sel.ids.length > 0
-      ? wallsToRender.find(w => w.id === sel.ids[0])
-      : null;
+    // Find selected edges for highlight
+    const selectedEdges = sel.type === "edge"
+      ? wallsForChains.filter(w => sel.ids.includes(w.id))
+      : [];
 
     return svg`
-      <!-- Base walls rendered as chains for proper corners -->
+      <!-- Base edges rendered as chains for proper corners -->
       ${chains.map((chain, idx) => svg`
         <path class="wall"
               d="${wallChainPath(chain)}"
               data-chain-idx="${idx}"/>
       `)}
 
-      <!-- Individual selected wall highlight -->
-      ${selectedWall ? svg`
+      <!-- Selected edge highlights -->
+      ${selectedEdges.map(edge => svg`
         <path class="wall-selected-highlight"
-              d="${this._singleWallPath(selectedWall)}"/>
-      ` : null}
+              d="${this._singleEdgePath(edge)}"/>
+      `)}
     `;
   }
 
-  private _singleWallPath(wall: Wall): string {
-    const { start, end, thickness } = wall;
+  private _singleEdgePath(edge: { start: Coordinates; end: Coordinates; thickness: number }): string {
+    const { start, end, thickness } = edge;
     const dx = end.x - start.x;
     const dy = end.y - start.y;
     const len = Math.sqrt(dx * dx + dy * dy);
@@ -1639,34 +1693,8 @@ export class FpbCanvas extends LitElement {
                   stroke-width="1"/>
           `)}
 
-          <!-- Walls (rendered as chains for proper corners) -->
-          ${this._renderWallChains(floor.walls, sel)}
-
-          <!-- Doors -->
-          ${floor.doors.map(door => {
-            const wall = floor.walls.find(w => w.id === door.wall_id);
-            if (!wall) return null;
-            const pos = door.position;
-            const x = wall.start.x + (wall.end.x - wall.start.x) * pos;
-            const y = wall.start.y + (wall.end.y - wall.start.y) * pos;
-            return svg`
-              <rect class="door" x="${x - door.width/2}" y="${y - 5}"
-                    width="${door.width}" height="10"/>
-            `;
-          })}
-
-          <!-- Windows -->
-          ${floor.windows.map(window => {
-            const wall = floor.walls.find(w => w.id === window.wall_id);
-            if (!wall) return null;
-            const pos = window.position;
-            const x = wall.start.x + (wall.end.x - wall.start.x) * pos;
-            const y = wall.start.y + (wall.end.y - wall.start.y) * pos;
-            return svg`
-              <rect class="window" x="${x - window.width/2}" y="${y - 3}"
-                    width="${window.width}" height="6"/>
-            `;
-          })}
+          <!-- Edges (rendered as chains for proper corners) -->
+          ${this._renderEdgeChains(floor, sel)}
         </g>
       ` : null}
 
@@ -1714,82 +1742,60 @@ export class FpbCanvas extends LitElement {
     `;
   }
 
-  private _getWallEndpoints(): Map<string, { coords: Coordinates; wallIds: string[] }> {
+  private _renderNodeEndpoints() {
     const floor = currentFloor.value;
-    if (!floor) return new Map();
+    if (!floor || floor.nodes.length === 0) return null;
 
-    const endpoints: Map<string, { coords: Coordinates; wallIds: string[] }> = new Map();
+    // Only show the hovered node or the one being dragged
+    const nodesToShow: Array<{ node: Node; coords: Coordinates; isDragging: boolean }> = [];
 
-    for (const wall of floor.walls) {
-      const startKey = `${Math.round(wall.start.x)},${Math.round(wall.start.y)}`;
-      const endKey = `${Math.round(wall.end.x)},${Math.round(wall.end.y)}`;
-
-      if (!endpoints.has(startKey)) {
-        endpoints.set(startKey, { coords: wall.start, wallIds: [] });
-      }
-      endpoints.get(startKey)!.wallIds.push(wall.id + ":start");
-
-      if (!endpoints.has(endKey)) {
-        endpoints.set(endKey, { coords: wall.end, wallIds: [] });
-      }
-      endpoints.get(endKey)!.wallIds.push(wall.id + ":end");
-    }
-
-    return endpoints;
-  }
-
-  private _renderWallEndpoints() {
-    const floor = currentFloor.value;
-    if (!floor || floor.walls.length === 0) return null;
-
-    // Only show the hovered endpoint or the one being dragged
-    const endpointsToShow: Array<{ coords: Coordinates; wallIds: string[]; isDragging: boolean }> = [];
-
-    if (this._draggingEndpoint) {
-      endpointsToShow.push({
+    if (this._draggingNode) {
+      nodesToShow.push({
+        node: this._draggingNode.node,
         coords: this._cursorPos, // Show at cursor position while dragging
-        wallIds: this._draggingEndpoint.wallIds,
         isDragging: true,
       });
-    } else if (this._hoveredEndpoint) {
-      endpointsToShow.push({
-        coords: this._hoveredEndpoint.coords,
-        wallIds: this._hoveredEndpoint.wallIds,
+    } else if (this._hoveredNode) {
+      nodesToShow.push({
+        node: this._hoveredNode,
+        coords: { x: this._hoveredNode.x, y: this._hoveredNode.y },
         isDragging: false,
       });
     }
 
-    if (endpointsToShow.length === 0) return null;
+    if (nodesToShow.length === 0) return null;
 
     return svg`
       <g class="wall-endpoints-layer">
-        ${endpointsToShow.map((ep) => svg`
+        ${nodesToShow.map((item) => svg`
           <circle
-            class="wall-endpoint ${ep.isDragging ? "dragging" : ""}"
-            cx="${ep.coords.x}"
-            cy="${ep.coords.y}"
+            class="wall-endpoint ${item.isDragging ? "dragging" : ""}"
+            cx="${item.coords.x}"
+            cy="${item.coords.y}"
             r="6"
-            @pointerdown=${(e: PointerEvent) => this._handleEndpointPointerDown(e, ep)}
+            @pointerdown=${(e: PointerEvent) => this._handleNodePointerDown(e, item.node)}
           />
         `)}
-        ${this._draggingEndpoint ? this._renderDraggedWallLengths(floor) : null}
+        ${this._draggingNode ? this._renderDraggedEdgeLengths(floor) : null}
       </g>
     `;
   }
 
-  private _renderDraggedWallLengths(floor: import("../../types").Floor) {
-    if (!this._draggingEndpoint) return null;
+  private _renderDraggedEdgeLengths(floor: import("../../types").Floor) {
+    if (!this._draggingNode) return null;
 
     const draggedPos = this._cursorPos;
-    const draggedWallIds = this._draggingEndpoint.wallIds.map((ref) => ref.split(":")[0]);
-    const preview = previewEndpointDrag(
-      floor.walls,
-      this._draggingEndpoint.originalCoords,
-      draggedPos,
-      draggedWallIds
+    const preview = previewNodeDrag(
+      floor.nodes,
+      floor.edges,
+      this._draggingNode.node.id,
+      draggedPos.x,
+      draggedPos.y
     );
 
-    const wallData: Array<{
+    const resolved = resolveFloorEdges(floor);
+
+    const edgeData: Array<{
       start: Coordinates;
       end: Coordinates;
       origStart: Coordinates;
@@ -1799,43 +1805,45 @@ export class FpbCanvas extends LitElement {
       thickness: number
     }> = [];
 
-    for (const [wallId, positions] of preview) {
-      const wall = floor.walls.find(w => w.id === wallId);
-      if (!wall) continue;
+    for (const re of resolved) {
+      const startPreview = preview.get(re.start_node);
+      const endPreview = preview.get(re.end_node);
+      if (!startPreview && !endPreview) continue; // Not affected
 
-      const length = this._calculateWallLength(positions.start, positions.end);
-      const angle = Math.atan2(positions.end.y - positions.start.y, positions.end.x - positions.start.x);
+      const newStart = startPreview ?? re.startPos;
+      const newEnd = endPreview ?? re.endPos;
+      const length = this._calculateWallLength(newStart, newEnd);
+      const angle = Math.atan2(newEnd.y - newStart.y, newEnd.x - newStart.x);
 
-      wallData.push({
-        start: positions.start,
-        end: positions.end,
-        origStart: wall.start,
-        origEnd: wall.end,
+      edgeData.push({
+        start: newStart,
+        end: newEnd,
+        origStart: re.startPos,
+        origEnd: re.endPos,
         length,
         angle,
-        thickness: wall.thickness,
+        thickness: re.thickness,
       });
     }
 
-    // Check for 90-degree angles between walls at the dragged point
+    // Check for 90-degree angles between edges at the dragged point
     const rightAngles: Array<{ point: Coordinates; angle: number }> = [];
-    for (let i = 0; i < wallData.length; i++) {
-      for (let j = i + 1; j < wallData.length; j++) {
-        const angleDiff = Math.abs(wallData[i].angle - wallData[j].angle);
+    for (let i = 0; i < edgeData.length; i++) {
+      for (let j = i + 1; j < edgeData.length; j++) {
+        const angleDiff = Math.abs(edgeData[i].angle - edgeData[j].angle);
         const normalizedDiff = angleDiff % Math.PI;
-        // Check if angle is close to 90 degrees (PI/2)
-        if (Math.abs(normalizedDiff - Math.PI / 2) < 0.02) { // ~1 degree tolerance
+        if (Math.abs(normalizedDiff - Math.PI / 2) < 0.02) {
           rightAngles.push({
             point: draggedPos,
-            angle: Math.min(wallData[i].angle, wallData[j].angle),
+            angle: Math.min(edgeData[i].angle, edgeData[j].angle),
           });
         }
       }
     }
 
     return svg`
-      <!-- Original wall positions (ghost) -->
-      ${wallData.map(({ origStart, origEnd, thickness }) => {
+      <!-- Original edge positions (ghost) -->
+      ${edgeData.map(({ origStart, origEnd, thickness }) => {
         const dx = origEnd.x - origStart.x;
         const dy = origEnd.y - origStart.y;
         const len = Math.sqrt(dx * dx + dy * dy);
@@ -1856,12 +1864,11 @@ export class FpbCanvas extends LitElement {
         `;
       })}
 
-      <!-- Wall length labels -->
-      ${wallData.map(({ start, end, length }) => {
+      <!-- Edge length labels -->
+      ${edgeData.map(({ start, end, length }) => {
         const midX = (start.x + end.x) / 2;
         const midY = (start.y + end.y) / 2;
 
-        // Calculate angle for label rotation
         const angle = Math.atan2(end.y - start.y, end.x - start.x) * (180 / Math.PI);
         const labelAngle = angle > 90 || angle < -90 ? angle + 180 : angle;
 
@@ -1888,17 +1895,16 @@ export class FpbCanvas extends LitElement {
     `;
   }
 
-  private _handleEndpointPointerDown(e: PointerEvent, endpoint: { coords: Coordinates; wallIds: string[] }): void {
+  private _handleNodePointerDown(e: PointerEvent, node: Node): void {
     e.stopPropagation();
     e.preventDefault();
 
-    // Get the original coords from hovered endpoint (not the display coords which might be cursor pos)
-    const originalCoords = this._hoveredEndpoint?.coords || endpoint.coords;
+    // Get the original coords from hovered node (not the display coords which might be cursor pos)
+    const actualNode = this._hoveredNode || node;
 
-    this._draggingEndpoint = {
-      coords: originalCoords,
-      wallIds: endpoint.wallIds,
-      originalCoords: { ...originalCoords },
+    this._draggingNode = {
+      node: actualNode,
+      originalCoords: { x: actualNode.x, y: actualNode.y },
       startX: e.clientX,
       startY: e.clientY,
       hasMoved: false,
@@ -1990,10 +1996,10 @@ export class FpbCanvas extends LitElement {
     };
   }
 
-  private _renderWallEditor() {
-    if (!this._wallEditor) return null;
+  private _renderEdgeEditor() {
+    if (!this._edgeEditor) return null;
 
-    const wall = this._wallEditor.wall;
+    const edge = this._edgeEditor.edge;
 
     return html`
       <div class="wall-editor"
@@ -2011,32 +2017,41 @@ export class FpbCanvas extends LitElement {
             .value=${this._editingLength}
             @input=${(e: InputEvent) => this._editingLength = (e.target as HTMLInputElement).value}
             @keydown=${this._handleEditorKeyDown}
-            ?disabled=${wall.length_locked}
+            ?disabled=${edge.length_locked}
             autofocus
           />
           <span class="wall-editor-unit">cm</span>
           <button
-            class="constraint-btn ${wall.length_locked ? "active" : ""}"
+            class="constraint-btn ${edge.length_locked ? "active" : ""}"
             @click=${() => this._toggleLengthLock()}
-            title="${wall.length_locked ? "Unlock length" : "Lock length"}"
-          >${wall.length_locked ? "🔒" : "🔓"}</button>
+            title="${edge.length_locked ? "Unlock length" : "Lock length"}"
+          >${edge.length_locked ? "🔒" : "🔓"}</button>
+        </div>
+
+        <div class="wall-editor-row">
+          <span class="wall-editor-label">Angle</span>
+          <button
+            class="constraint-btn ${edge.angle_locked ? "active" : ""}"
+            @click=${() => this._toggleAngleLock()}
+            title="${edge.angle_locked ? "Unlock angle" : "Lock angle"}"
+          >${edge.angle_locked ? "🔒 Locked" : "🔓 Free"}</button>
         </div>
 
         <div class="wall-editor-row">
           <span class="wall-editor-label">Direction</span>
           <div class="wall-editor-constraints">
             <button
-              class="constraint-btn ${wall.direction === "free" ? "active" : ""}"
+              class="constraint-btn ${edge.direction === "free" ? "active" : ""}"
               @click=${() => this._setDirection("free")}
               title="Free direction"
             >Free</button>
             <button
-              class="constraint-btn ${wall.direction === "horizontal" ? "active" : ""}"
+              class="constraint-btn ${edge.direction === "horizontal" ? "active" : ""}"
               @click=${() => this._setDirection("horizontal")}
               title="Lock horizontal"
             ><span>―</span> H</button>
             <button
-              class="constraint-btn ${wall.direction === "vertical" ? "active" : ""}"
+              class="constraint-btn ${edge.direction === "vertical" ? "active" : ""}"
               @click=${() => this._setDirection("vertical")}
               title="Lock vertical"
             ><span>|</span> V</button>
@@ -2045,110 +2060,133 @@ export class FpbCanvas extends LitElement {
 
         <div class="wall-editor-actions">
           <button class="save-btn" @click=${this._handleEditorSave}>Apply</button>
-          <button class="delete-btn" @click=${this._handleWallDelete}>Delete</button>
+          <button class="delete-btn" @click=${this._handleEdgeDelete}>Delete</button>
         </div>
       </div>
     `;
   }
 
   private async _toggleLengthLock(): Promise<void> {
-    if (!this._wallEditor || !this.hass) return;
+    if (!this._edgeEditor || !this.hass) return;
 
     const floor = currentFloor.value;
     const floorPlan = currentFloorPlan.value;
     if (!floor || !floorPlan) return;
 
-    const wall = this._wallEditor.wall;
+    const edge = this._edgeEditor.edge;
 
     try {
-      await this._withWallUndo([wall.id], "Toggle length lock", async () => {
-        await this.hass!.callWS({
-          type: "inhabit/walls/update",
-          floor_plan_id: floorPlan.id,
-          floor_id: floor.id,
-          wall_id: wall.id,
-          length_locked: !wall.length_locked,
-        });
-        await reloadFloorData();
+      await this.hass.callWS({
+        type: "inhabit/edges/update",
+        floor_plan_id: floorPlan.id,
+        floor_id: floor.id,
+        edge_id: edge.id,
+        length_locked: !edge.length_locked,
       });
-      this._refreshWallEditor(wall.id);
+      await reloadFloorData();
+      this._refreshEdgeEditor(edge.id);
     } catch (err) {
       console.error("Error toggling length lock:", err);
       alert(`Failed to toggle length lock: ${err}`);
     }
   }
 
-  private async _setDirection(direction: import("../../types").WallDirection): Promise<void> {
-    if (!this._wallEditor || !this.hass) return;
+  private async _toggleAngleLock(): Promise<void> {
+    if (!this._edgeEditor || !this.hass) return;
 
     const floor = currentFloor.value;
     const floorPlan = currentFloorPlan.value;
     if (!floor || !floorPlan) return;
 
-    const wall = this._wallEditor.wall;
+    const edge = this._edgeEditor.edge;
 
     try {
-      // Solve constraint snap with connected wall propagation
-      const graph = buildConnectionGraph(floor.walls);
-      const result = solveConstraintSnap(graph, wall.id, direction);
-
-      if (result.blocked) {
-        alert(`Cannot apply direction: blocked by connected walls.`);
-        return;
-      }
-
-      const affectedIds = result.updates.length > 0
-        ? result.updates.map((u) => u.wallId)
-        : [wall.id];
-
-      await this._withWallUndo(affectedIds, "Set wall direction", async () => {
-        if (result.updates.length > 0) {
-          const updates = result.updates.map((u) => {
-            const update: Record<string, unknown> = {
-              wall_id: u.wallId,
-              start: u.newStart,
-              end: u.newEnd,
-            };
-            if (u.wallId === wall.id) {
-              update.direction = direction;
-            }
-            return update;
-          });
-
-          await this.hass!.callWS({
-            type: "inhabit/walls/batch_update",
-            floor_plan_id: floorPlan.id,
-            floor_id: floor.id,
-            updates,
-          });
-        } else {
-          await this.hass!.callWS({
-            type: "inhabit/walls/update",
-            floor_plan_id: floorPlan.id,
-            floor_id: floor.id,
-            wall_id: wall.id,
-            direction,
-          });
-        }
-        await reloadFloorData();
+      await this.hass.callWS({
+        type: "inhabit/edges/update",
+        floor_plan_id: floorPlan.id,
+        floor_id: floor.id,
+        edge_id: edge.id,
+        angle_locked: !edge.angle_locked,
       });
-
-      this._refreshWallEditor(wall.id);
+      await reloadFloorData();
+      this._refreshEdgeEditor(edge.id);
     } catch (err) {
-      console.error("Error setting wall direction:", err);
-      alert(`Failed to set wall direction: ${err}`);
+      console.error("Error toggling angle lock:", err);
+      alert(`Failed to toggle angle lock: ${err}`);
     }
   }
 
-  private _refreshWallEditor(wallId: string): void {
+  private async _setDirection(direction: import("../../types").WallDirection): Promise<void> {
+    if (!this._edgeEditor || !this.hass) return;
+
+    const floor = currentFloor.value;
+    const floorPlan = currentFloorPlan.value;
+    if (!floor || !floorPlan) return;
+
+    const edge = this._edgeEditor.edge;
+
+    try {
+      // Solve constraint snap with connected edge propagation
+      const graph = buildNodeGraph(floor.nodes, floor.edges);
+      const result = solveConstraintSnap(graph, edge.id, direction);
+
+      if (result.blocked) {
+        alert(`Cannot apply direction: blocked by connected edges.`);
+        return;
+      }
+
+      // Update edge direction
+      await this.hass.callWS({
+        type: "inhabit/edges/update",
+        floor_plan_id: floorPlan.id,
+        floor_id: floor.id,
+        edge_id: edge.id,
+        direction,
+      });
+
+      // Apply node position updates from constraint snap
+      if (result.updates.length > 0) {
+        await this.hass.callWS({
+          type: "inhabit/nodes/update",
+          floor_plan_id: floorPlan.id,
+          floor_id: floor.id,
+          updates: result.updates.map((u) => ({
+            node_id: u.nodeId,
+            x: u.x,
+            y: u.y,
+          })),
+        });
+      }
+
+      await reloadFloorData();
+      await this._syncRoomsWithEdges();
+      this._refreshEdgeEditor(edge.id);
+    } catch (err) {
+      console.error("Error setting edge direction:", err);
+      alert(`Failed to set edge direction: ${err}`);
+    }
+  }
+
+  private _refreshEdgeEditor(edgeId: string): void {
     const updatedFloor = currentFloor.value;
     if (updatedFloor) {
-      const updatedWall = updatedFloor.walls.find((w) => w.id === wallId);
-      if (updatedWall && this._wallEditor) {
-        this._wallEditor = {
-          ...this._wallEditor,
-          wall: updatedWall,
-        };
+      const updatedEdge = updatedFloor.edges.find((e) => e.id === edgeId);
+      if (updatedEdge && this._edgeEditor) {
+        const nodeMap = buildNodeMap(updatedFloor.nodes);
+        const startNode = nodeMap.get(updatedEdge.start_node);
+        const endNode = nodeMap.get(updatedEdge.end_node);
+        if (startNode && endNode) {
+          const length = this._calculateWallLength(startNode, endNode);
+          this._edgeEditor = {
+            edge: updatedEdge,
+            position: {
+              x: (startNode.x + endNode.x) / 2,
+              y: (startNode.y + endNode.y) / 2,
+            },
+            length,
+          };
+          this._editingLength = Math.round(length).toString();
+        }
       }
     }
   }
@@ -2297,9 +2335,16 @@ export class FpbCanvas extends LitElement {
   }
 
   override render() {
+    const mode = this._canvasMode;
+    const svgClasses = [
+      this._isPanning ? "panning" : "",
+      activeTool.value === "select" ? "select-tool" : "",
+      mode === "viewing" ? "view-mode" : "",
+    ].filter(Boolean).join(" ");
+
     return html`
       <svg
-        class="${this._isPanning ? "panning" : ""} ${activeTool.value === "select" ? "select-tool" : ""}"
+        class="${svgClasses}"
         viewBox="${viewBoxToString(this._viewBox)}"
         @wheel=${this._handleWheel}
         @pointerdown=${this._handlePointerDown}
@@ -2309,14 +2354,162 @@ export class FpbCanvas extends LitElement {
         tabindex="0"
       >
         ${this._renderFloor()}
-        ${this._renderWallEndpoints()}
-        ${this._renderDrawingPreview()}
-        ${this._renderDevicePreview()}
+        ${mode === "walls" ? this._renderEdgeAnnotations() : null}
+        ${mode === "walls" ? this._renderNodeEndpoints() : null}
+        ${mode !== "viewing" ? this._renderDrawingPreview() : null}
+        ${mode === "placement" ? this._renderDevicePreview() : null}
       </svg>
-      ${this._renderWallEditor()}
+      ${this._renderEdgeEditor()}
+      ${this._renderMultiEdgeEditor()}
       ${this._renderRoomEditor()}
-      ${this._renderEntityPicker()}
+      ${mode === "placement" ? this._renderEntityPicker() : null}
     `;
+  }
+
+  private _renderEdgeAnnotations() {
+    const floor = currentFloor.value;
+    if (!floor || floor.edges.length === 0) return null;
+
+    const resolved = resolveFloorEdges(floor);
+
+    return svg`
+      <g class="wall-annotations-layer">
+        ${resolved.map(re => {
+          const midX = (re.startPos.x + re.endPos.x) / 2;
+          const midY = (re.startPos.y + re.endPos.y) / 2;
+          const length = this._calculateWallLength(re.startPos, re.endPos);
+          const angle = Math.atan2(re.endPos.y - re.startPos.y, re.endPos.x - re.startPos.x) * (180 / Math.PI);
+          const labelAngle = angle > 90 || angle < -90 ? angle + 180 : angle;
+
+          // Build constraint indicators
+          const indicators: string[] = [];
+          if (re.length_locked) indicators.push("📏");
+          if (re.angle_locked) indicators.push("📐");
+          if (re.direction === "horizontal") indicators.push("―");
+          if (re.direction === "vertical") indicators.push("|");
+
+          const label = this._formatLength(length);
+          const suffix = indicators.length > 0 ? ` ${indicators.join("")}` : "";
+          const fullLabel = `${label}${suffix}`;
+
+          // Offset perpendicular to edge so label sits above it
+          const dx = re.endPos.x - re.startPos.x;
+          const dy = re.endPos.y - re.startPos.y;
+          const len = Math.sqrt(dx * dx + dy * dy);
+          if (len === 0) return null;
+          const nx = -dy / len;
+          const ny = dx / len;
+          const offsetDist = re.thickness / 2 + 10;
+
+          return svg`
+            <g transform="translate(${midX + nx * offsetDist}, ${midY + ny * offsetDist}) rotate(${labelAngle})">
+              <rect class="wall-annotation-bg" x="${-fullLabel.length * 3.2}" y="-7" width="${fullLabel.length * 6.4}" height="14" rx="3"/>
+              <text class="wall-annotation-text" x="0" y="0">${fullLabel}</text>
+            </g>
+          `;
+        })}
+      </g>
+    `;
+  }
+
+  private _renderMultiEdgeEditor() {
+    if (!this._multiEdgeEditor) return null;
+
+    const edges = this._multiEdgeEditor.edges;
+    const allLocked = edges.every(e => e.angle_locked);
+    const someLocked = edges.some(e => e.angle_locked);
+
+    return html`
+      <div class="wall-editor"
+           @click=${(e: Event) => e.stopPropagation()}
+           @pointerdown=${(e: Event) => e.stopPropagation()}>
+        <div class="wall-editor-header">
+          <span class="wall-editor-title">${edges.length} Walls Selected</span>
+          <button class="wall-editor-close" @click=${() => {
+            this._multiEdgeEditor = null;
+            selection.value = { type: "none", ids: [] };
+          }}>✕</button>
+        </div>
+
+        <div class="wall-editor-row">
+          <span class="wall-editor-label">Angle</span>
+          <button
+            class="constraint-btn ${allLocked ? "active" : ""}"
+            @click=${() => this._toggleMultiAngleLock()}
+            title="${allLocked ? "Unlock all angles" : "Lock all angles"}"
+          >${allLocked ? "🔒 All Locked" : someLocked ? "🔓 Partial" : "🔓 All Free"}</button>
+        </div>
+
+        <div class="wall-editor-actions">
+          <button class="delete-btn" @click=${() => this._handleMultiEdgeDelete()}>Delete All</button>
+        </div>
+      </div>
+    `;
+  }
+
+  private async _toggleMultiAngleLock(): Promise<void> {
+    if (!this._multiEdgeEditor || !this.hass) return;
+
+    const floor = currentFloor.value;
+    const floorPlan = currentFloorPlan.value;
+    if (!floor || !floorPlan) return;
+
+    const edges = this._multiEdgeEditor.edges;
+    const allLocked = edges.every(e => e.angle_locked);
+    const newValue = !allLocked;
+
+    try {
+      for (const edge of edges) {
+        await this.hass.callWS({
+          type: "inhabit/edges/update",
+          floor_plan_id: floorPlan.id,
+          floor_id: floor.id,
+          edge_id: edge.id,
+          angle_locked: newValue,
+        });
+      }
+      await reloadFloorData();
+
+      // Refresh multi-edge editor with updated edge data
+      const updatedFloor = currentFloor.value;
+      if (updatedFloor) {
+        const edgeIds = edges.map(e => e.id);
+        const updatedEdges = edgeIds
+          .map(id => updatedFloor.edges.find(e => e.id === id))
+          .filter((e): e is Edge => !!e);
+        this._multiEdgeEditor = { edges: updatedEdges };
+      }
+    } catch (err) {
+      console.error("Error toggling multi-edge angle lock:", err);
+    }
+  }
+
+  private async _handleMultiEdgeDelete(): Promise<void> {
+    if (!this._multiEdgeEditor || !this.hass) return;
+
+    const floor = currentFloor.value;
+    const floorPlan = currentFloorPlan.value;
+    if (!floor || !floorPlan) return;
+
+    const edges = this._multiEdgeEditor.edges;
+
+    try {
+      for (const edge of edges) {
+        await this.hass.callWS({
+          type: "inhabit/edges/delete",
+          floor_plan_id: floorPlan.id,
+          floor_id: floor.id,
+          edge_id: edge.id,
+        });
+      }
+      await reloadFloorData();
+      await this._syncRoomsWithEdges();
+    } catch (err) {
+      console.error("Error deleting edges:", err);
+    }
+
+    this._multiEdgeEditor = null;
+    selection.value = { type: "none", ids: [] };
   }
 
   private _renderDevicePreview() {

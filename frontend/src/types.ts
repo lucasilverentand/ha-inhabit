@@ -55,6 +55,35 @@ export interface Polygon {
 // Floor plan types
 export type WallDirection = 'free' | 'horizontal' | 'vertical';
 
+// Node (shared vertex in the graph)
+export interface Node {
+  id: string;
+  x: number;
+  y: number;
+}
+
+// Edge type
+export type EdgeType = 'wall' | 'door' | 'window';
+
+// Edge (replaces Wall, Door, Window)
+export interface Edge {
+  id: string;
+  start_node: string; // Node ID
+  end_node: string;   // Node ID
+  type: EdgeType;
+  thickness: number;
+  is_exterior: boolean;
+  length_locked: boolean;
+  direction: WallDirection;
+  angle_locked: boolean;
+  // Door-specific
+  swing_direction?: 'left' | 'right' | 'double' | 'sliding';
+  entity_id?: string;
+  // Window-specific
+  height?: number;
+}
+
+/** @deprecated Use Edge with type='wall' instead */
 export interface Wall {
   id: string;
   start: Coordinates;
@@ -63,8 +92,10 @@ export interface Wall {
   is_exterior: boolean;
   length_locked: boolean;
   direction: WallDirection;
+  angle_locked: boolean;
 }
 
+/** @deprecated Use Edge with type='door' instead */
 export interface Door {
   id: string;
   wall_id: string;
@@ -74,6 +105,7 @@ export interface Door {
   entity_id?: string;
 }
 
+/** @deprecated Use Edge with type='window' instead */
 export interface Window {
   id: string;
   wall_id: string;
@@ -103,8 +135,13 @@ export interface Floor {
   background_scale: number;
   background_offset: Coordinates;
   rooms: Room[];
+  nodes: Node[];
+  edges: Edge[];
+  /** @deprecated Use nodes + edges instead */
   walls: Wall[];
+  /** @deprecated Use edges with type='door' instead */
   doors: Door[];
+  /** @deprecated Use edges with type='window' instead */
   windows: Window[];
 }
 
@@ -215,6 +252,9 @@ export interface VisualRule {
   color: string;
 }
 
+// Canvas mode types
+export type CanvasMode = "viewing" | "walls" | "placement";
+
 // Tool types
 export type ToolType =
   | "select"
@@ -259,6 +299,6 @@ export interface CanvasEvent {
 
 // Selection types
 export interface SelectionState {
-  type: "none" | "room" | "wall" | "door" | "window" | "device" | "shape";
+  type: "none" | "room" | "edge" | "device" | "shape";
   ids: string[];
 }

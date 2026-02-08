@@ -5,11 +5,13 @@
 import { LitElement, html, css } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { effect } from "@preact/signals-core";
-import type { HomeAssistant, FloorPlan, ToolType } from "../../types";
+import type { HomeAssistant, FloorPlan, ToolType, CanvasMode } from "../../types";
 import {
   currentFloorPlan,
   currentFloor,
   activeTool,
+  canvasMode,
+  setCanvasMode,
 } from "../../ha-floorplan-builder";
 import { canUndo, canRedo, undo, redo } from "../../stores/history-store";
 
@@ -19,8 +21,11 @@ interface AddMenuItem {
   label: string;
 }
 
-const ADD_MENU_ITEMS: AddMenuItem[] = [
+const WALLS_MENU_ITEMS: AddMenuItem[] = [
   { id: "wall", icon: "mdi:wall", label: "Wall" },
+];
+
+const PLACEMENT_MENU_ITEMS: AddMenuItem[] = [
   { id: "door", icon: "mdi:door", label: "Door" },
   { id: "window", icon: "mdi:window-closed-variant", label: "Window" },
   { id: "device", icon: "mdi:devices", label: "Device" },
@@ -39,6 +44,11 @@ export class FpbToolbar extends LitElement {
 
   @state()
   private _floorMenuOpen = false;
+
+  @state()
+  private _canvasMode: CanvasMode = "walls";
+
+  private _cleanupEffects: (() => void)[] = [];
 
   static override styles = css`
     :host {
@@ -215,6 +225,49 @@ export class FpbToolbar extends LitElement {
       --mdc-icon-size: 20px;
     }
 
+    /* --- Mode switcher --- */
+    .mode-group {
+      display: flex;
+      gap: 0;
+    }
+
+    .mode-button {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 36px;
+      height: 32px;
+      border: 1px solid rgba(255, 255, 255, 0.25);
+      background: transparent;
+      color: inherit;
+      cursor: pointer;
+      transition: background 0.2s ease;
+    }
+
+    .mode-button:first-child {
+      border-radius: 4px 0 0 4px;
+    }
+
+    .mode-button:last-child {
+      border-radius: 0 4px 4px 0;
+    }
+
+    .mode-button:not(:first-child) {
+      border-left: none;
+    }
+
+    .mode-button:hover {
+      background: rgba(255, 255, 255, 0.1);
+    }
+
+    .mode-button.active {
+      background: rgba(255, 255, 255, 0.25);
+    }
+
+    .mode-button ha-icon {
+      --mdc-icon-size: 18px;
+    }
+
     .spacer {
       flex: 1;
     }
@@ -357,11 +410,18 @@ export class FpbToolbar extends LitElement {
   override connectedCallback(): void {
     super.connectedCallback();
     document.addEventListener("click", this._handleDocumentClick);
+    this._cleanupEffects.push(
+      effect(() => {
+        this._canvasMode = canvasMode.value;
+      })
+    );
   }
 
   override disconnectedCallback(): void {
     super.disconnectedCallback();
     document.removeEventListener("click", this._handleDocumentClick);
+    this._cleanupEffects.forEach(cleanup => cleanup());
+    this._cleanupEffects = [];
   }
 
   private _handleDocumentClick = (e: MouseEvent): void => {
@@ -375,7 +435,12 @@ export class FpbToolbar extends LitElement {
     const fp = currentFloorPlan.value;
     const floor = currentFloor.value;
     const tool = activeTool.value;
+    const mode = this._canvasMode;
     const floors = fp?.floors || [];
+
+    const menuItems = mode === "walls" ? WALLS_MENU_ITEMS
+      : mode === "placement" ? PLACEMENT_MENU_ITEMS
+      : [];
 
     return html`
       <!-- Floor Selector -->
@@ -423,6 +488,33 @@ export class FpbToolbar extends LitElement {
 
       <div class="spacer"></div>
 
+      <!-- Mode Switcher -->
+      <div class="mode-group">
+        <button
+          class="mode-button ${mode === "viewing" ? "active" : ""}"
+          @click=${() => setCanvasMode("viewing")}
+          title="View mode"
+        >
+          <ha-icon icon="mdi:eye-outline"></ha-icon>
+        </button>
+        <button
+          class="mode-button ${mode === "walls" ? "active" : ""}"
+          @click=${() => setCanvasMode("walls")}
+          title="Walls mode"
+        >
+          <ha-icon icon="mdi:wall"></ha-icon>
+        </button>
+        <button
+          class="mode-button ${mode === "placement" ? "active" : ""}"
+          @click=${() => setCanvasMode("placement")}
+          title="Placement mode"
+        >
+          <ha-icon icon="mdi:devices"></ha-icon>
+        </button>
+      </div>
+
+      <div class="spacer"></div>
+
       <!-- Undo/Redo -->
       <div class="tool-group">
         <button
@@ -445,33 +537,35 @@ export class FpbToolbar extends LitElement {
 
       <div class="divider"></div>
 
-      <!-- Add Menu (right side) -->
-      <div class="add-button-container">
-        <button
-          class="add-button ${this._addMenuOpen ? "menu-open" : ""}"
-          @click=${this._toggleAddMenu}
-          title="Add element"
-        >
-          <ha-icon icon="mdi:plus"></ha-icon>
-        </button>
-        ${this._addMenuOpen
-          ? html`
-              <div class="add-menu">
-                ${ADD_MENU_ITEMS.map(
-                  (item) => html`
-                    <button
-                      class="add-menu-item ${tool === item.id ? "active" : ""}"
-                      @click=${() => this._handleToolSelect(item.id)}
-                    >
-                      <ha-icon icon=${item.icon}></ha-icon>
-                      ${item.label}
-                    </button>
-                  `
-                )}
-              </div>
-            `
-          : null}
-      </div>
+      <!-- Add Menu (right side, hidden in viewing mode) -->
+      ${menuItems.length > 0 ? html`
+        <div class="add-button-container">
+          <button
+            class="add-button ${this._addMenuOpen ? "menu-open" : ""}"
+            @click=${this._toggleAddMenu}
+            title="Add element"
+          >
+            <ha-icon icon="mdi:plus"></ha-icon>
+          </button>
+          ${this._addMenuOpen
+            ? html`
+                <div class="add-menu">
+                  ${menuItems.map(
+                    (item) => html`
+                      <button
+                        class="add-menu-item ${tool === item.id ? "active" : ""}"
+                        @click=${() => this._handleToolSelect(item.id)}
+                      >
+                        <ha-icon icon=${item.icon}></ha-icon>
+                        ${item.label}
+                      </button>
+                    `
+                  )}
+                </div>
+              `
+            : null}
+        </div>
+      ` : null}
     `;
   }
 }

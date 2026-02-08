@@ -14,13 +14,12 @@ from ..models.automation_rule import VisualRule
 from ..models.device_placement import DevicePlacement
 from ..models.floor_plan import (
     Coordinates,
-    Door,
+    Edge,
     Floor,
     FloorPlan,
+    Node,
     Polygon,
     Room,
-    Wall,
-    Window,
 )
 from ..models.virtual_sensor import SensorBinding, VirtualSensorConfig
 
@@ -40,12 +39,12 @@ def async_register_websocket_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_rooms_add)
     websocket_api.async_register_command(hass, ws_rooms_update)
     websocket_api.async_register_command(hass, ws_rooms_delete)
-    websocket_api.async_register_command(hass, ws_walls_add)
-    websocket_api.async_register_command(hass, ws_walls_update)
-    websocket_api.async_register_command(hass, ws_walls_delete)
-    websocket_api.async_register_command(hass, ws_walls_batch_update)
-    websocket_api.async_register_command(hass, ws_doors_add)
-    websocket_api.async_register_command(hass, ws_windows_add)
+    websocket_api.async_register_command(hass, ws_edges_add)
+    websocket_api.async_register_command(hass, ws_edges_update)
+    websocket_api.async_register_command(hass, ws_edges_delete)
+    websocket_api.async_register_command(hass, ws_edges_split)
+    websocket_api.async_register_command(hass, ws_nodes_update)
+    websocket_api.async_register_command(hass, ws_nodes_merge)
     websocket_api.async_register_command(hass, ws_devices_place)
     websocket_api.async_register_command(hass, ws_devices_update)
     websocket_api.async_register_command(hass, ws_devices_remove)
@@ -405,65 +404,133 @@ def ws_rooms_delete(
         connection.send_error(msg["id"], "not_found", "Room not found")
 
 
-# ==================== Walls, Doors, Windows ====================
+# ==================== Edges & Nodes ====================
+
+SNAP_THRESHOLD = 1.0  # 1cm snap distance for node dedup
+
+
+def _find_nearby_node(floor: Floor, x: float, y: float) -> Node | None:
+    """Find an existing node within snap threshold."""
+    import math
+
+    for node in floor.nodes:
+        dist = math.sqrt((node.x - x) ** 2 + (node.y - y) ** 2)
+        if dist <= SNAP_THRESHOLD:
+            return node
+    return None
+
+
+def _get_or_create_node(floor: Floor, x: float, y: float) -> Node:
+    """Get existing nearby node or create a new one."""
+    existing = _find_nearby_node(floor, x, y)
+    if existing:
+        return existing
+    node = Node(x=x, y=y)
+    floor.nodes.append(node)
+    return node
+
+
+def _cleanup_orphan_nodes(floor: Floor) -> list[str]:
+    """Remove nodes that are not referenced by any edge. Returns removed IDs."""
+    referenced = set()
+    for edge in floor.edges:
+        referenced.add(edge.start_node)
+        referenced.add(edge.end_node)
+    new_nodes = []
+    removed = []
+    for n in floor.nodes:
+        if n.id in referenced:
+            new_nodes.append(n)
+        else:
+            removed.append(n.id)
+    floor.nodes = new_nodes
+    return removed
 
 
 @websocket_api.websocket_command(
     {
-        vol.Required("type"): f"{WS_PREFIX}/walls/add",
+        vol.Required("type"): f"{WS_PREFIX}/edges/add",
         vol.Required("floor_plan_id"): str,
         vol.Required("floor_id"): str,
         vol.Required("start"): dict,
         vol.Required("end"): dict,
+        vol.Optional("type", default="wall"): str,
         vol.Optional("thickness", default=10.0): vol.Coerce(float),
         vol.Optional("is_exterior", default=False): bool,
         vol.Optional("length_locked", default=False): bool,
         vol.Optional("direction", default="free"): str,
+        vol.Optional("angle_locked", default=False): bool,
     }
 )
 @callback
-def ws_walls_add(
+def ws_edges_add(
     hass: HomeAssistant,
     connection: websocket_api.ActiveConnection,
     msg: dict[str, Any],
 ) -> None:
-    """Add a wall to a floor."""
+    """Add an edge to a floor, auto-snapping to nearby nodes."""
     store = hass.data[DOMAIN]["store"]
-    wall = Wall(
-        start=Coordinates.from_dict(msg["start"]),
-        end=Coordinates.from_dict(msg["end"]),
+    floor_plan = store.get_floor_plan(msg["floor_plan_id"])
+    if not floor_plan:
+        connection.send_error(msg["id"], "not_found", "Floor plan not found")
+        return
+
+    floor = floor_plan.get_floor(msg["floor_id"])
+    if not floor:
+        connection.send_error(msg["id"], "not_found", "Floor not found")
+        return
+
+    start_coords = msg["start"]
+    end_coords = msg["end"]
+    start_node = _get_or_create_node(floor, float(start_coords["x"]), float(start_coords["y"]))
+    end_node = _get_or_create_node(floor, float(end_coords["x"]), float(end_coords["y"]))
+
+    edge = Edge(
+        start_node=start_node.id,
+        end_node=end_node.id,
+        type=msg["type"],
         thickness=msg["thickness"],
         is_exterior=msg["is_exterior"],
         length_locked=msg["length_locked"],
         direction=msg["direction"],
+        angle_locked=msg["angle_locked"],
     )
-    result = store.add_wall(msg["floor_plan_id"], msg["floor_id"], wall)
+    floor.edges.append(edge)
+
+    result = store.update_floor_plan(floor_plan)
     if result:
-        connection.send_result(msg["id"], result.to_dict())
+        connection.send_result(msg["id"], {
+            "edge": edge.to_dict(),
+            "nodes": [start_node.to_dict(), end_node.to_dict()],
+        })
     else:
-        connection.send_error(msg["id"], "not_found", "Floor not found")
+        connection.send_error(msg["id"], "add_failed", "Failed to add edge")
 
 
 @websocket_api.websocket_command(
     {
-        vol.Required("type"): f"{WS_PREFIX}/walls/update",
+        vol.Required("type"): f"{WS_PREFIX}/edges/update",
         vol.Required("floor_plan_id"): str,
         vol.Required("floor_id"): str,
-        vol.Required("wall_id"): str,
-        vol.Optional("start"): dict,
-        vol.Optional("end"): dict,
+        vol.Required("edge_id"): str,
+        vol.Optional("edge_type"): str,
         vol.Optional("thickness"): vol.Coerce(float),
+        vol.Optional("is_exterior"): bool,
         vol.Optional("length_locked"): bool,
         vol.Optional("direction"): str,
+        vol.Optional("angle_locked"): bool,
+        vol.Optional("swing_direction"): vol.Any(str, None),
+        vol.Optional("entity_id"): vol.Any(str, None),
+        vol.Optional("height"): vol.Any(vol.Coerce(float), None),
     }
 )
 @callback
-def ws_walls_update(
+def ws_edges_update(
     hass: HomeAssistant,
     connection: websocket_api.ActiveConnection,
     msg: dict[str, Any],
 ) -> None:
-    """Update a wall."""
+    """Update an edge's properties."""
     store = hass.data[DOMAIN]["store"]
     floor_plan = store.get_floor_plan(msg["floor_plan_id"])
     if not floor_plan:
@@ -475,44 +542,52 @@ def ws_walls_update(
         connection.send_error(msg["id"], "not_found", "Floor not found")
         return
 
-    wall = next((w for w in floor.walls if w.id == msg["wall_id"]), None)
-    if not wall:
-        connection.send_error(msg["id"], "not_found", "Wall not found")
+    edge = floor.get_edge(msg["edge_id"])
+    if not edge:
+        connection.send_error(msg["id"], "not_found", "Edge not found")
         return
 
-    if "start" in msg:
-        wall.start = Coordinates.from_dict(msg["start"])
-    if "end" in msg:
-        wall.end = Coordinates.from_dict(msg["end"])
+    if "edge_type" in msg:
+        edge.type = msg["edge_type"]
     if "thickness" in msg:
-        wall.thickness = msg["thickness"]
+        edge.thickness = msg["thickness"]
+    if "is_exterior" in msg:
+        edge.is_exterior = msg["is_exterior"]
     if "length_locked" in msg:
-        wall.length_locked = msg["length_locked"]
+        edge.length_locked = msg["length_locked"]
     if "direction" in msg:
-        wall.direction = msg["direction"]
+        edge.direction = msg["direction"]
+    if "angle_locked" in msg:
+        edge.angle_locked = msg["angle_locked"]
+    if "swing_direction" in msg:
+        edge.swing_direction = msg["swing_direction"]
+    if "entity_id" in msg:
+        edge.entity_id = msg["entity_id"]
+    if "height" in msg:
+        edge.height = msg["height"]
 
     result = store.update_floor_plan(floor_plan)
     if result:
-        connection.send_result(msg["id"], wall.to_dict())
+        connection.send_result(msg["id"], edge.to_dict())
     else:
-        connection.send_error(msg["id"], "update_failed", "Failed to update wall")
+        connection.send_error(msg["id"], "update_failed", "Failed to update edge")
 
 
 @websocket_api.websocket_command(
     {
-        vol.Required("type"): f"{WS_PREFIX}/walls/delete",
+        vol.Required("type"): f"{WS_PREFIX}/edges/delete",
         vol.Required("floor_plan_id"): str,
         vol.Required("floor_id"): str,
-        vol.Required("wall_id"): str,
+        vol.Required("edge_id"): str,
     }
 )
 @callback
-def ws_walls_delete(
+def ws_edges_delete(
     hass: HomeAssistant,
     connection: websocket_api.ActiveConnection,
     msg: dict[str, Any],
 ) -> None:
-    """Delete a wall."""
+    """Delete an edge and clean up orphan nodes."""
     store = hass.data[DOMAIN]["store"]
     floor_plan = store.get_floor_plan(msg["floor_plan_id"])
     if not floor_plan:
@@ -524,34 +599,49 @@ def ws_walls_delete(
         connection.send_error(msg["id"], "not_found", "Floor not found")
         return
 
-    wall_idx = next((i for i, w in enumerate(floor.walls) if w.id == msg["wall_id"]), None)
-    if wall_idx is None:
-        connection.send_error(msg["id"], "not_found", "Wall not found")
+    edge_idx = next(
+        (i for i, e in enumerate(floor.edges) if e.id == msg["edge_id"]), None
+    )
+    if edge_idx is None:
+        connection.send_error(msg["id"], "not_found", "Edge not found")
         return
 
-    floor.walls.pop(wall_idx)
+    floor.edges.pop(edge_idx)
+    removed_nodes = _cleanup_orphan_nodes(floor)
+
     result = store.update_floor_plan(floor_plan)
     if result:
-        connection.send_result(msg["id"], {"success": True})
+        connection.send_result(msg["id"], {
+            "success": True,
+            "removed_node_ids": removed_nodes,
+        })
     else:
-        connection.send_error(msg["id"], "delete_failed", "Failed to delete wall")
+        connection.send_error(msg["id"], "delete_failed", "Failed to delete edge")
 
 
 @websocket_api.websocket_command(
     {
-        vol.Required("type"): f"{WS_PREFIX}/walls/batch_update",
+        vol.Required("type"): f"{WS_PREFIX}/edges/split",
         vol.Required("floor_plan_id"): str,
         vol.Required("floor_id"): str,
-        vol.Required("updates"): list,  # List of {wall_id, start?, end?, thickness?, length_locked?, direction?}
+        vol.Required("edge_id"): str,
+        vol.Required("position"): vol.Coerce(float),
+        vol.Required("new_type"): str,
+        vol.Optional("width", default=80.0): vol.Coerce(float),
+        vol.Optional("swing_direction"): vol.Any(str, None),
+        vol.Optional("entity_id"): vol.Any(str, None),
+        vol.Optional("height"): vol.Any(vol.Coerce(float), None),
     }
 )
 @callback
-def ws_walls_batch_update(
+def ws_edges_split(
     hass: HomeAssistant,
     connection: websocket_api.ActiveConnection,
     msg: dict[str, Any],
 ) -> None:
-    """Batch update multiple walls atomically."""
+    """Split an edge to insert a door or window."""
+    import math
+
     store = hass.data[DOMAIN]["store"]
     floor_plan = store.get_floor_plan(msg["floor_plan_id"])
     if not floor_plan:
@@ -563,98 +653,178 @@ def ws_walls_batch_update(
         connection.send_error(msg["id"], "not_found", "Floor not found")
         return
 
-    updated_walls = []
+    edge = floor.get_edge(msg["edge_id"])
+    if not edge:
+        connection.send_error(msg["id"], "not_found", "Edge not found")
+        return
+
+    start_node = floor.get_node(edge.start_node)
+    end_node = floor.get_node(edge.end_node)
+    if not start_node or not end_node:
+        connection.send_error(msg["id"], "invalid_state", "Edge nodes not found")
+        return
+
+    dx = end_node.x - start_node.x
+    dy = end_node.y - start_node.y
+    edge_length = math.sqrt(dx * dx + dy * dy)
+    if edge_length == 0:
+        connection.send_error(msg["id"], "invalid_state", "Edge has zero length")
+        return
+
+    position = msg["position"]
+    width = msg["width"]
+    half_w = width / edge_length / 2.0
+    t_start = max(0.0, position - half_w)
+    t_end = min(1.0, position + half_w)
+
+    # Create the two boundary nodes
+    n1 = Node(x=start_node.x + t_start * dx, y=start_node.y + t_start * dy)
+    n2 = Node(x=start_node.x + t_end * dx, y=start_node.y + t_end * dy)
+    floor.nodes.extend([n1, n2])
+
+    # Build the 3 replacement edges
+    new_edges = []
+    if t_start > 1e-9:
+        new_edges.append(Edge(
+            start_node=edge.start_node,
+            end_node=n1.id,
+            type="wall",
+            thickness=edge.thickness,
+            is_exterior=edge.is_exterior,
+        ))
+    opening_edge = Edge(
+        start_node=n1.id,
+        end_node=n2.id,
+        type=msg["new_type"],
+        thickness=edge.thickness,
+        is_exterior=edge.is_exterior,
+        swing_direction=msg.get("swing_direction"),
+        entity_id=msg.get("entity_id"),
+        height=msg.get("height"),
+    )
+    new_edges.append(opening_edge)
+    if t_end < 1.0 - 1e-9:
+        new_edges.append(Edge(
+            start_node=n2.id,
+            end_node=edge.end_node,
+            type="wall",
+            thickness=edge.thickness,
+            is_exterior=edge.is_exterior,
+        ))
+
+    # Replace old edge with new edges
+    floor.edges = [e for e in floor.edges if e.id != edge.id] + new_edges
+
+    result = store.update_floor_plan(floor_plan)
+    if result:
+        connection.send_result(msg["id"], {
+            "edges": [e.to_dict() for e in new_edges],
+            "nodes": [n1.to_dict(), n2.to_dict()],
+        })
+    else:
+        connection.send_error(msg["id"], "split_failed", "Failed to split edge")
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{WS_PREFIX}/nodes/update",
+        vol.Required("floor_plan_id"): str,
+        vol.Required("floor_id"): str,
+        vol.Required("updates"): list,
+    }
+)
+@callback
+def ws_nodes_update(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Update node positions atomically."""
+    store = hass.data[DOMAIN]["store"]
+    floor_plan = store.get_floor_plan(msg["floor_plan_id"])
+    if not floor_plan:
+        connection.send_error(msg["id"], "not_found", "Floor plan not found")
+        return
+
+    floor = floor_plan.get_floor(msg["floor_id"])
+    if not floor:
+        connection.send_error(msg["id"], "not_found", "Floor not found")
+        return
+
+    updated_nodes = []
     for update in msg["updates"]:
-        wall = next((w for w in floor.walls if w.id == update["wall_id"]), None)
-        if not wall:
+        node = floor.get_node(update["node_id"])
+        if not node:
             connection.send_error(
-                msg["id"], "not_found", f"Wall {update['wall_id']} not found"
+                msg["id"], "not_found", f"Node {update['node_id']} not found"
             )
             return
-
-        if "start" in update:
-            wall.start = Coordinates.from_dict(update["start"])
-        if "end" in update:
-            wall.end = Coordinates.from_dict(update["end"])
-        if "thickness" in update:
-            wall.thickness = update["thickness"]
-        if "length_locked" in update:
-            wall.length_locked = update["length_locked"]
-        if "direction" in update:
-            wall.direction = update["direction"]
-        updated_walls.append(wall)
+        node.x = float(update["x"])
+        node.y = float(update["y"])
+        updated_nodes.append(node)
 
     result = store.update_floor_plan(floor_plan)
     if result:
-        connection.send_result(msg["id"], [w.to_dict() for w in updated_walls])
+        connection.send_result(msg["id"], [n.to_dict() for n in updated_nodes])
     else:
-        connection.send_error(msg["id"], "update_failed", "Failed to batch update walls")
+        connection.send_error(msg["id"], "update_failed", "Failed to update nodes")
 
 
 @websocket_api.websocket_command(
     {
-        vol.Required("type"): f"{WS_PREFIX}/doors/add",
+        vol.Required("type"): f"{WS_PREFIX}/nodes/merge",
         vol.Required("floor_plan_id"): str,
         vol.Required("floor_id"): str,
-        vol.Required("wall_id"): str,
-        vol.Optional("position", default=0.5): vol.Coerce(float),
-        vol.Optional("width", default=80.0): vol.Coerce(float),
-        vol.Optional("swing_direction", default="left"): str,
-        vol.Optional("entity_id"): vol.Any(str, None),
+        vol.Required("node_id_keep"): str,
+        vol.Required("node_id_remove"): str,
     }
 )
 @callback
-def ws_doors_add(
+def ws_nodes_merge(
     hass: HomeAssistant,
     connection: websocket_api.ActiveConnection,
     msg: dict[str, Any],
 ) -> None:
-    """Add a door to a floor."""
+    """Merge two nodes, rewriting edges and removing degenerate ones."""
     store = hass.data[DOMAIN]["store"]
-    door = Door(
-        wall_id=msg["wall_id"],
-        position=msg["position"],
-        width=msg["width"],
-        swing_direction=msg["swing_direction"],
-        entity_id=msg.get("entity_id"),
-    )
-    result = store.add_door(msg["floor_plan_id"], msg["floor_id"], door)
-    if result:
-        connection.send_result(msg["id"], result.to_dict())
-    else:
-        connection.send_error(msg["id"], "not_found", "Floor not found")
+    floor_plan = store.get_floor_plan(msg["floor_plan_id"])
+    if not floor_plan:
+        connection.send_error(msg["id"], "not_found", "Floor plan not found")
+        return
 
-
-@websocket_api.websocket_command(
-    {
-        vol.Required("type"): f"{WS_PREFIX}/windows/add",
-        vol.Required("floor_plan_id"): str,
-        vol.Required("floor_id"): str,
-        vol.Required("wall_id"): str,
-        vol.Optional("position", default=0.5): vol.Coerce(float),
-        vol.Optional("width", default=100.0): vol.Coerce(float),
-        vol.Optional("height", default=120.0): vol.Coerce(float),
-    }
-)
-@callback
-def ws_windows_add(
-    hass: HomeAssistant,
-    connection: websocket_api.ActiveConnection,
-    msg: dict[str, Any],
-) -> None:
-    """Add a window to a floor."""
-    store = hass.data[DOMAIN]["store"]
-    window = Window(
-        wall_id=msg["wall_id"],
-        position=msg["position"],
-        width=msg["width"],
-        height=msg["height"],
-    )
-    result = store.add_window(msg["floor_plan_id"], msg["floor_id"], window)
-    if result:
-        connection.send_result(msg["id"], result.to_dict())
-    else:
+    floor = floor_plan.get_floor(msg["floor_id"])
+    if not floor:
         connection.send_error(msg["id"], "not_found", "Floor not found")
+        return
+
+    keep_id = msg["node_id_keep"]
+    remove_id = msg["node_id_remove"]
+
+    if not floor.get_node(keep_id):
+        connection.send_error(msg["id"], "not_found", "Keep node not found")
+        return
+    if not floor.get_node(remove_id):
+        connection.send_error(msg["id"], "not_found", "Remove node not found")
+        return
+
+    # Rewrite all edges referencing the removed node
+    for edge in floor.edges:
+        if edge.start_node == remove_id:
+            edge.start_node = keep_id
+        if edge.end_node == remove_id:
+            edge.end_node = keep_id
+
+    # Remove degenerate edges (start == end)
+    floor.edges = [e for e in floor.edges if e.start_node != e.end_node]
+
+    # Remove the merged-away node
+    floor.nodes = [n for n in floor.nodes if n.id != remove_id]
+
+    result = store.update_floor_plan(floor_plan)
+    if result:
+        connection.send_result(msg["id"], {"success": True, "removed_node_id": remove_id})
+    else:
+        connection.send_error(msg["id"], "merge_failed", "Failed to merge nodes")
 
 
 # ==================== Device Placements ====================

@@ -1,477 +1,464 @@
 import { expect } from '@open-wc/testing';
 import {
-  buildConnectionGraph,
-  solveWallMovement,
-  solveWallLengthChange,
+  buildNodeGraph,
+  solveNodeMove,
+  solveEdgeLengthChange,
   previewLengthChange,
-  previewEndpointDrag,
-  snapWallToConstraint,
+  previewNodeDrag,
+  snapEdgeToConstraint,
   solveConstraintSnap,
 } from './wall-solver.js';
-import type { Wall, Coordinates, WallDirection } from '../types.js';
+import type { Node, Edge, WallDirection, EdgeType } from '../types.js';
+import { buildNodeMap } from './node-graph.js';
 
-// Helper to create a wall
-function createWall(
+// Helper to create a node
+function createNode(id: string, x: number, y: number): Node {
+  return { id, x, y };
+}
+
+// Helper to create an edge
+function createEdge(
   id: string,
-  start: Coordinates,
-  end: Coordinates,
-  opts?: { direction?: WallDirection; length_locked?: boolean }
-): Wall {
+  startNode: string,
+  endNode: string,
+  opts?: { direction?: WallDirection; length_locked?: boolean; angle_locked?: boolean; type?: EdgeType }
+): Edge {
   return {
     id,
-    start,
-    end,
+    start_node: startNode,
+    end_node: endNode,
+    type: opts?.type ?? 'wall',
     thickness: 10,
     is_exterior: false,
     length_locked: opts?.length_locked ?? false,
     direction: opts?.direction ?? 'free',
+    angle_locked: opts?.angle_locked ?? false,
   };
 }
 
-// Helper to check if two coordinates are approximately equal
-function coordsEqual(a: Coordinates, b: Coordinates, tolerance = 0.01): boolean {
+// Helper to find a node update
+function findNodeUpdate(updates: Array<{ nodeId: string; x: number; y: number }>, nodeId: string) {
+  return updates.find(u => u.nodeId === nodeId);
+}
+
+// Helper to check if two positions are approximately equal
+function posEqual(a: { x: number; y: number }, b: { x: number; y: number }, tolerance = 0.01): boolean {
   return Math.abs(a.x - b.x) < tolerance && Math.abs(a.y - b.y) < tolerance;
 }
 
-describe('buildConnectionGraph', () => {
-  it('should create a graph from walls', () => {
-    const walls = [
-      createWall('w1', { x: 0, y: 0 }, { x: 100, y: 0 }),
-      createWall('w2', { x: 100, y: 0 }, { x: 100, y: 100 }),
+describe('buildNodeGraph', () => {
+  it('should create a graph from nodes and edges', () => {
+    const nodes = [createNode('n1', 0, 0), createNode('n2', 100, 0), createNode('n3', 100, 100)];
+    const edges = [
+      createEdge('e1', 'n1', 'n2'),
+      createEdge('e2', 'n2', 'n3'),
     ];
 
-    const graph = buildConnectionGraph(walls);
+    const graph = buildNodeGraph(nodes, edges);
 
-    expect(graph.walls.size).to.equal(2);
-    expect(graph.endpoints.size).to.equal(3); // 3 unique endpoints
+    expect(graph.edges.size).to.equal(2);
+    expect(graph.nodes.size).to.equal(3);
   });
 
-  it('should group walls that share an endpoint', () => {
-    const walls = [
-      createWall('w1', { x: 0, y: 0 }, { x: 100, y: 0 }),
-      createWall('w2', { x: 100, y: 0 }, { x: 100, y: 100 }),
-      createWall('w3', { x: 100, y: 0 }, { x: 200, y: 0 }),
+  it('should group edges that share a node', () => {
+    const nodes = [
+      createNode('n1', 0, 0), createNode('n2', 100, 0),
+      createNode('n3', 100, 100), createNode('n4', 200, 0),
+    ];
+    const edges = [
+      createEdge('e1', 'n1', 'n2'),
+      createEdge('e2', 'n2', 'n3'),
+      createEdge('e3', 'n2', 'n4'),
     ];
 
-    const graph = buildConnectionGraph(walls);
+    const graph = buildNodeGraph(nodes, edges);
 
-    // The endpoint at (100, 0) should have 3 wall references
-    const sharedEndpoint = graph.endpoints.get('100,0');
-    expect(sharedEndpoint).to.exist;
-    expect(sharedEndpoint!.length).to.equal(3);
+    // Node n2 should have 3 edge references
+    const n2Edges = graph.nodeToEdges.get('n2');
+    expect(n2Edges).to.exist;
+    expect(n2Edges!.length).to.equal(3);
   });
 
-  it('should handle isolated walls', () => {
-    const walls = [
-      createWall('w1', { x: 0, y: 0 }, { x: 100, y: 0 }),
-      createWall('w2', { x: 200, y: 200 }, { x: 300, y: 200 }),
+  it('should handle isolated edges', () => {
+    const nodes = [
+      createNode('n1', 0, 0), createNode('n2', 100, 0),
+      createNode('n3', 200, 200), createNode('n4', 300, 200),
+    ];
+    const edges = [
+      createEdge('e1', 'n1', 'n2'),
+      createEdge('e2', 'n3', 'n4'),
     ];
 
-    const graph = buildConnectionGraph(walls);
+    const graph = buildNodeGraph(nodes, edges);
 
-    expect(graph.walls.size).to.equal(2);
-    expect(graph.endpoints.size).to.equal(4); // 4 unique endpoints, no sharing
+    expect(graph.edges.size).to.equal(2);
+    // Each node should have exactly 1 edge reference
+    expect(graph.nodeToEdges.get('n1')!.length).to.equal(1);
+    expect(graph.nodeToEdges.get('n4')!.length).to.equal(1);
   });
 });
 
-describe('solveWallMovement', () => {
-  it('should move all walls connected to an endpoint', () => {
-    const walls = [
-      createWall('w1', { x: 0, y: 0 }, { x: 100, y: 0 }),
-      createWall('w2', { x: 100, y: 0 }, { x: 100, y: 100 }),
+describe('solveNodeMove', () => {
+  it('should move all edges connected to a node', () => {
+    const nodes = [createNode('n1', 0, 0), createNode('n2', 100, 0), createNode('n3', 100, 100)];
+    const edges = [
+      createEdge('e1', 'n1', 'n2'),
+      createEdge('e2', 'n2', 'n3'),
     ];
 
-    const graph = buildConnectionGraph(walls);
-    const result = solveWallMovement(
-      graph,
-      ['w1', 'w2'],
-      'end',
-      { x: 100, y: 0 },
-      { x: 150, y: 0 }
-    );
+    const graph = buildNodeGraph(nodes, edges);
+    const result = solveNodeMove(graph, 'n2', 150, 0);
 
     expect(result.blocked).to.be.false;
-    expect(result.updates.length).to.equal(2);
-
-    // Both walls should have their shared endpoint moved
-    const w1Update = result.updates.find(u => u.wallId === 'w1');
-    const w2Update = result.updates.find(u => u.wallId === 'w2');
-
-    expect(w1Update).to.exist;
-    expect(w2Update).to.exist;
-    expect(coordsEqual(w1Update!.newEnd, { x: 150, y: 0 })).to.be.true;
-    expect(coordsEqual(w2Update!.newStart, { x: 150, y: 0 })).to.be.true;
+    // n2 should be moved
+    const n2Update = findNodeUpdate(result.updates, 'n2');
+    expect(n2Update).to.exist;
+    expect(n2Update!.x).to.equal(150);
+    expect(n2Update!.y).to.equal(0);
   });
 
-  it('should respect horizontal direction by adjusting other endpoint', () => {
-    const walls = [
-      createWall('w1', { x: 0, y: 0 }, { x: 100, y: 0 }, { direction: 'horizontal' }),
-    ];
+  it('should respect horizontal direction by adjusting other node', () => {
+    const nodes = [createNode('n1', 0, 0), createNode('n2', 100, 0)];
+    const edges = [createEdge('e1', 'n1', 'n2', { direction: 'horizontal' })];
 
-    const graph = buildConnectionGraph(walls);
-    const result = solveWallMovement(
-      graph,
-      ['w1'],
-      'end',
-      { x: 100, y: 0 },
-      { x: 150, y: 50 } // Try to move diagonally
-    );
+    const graph = buildNodeGraph(nodes, edges);
+    // Move n2 diagonally
+    const result = solveNodeMove(graph, 'n2', 150, 50);
 
     expect(result.blocked).to.be.false;
-    expect(result.updates.length).to.equal(1);
 
-    // The moved endpoint goes to target position
-    const update = result.updates[0];
-    expect(update.newEnd.x).to.equal(150);
-    expect(update.newEnd.y).to.equal(50);
+    const n2Update = findNodeUpdate(result.updates, 'n2');
+    expect(n2Update!.x).to.equal(150);
+    expect(n2Update!.y).to.equal(50);
 
-    // The other endpoint (start) adjusts to keep wall horizontal
-    expect(update.newStart.x).to.equal(0); // X unchanged
-    expect(update.newStart.y).to.equal(50); // Y matches new end Y
-
-    // Wall should still be horizontal
-    expect(update.newStart.y).to.equal(update.newEnd.y);
+    // n1 should adjust Y to match (stay horizontal)
+    const n1Update = findNodeUpdate(result.updates, 'n1');
+    expect(n1Update).to.exist;
+    expect(n1Update!.x).to.equal(0);
+    expect(n1Update!.y).to.equal(50);
   });
 
-  it('should respect vertical direction by adjusting other endpoint', () => {
-    const walls = [
-      createWall('w1', { x: 0, y: 0 }, { x: 0, y: 100 }, { direction: 'vertical' }),
-    ];
+  it('should respect vertical direction by adjusting other node', () => {
+    const nodes = [createNode('n1', 0, 0), createNode('n2', 0, 100)];
+    const edges = [createEdge('e1', 'n1', 'n2', { direction: 'vertical' })];
 
-    const graph = buildConnectionGraph(walls);
-    const result = solveWallMovement(
-      graph,
-      ['w1'],
-      'end',
-      { x: 0, y: 100 },
-      { x: 50, y: 150 } // Try to move diagonally
-    );
+    const graph = buildNodeGraph(nodes, edges);
+    const result = solveNodeMove(graph, 'n2', 50, 150);
 
     expect(result.blocked).to.be.false;
-    expect(result.updates.length).to.equal(1);
 
-    // The moved endpoint goes to target position
-    const update = result.updates[0];
-    expect(update.newEnd.x).to.equal(50);
-    expect(update.newEnd.y).to.equal(150);
+    const n2Update = findNodeUpdate(result.updates, 'n2');
+    expect(n2Update!.x).to.equal(50);
+    expect(n2Update!.y).to.equal(150);
 
-    // The other endpoint (start) adjusts to keep wall vertical
-    expect(update.newStart.x).to.equal(50); // X matches new end X
-    expect(update.newStart.y).to.equal(0); // Y unchanged
-
-    // Wall should still be vertical
-    expect(update.newStart.x).to.equal(update.newEnd.x);
+    // n1 should adjust X to match (stay vertical)
+    const n1Update = findNodeUpdate(result.updates, 'n1');
+    expect(n1Update).to.exist;
+    expect(n1Update!.x).to.equal(50);
+    expect(n1Update!.y).to.equal(0);
   });
 
-  it('should respect length_locked by moving other endpoint', () => {
-    const walls = [
-      createWall('w1', { x: 0, y: 0 }, { x: 100, y: 0 }, { length_locked: true }),
-    ];
+  it('should respect length_locked by moving other node', () => {
+    const nodes = [createNode('n1', 0, 0), createNode('n2', 100, 0)];
+    const edges = [createEdge('e1', 'n1', 'n2', { length_locked: true })];
 
-    const graph = buildConnectionGraph(walls);
-    const result = solveWallMovement(
-      graph,
-      ['w1'],
-      'end',
-      { x: 100, y: 0 },
-      { x: 150, y: 0 } // Try to extend the wall
-    );
+    const graph = buildNodeGraph(nodes, edges);
+    const result = solveNodeMove(graph, 'n2', 150, 0);
 
     expect(result.blocked).to.be.false;
-    expect(result.updates.length).to.equal(1);
 
-    // The moved endpoint goes to target position
-    const update = result.updates[0];
-    expect(update.newEnd.x).to.equal(150);
-    expect(update.newEnd.y).to.equal(0);
+    const n2Update = findNodeUpdate(result.updates, 'n2');
+    expect(n2Update!.x).to.equal(150);
+    expect(n2Update!.y).to.equal(0);
 
-    // The other endpoint moves to maintain original length of 100
-    expect(update.newStart.x).to.be.closeTo(50, 0.01);
-    expect(update.newStart.y).to.be.closeTo(0, 0.01);
+    // n1 should move to maintain length 100
+    const n1Update = findNodeUpdate(result.updates, 'n1');
+    expect(n1Update).to.exist;
+    expect(n1Update!.x).to.be.closeTo(50, 0.01);
+    expect(n1Update!.y).to.be.closeTo(0, 0.01);
 
     // Length should remain 100
     const newLength = Math.sqrt(
-      Math.pow(update.newEnd.x - update.newStart.x, 2) +
-      Math.pow(update.newEnd.y - update.newStart.y, 2)
+      Math.pow(n2Update!.x - n1Update!.x, 2) +
+      Math.pow(n2Update!.y - n1Update!.y, 2)
     );
     expect(newLength).to.be.closeTo(100, 0.01);
   });
 
-  it('should propagate constrained other-endpoint movement to connected walls', () => {
-    const walls = [
-      createWall('w1', { x: 0, y: 0 }, { x: 100, y: 0 }, { direction: 'horizontal' }),
-      createWall('w2', { x: 0, y: -100 }, { x: 0, y: 0 }), // connected at w1's start
+  it('should propagate constrained node movement to connected edges', () => {
+    const nodes = [
+      createNode('n1', 0, 0), createNode('n2', 100, 0), createNode('n3', 0, -100),
+    ];
+    const edges = [
+      createEdge('e1', 'n1', 'n2', { direction: 'horizontal' }),
+      createEdge('e2', 'n3', 'n1'), // connected at n1
     ];
 
-    const graph = buildConnectionGraph(walls);
-    const result = solveWallMovement(
-      graph,
-      ['w1'],
-      'end',
-      { x: 100, y: 0 },
-      { x: 100, y: 50 } // drag end down
-    );
+    const graph = buildNodeGraph(nodes, edges);
+    // Drag n2 down
+    const result = solveNodeMove(graph, 'n2', 100, 50);
 
     expect(result.blocked).to.be.false;
 
-    const w1Update = result.updates.find(u => u.wallId === 'w1')!;
-    const w2Update = result.updates.find(u => u.wallId === 'w2')!;
+    const n1Update = findNodeUpdate(result.updates, 'n1')!;
+    const n3Update = findNodeUpdate(result.updates, 'n3');
 
-    // w1 stays horizontal: both Y = 50
-    expect(w1Update.newStart.y).to.equal(50);
-    expect(w1Update.newEnd.y).to.equal(50);
+    // e1 stays horizontal: n1 Y should be 50
+    expect(n1Update.y).to.equal(50);
+    expect(n1Update.x).to.equal(0);
 
-    // w2's end must follow w1's start to stay connected
-    expect(coordsEqual(w2Update.newEnd, w1Update.newStart)).to.be.true;
-    expect(w2Update.newEnd.y).to.equal(50);
-
-    // w2's start stays put (free direction, only shared endpoint moves)
-    expect(w2Update.newStart.x).to.equal(0);
-    expect(w2Update.newStart.y).to.equal(-100);
+    // e2's end (n1) moved, so n3 should also update (but free, so only shared endpoint moves)
+    // n3 is free, so it stays at original position
+    // Actually n3 is the OTHER end - for a free edge, the other end doesn't move
+    // The propagation: n2 moved -> e1 horizontal -> n1 moves to (0,50) -> e2 -> n3 is other end, free, no move
+    expect(n3Update).to.be.undefined; // n3 doesn't move because e2 is free
   });
 
   it('should handle combined length_locked + direction', () => {
-    // Horizontal wall with locked length: moving endpoint diagonally should
-    // keep the wall horizontal AND preserve its original length
-    const walls = [
-      createWall('w1', { x: 0, y: 0 }, { x: 100, y: 0 }, { direction: 'horizontal', length_locked: true }),
-    ];
+    const nodes = [createNode('n1', 0, 0), createNode('n2', 100, 0)];
+    const edges = [createEdge('e1', 'n1', 'n2', { direction: 'horizontal', length_locked: true })];
 
-    const graph = buildConnectionGraph(walls);
-    const result = solveWallMovement(
-      graph,
-      ['w1'],
-      'end',
-      { x: 100, y: 0 },
-      { x: 200, y: 50 } // Move diagonally
-    );
+    const graph = buildNodeGraph(nodes, edges);
+    const result = solveNodeMove(graph, 'n2', 200, 50);
 
     expect(result.blocked).to.be.false;
-    expect(result.updates.length).to.equal(1);
 
-    const update = result.updates[0];
+    const n2Update = findNodeUpdate(result.updates, 'n2')!;
+    const n1Update = findNodeUpdate(result.updates, 'n1')!;
 
-    // The moved endpoint goes to target position
-    expect(update.newEnd.x).to.equal(200);
-    expect(update.newEnd.y).to.equal(50);
+    expect(n2Update.x).to.equal(200);
+    expect(n2Update.y).to.equal(50);
 
-    // Direction applied first: other endpoint Y matches moved endpoint Y
-    // Length lock applied second: distance scaled to original 100
-
-    // Wall should be horizontal (same Y)
-    expect(update.newStart.y).to.equal(50);
+    // Horizontal: same Y
+    expect(n1Update.y).to.equal(50);
 
     // Length should be preserved at 100
     const newLength = Math.sqrt(
-      Math.pow(update.newEnd.x - update.newStart.x, 2) +
-      Math.pow(update.newEnd.y - update.newStart.y, 2)
+      Math.pow(n2Update.x - n1Update.x, 2) +
+      Math.pow(n2Update.y - n1Update.y, 2)
     );
     expect(newLength).to.be.closeTo(100, 0.01);
 
-    // Start should be at (100, 50) to keep horizontal + length 100
-    expect(update.newStart.x).to.be.closeTo(100, 0.01);
+    // n1 should be at (100, 50)
+    expect(n1Update.x).to.be.closeTo(100, 0.01);
   });
 });
 
-describe('solveWallLengthChange', () => {
-  it('should extend wall from center', () => {
-    const walls = [
-      createWall('w1', { x: 0, y: 0 }, { x: 100, y: 0 }),
-    ];
+describe('solveEdgeLengthChange', () => {
+  it('should extend edge from center', () => {
+    const nodes = [createNode('n1', 0, 0), createNode('n2', 100, 0)];
+    const edges = [createEdge('e1', 'n1', 'n2')];
 
-    const graph = buildConnectionGraph(walls);
-    const result = solveWallLengthChange(graph, 'w1', 200);
+    const graph = buildNodeGraph(nodes, edges);
+    const result = solveEdgeLengthChange(graph, 'e1', 200);
 
     expect(result.blocked).to.be.false;
-    expect(result.updates.length).to.equal(1);
 
-    const update = result.updates[0];
+    const n1Update = findNodeUpdate(result.updates, 'n1')!;
+    const n2Update = findNodeUpdate(result.updates, 'n2')!;
+
     // Center should remain at (50, 0)
-    const newCenterX = (update.newStart.x + update.newEnd.x) / 2;
-    const newCenterY = (update.newStart.y + update.newEnd.y) / 2;
+    const newCenterX = (n1Update.x + n2Update.x) / 2;
+    const newCenterY = (n1Update.y + n2Update.y) / 2;
     expect(newCenterX).to.be.closeTo(50, 0.01);
     expect(newCenterY).to.be.closeTo(0, 0.01);
 
     // New length should be 200
     const newLength = Math.sqrt(
-      Math.pow(update.newEnd.x - update.newStart.x, 2) +
-      Math.pow(update.newEnd.y - update.newStart.y, 2)
+      Math.pow(n2Update.x - n1Update.x, 2) +
+      Math.pow(n2Update.y - n1Update.y, 2)
     );
     expect(newLength).to.be.closeTo(200, 0.01);
   });
 
-  it('should push connected walls when extending and they stay connected', () => {
-    // Two walls forming an L shape
-    const walls = [
-      createWall('w1', { x: 0, y: 0 }, { x: 100, y: 0 }),
-      createWall('w2', { x: 100, y: 0 }, { x: 100, y: 100 }),
+  it('should push connected edges when extending and stay connected', () => {
+    const nodes = [
+      createNode('n1', 0, 0), createNode('n2', 100, 0), createNode('n3', 100, 100),
+    ];
+    const edges = [
+      createEdge('e1', 'n1', 'n2'),
+      createEdge('e2', 'n2', 'n3'),
     ];
 
-    const graph = buildConnectionGraph(walls);
-    const result = solveWallLengthChange(graph, 'w1', 200);
+    const graph = buildNodeGraph(nodes, edges);
+    const result = solveEdgeLengthChange(graph, 'e1', 200);
 
     expect(result.blocked).to.be.false;
-    expect(result.updates.length).to.equal(2);
 
-    const w1Update = result.updates.find(u => u.wallId === 'w1');
-    const w2Update = result.updates.find(u => u.wallId === 'w2');
+    const n1Update = findNodeUpdate(result.updates, 'n1')!;
+    const n2Update = findNodeUpdate(result.updates, 'n2')!;
 
-    expect(w1Update).to.exist;
-    expect(w2Update).to.exist;
+    // n2 should have moved to ~150
+    expect(n2Update.x).to.be.closeTo(150, 0.01);
 
-    // CRITICAL: w1's end and w2's start should still be connected
-    expect(coordsEqual(w1Update!.newEnd, w2Update!.newStart)).to.be.true;
-
-    expect(w1Update!.newEnd.x).to.be.closeTo(150, 0.01);
-    expect(w2Update!.newStart.x).to.be.closeTo(150, 0.01);
+    // n3 should also get an update since n2 moved and e2 connects them
+    // (free edge, so n3 stays in place - the "other" end doesn't move for free edges)
+    // Actually, for free edges, moving the shared endpoint doesn't move the other end
   });
 
-  it('should keep vertical wall vertical when connected wall extends', () => {
-    const walls = [
-      createWall('w1', { x: 0, y: 0 }, { x: 100, y: 0 }),
-      createWall('w2', { x: 100, y: 0 }, { x: 100, y: 100 }, { direction: 'vertical' }),
+  it('should keep vertical edge vertical when connected edge extends', () => {
+    const nodes = [
+      createNode('n1', 0, 0), createNode('n2', 100, 0), createNode('n3', 100, 100),
+    ];
+    const edges = [
+      createEdge('e1', 'n1', 'n2'),
+      createEdge('e2', 'n2', 'n3', { direction: 'vertical' }),
     ];
 
-    const graph = buildConnectionGraph(walls);
-    const result = solveWallLengthChange(graph, 'w1', 200);
+    const graph = buildNodeGraph(nodes, edges);
+    const result = solveEdgeLengthChange(graph, 'e1', 200);
 
     expect(result.blocked).to.be.false;
-    expect(result.updates.length).to.equal(2);
 
-    const w1Update = result.updates.find(u => u.wallId === 'w1');
-    const w2Update = result.updates.find(u => u.wallId === 'w2');
+    const n2Update = findNodeUpdate(result.updates, 'n2')!;
+    const n3Update = findNodeUpdate(result.updates, 'n3');
 
-    // Walls should stay connected
-    expect(coordsEqual(w1Update!.newEnd, w2Update!.newStart)).to.be.true;
-
-    // w2 should still be vertical (both points have same X)
-    expect(w2Update!.newStart.x).to.equal(w2Update!.newEnd.x);
-    expect(w2Update!.newStart.x).to.be.closeTo(150, 0.01);
-    expect(w2Update!.newEnd.x).to.be.closeTo(150, 0.01);
+    // n2 moved, e2 is vertical, so n3's X should match n2's new X
+    expect(n3Update).to.exist;
+    expect(n3Update!.x).to.equal(n2Update.x);
+    expect(n3Update!.x).to.be.closeTo(150, 0.01);
   });
 
-  it('should block length change on length-locked wall', () => {
-    const walls = [
-      createWall('w1', { x: 0, y: 0 }, { x: 100, y: 0 }, { length_locked: true }),
-    ];
+  it('should block length change on length-locked edge', () => {
+    const nodes = [createNode('n1', 0, 0), createNode('n2', 100, 0)];
+    const edges = [createEdge('e1', 'n1', 'n2', { length_locked: true })];
 
-    const graph = buildConnectionGraph(walls);
-    const result = solveWallLengthChange(graph, 'w1', 200);
+    const graph = buildNodeGraph(nodes, edges);
+    const result = solveEdgeLengthChange(graph, 'e1', 200);
 
     expect(result.blocked).to.be.true;
-    expect(result.blockedBy).to.equal('w1');
+    expect(result.blockedBy).to.equal('e1');
   });
 
   it('should preserve angle when changing length', () => {
-    // Wall at 45 degrees
-    const walls = [
-      createWall('w1', { x: 0, y: 0 }, { x: 100, y: 100 }),
-    ];
+    // Edge at 45 degrees
+    const nodes = [createNode('n1', 0, 0), createNode('n2', 100, 100)];
+    const edges = [createEdge('e1', 'n1', 'n2')];
 
-    const graph = buildConnectionGraph(walls);
-    const result = solveWallLengthChange(graph, 'w1', 200);
+    const graph = buildNodeGraph(nodes, edges);
+    const result = solveEdgeLengthChange(graph, 'e1', 200);
 
     expect(result.blocked).to.be.false;
-    const update = result.updates[0];
+    const n1Update = findNodeUpdate(result.updates, 'n1')!;
+    const n2Update = findNodeUpdate(result.updates, 'n2')!;
 
     const originalAngle = Math.atan2(100, 100);
     const newAngle = Math.atan2(
-      update.newEnd.y - update.newStart.y,
-      update.newEnd.x - update.newStart.x
+      n2Update.y - n1Update.y,
+      n2Update.x - n1Update.x
     );
     expect(newAngle).to.be.closeTo(originalAngle, 0.01);
   });
 });
 
 describe('previewLengthChange', () => {
-  it('should return preview without modifying walls', () => {
-    const walls = [
-      createWall('w1', { x: 0, y: 0 }, { x: 100, y: 0 }),
-    ];
+  it('should return preview without modifying nodes', () => {
+    const nodes = [createNode('n1', 0, 0), createNode('n2', 100, 0)];
+    const edges = [createEdge('e1', 'n1', 'n2')];
 
-    const preview = previewLengthChange(walls, 'w1', 200);
+    const preview = previewLengthChange(nodes, edges, 'e1', 200);
 
-    expect(preview.size).to.equal(1);
-    expect(preview.has('w1')).to.be.true;
+    expect(preview.size).to.be.greaterThan(0);
+    expect(preview.has('n1')).to.be.true;
 
-    // Original wall should be unchanged
-    expect(walls[0].start.x).to.equal(0);
-    expect(walls[0].end.x).to.equal(100);
+    // Original nodes should be unchanged
+    expect(nodes[0].x).to.equal(0);
+    expect(nodes[1].x).to.equal(100);
   });
 });
 
-describe('previewEndpointDrag', () => {
-  it('should return preview of endpoint drag', () => {
-    const walls = [
-      createWall('w1', { x: 0, y: 0 }, { x: 100, y: 0 }),
-      createWall('w2', { x: 100, y: 0 }, { x: 100, y: 100 }),
+describe('previewNodeDrag', () => {
+  it('should return preview of node drag', () => {
+    const nodes = [
+      createNode('n1', 0, 0), createNode('n2', 100, 0), createNode('n3', 100, 100),
+    ];
+    const edges = [
+      createEdge('e1', 'n1', 'n2'),
+      createEdge('e2', 'n2', 'n3'),
     ];
 
-    const preview = previewEndpointDrag(
-      walls,
-      { x: 100, y: 0 },
-      { x: 150, y: 0 },
-      ['w1', 'w2']
-    );
+    const preview = previewNodeDrag(nodes, edges, 'n2', 150, 0);
 
-    expect(preview.size).to.equal(2);
-    expect(preview.has('w1')).to.be.true;
-    expect(preview.has('w2')).to.be.true;
+    expect(preview.size).to.be.greaterThan(0);
+    expect(preview.has('n2')).to.be.true;
   });
 });
 
-describe('snapWallToConstraint', () => {
+describe('snapEdgeToConstraint', () => {
   it('should return null for free direction', () => {
-    const wall = createWall('w1', { x: 0, y: 0 }, { x: 100, y: 50 });
-    expect(snapWallToConstraint(wall, 'free')).to.be.null;
+    const nodes = [createNode('n1', 0, 0), createNode('n2', 100, 50)];
+    const edges = [createEdge('e1', 'n1', 'n2')];
+    const nodeMap = buildNodeMap(nodes);
+    expect(snapEdgeToConstraint(edges[0], 'free', nodeMap)).to.be.null;
   });
 
-  it('should snap diagonal wall to horizontal', () => {
-    const wall = createWall('w1', { x: 0, y: 0 }, { x: 100, y: 50 });
-    const result = snapWallToConstraint(wall, 'horizontal');
+  it('should snap diagonal edge to horizontal', () => {
+    const nodes = [createNode('n1', 0, 0), createNode('n2', 100, 50)];
+    const edges = [createEdge('e1', 'n1', 'n2')];
+    const nodeMap = buildNodeMap(nodes);
+    const result = snapEdgeToConstraint(edges[0], 'horizontal', nodeMap);
 
     expect(result).to.not.be.null;
-    // Both endpoints should have the same Y (midpoint Y = 25)
-    expect(result!.start.y).to.equal(result!.end.y);
-    expect(result!.start.y).to.be.closeTo(25, 0.01);
+    const n1Update = result!.nodeUpdates.find(u => u.nodeId === 'n1')!;
+    const n2Update = result!.nodeUpdates.find(u => u.nodeId === 'n2')!;
+
+    // Both should have same Y (midpoint Y = 25)
+    expect(n1Update.y).to.equal(n2Update.y);
+    expect(n1Update.y).to.be.closeTo(25, 0.01);
+
     // Length should be preserved
     const originalLength = Math.sqrt(100 * 100 + 50 * 50);
-    const newLength = Math.abs(result!.end.x - result!.start.x);
+    const newLength = Math.abs(n2Update.x - n1Update.x);
     expect(newLength).to.be.closeTo(originalLength, 0.01);
   });
 
-  it('should return null for already-horizontal wall with horizontal direction', () => {
-    const wall = createWall('w1', { x: 0, y: 50 }, { x: 100, y: 50 });
-    expect(snapWallToConstraint(wall, 'horizontal')).to.be.null;
+  it('should return null for already-horizontal edge', () => {
+    const nodes = [createNode('n1', 0, 50), createNode('n2', 100, 50)];
+    const edges = [createEdge('e1', 'n1', 'n2')];
+    const nodeMap = buildNodeMap(nodes);
+    expect(snapEdgeToConstraint(edges[0], 'horizontal', nodeMap)).to.be.null;
   });
 
-  it('should snap diagonal wall to vertical', () => {
-    const wall = createWall('w1', { x: 0, y: 0 }, { x: 50, y: 100 });
-    const result = snapWallToConstraint(wall, 'vertical');
+  it('should snap diagonal edge to vertical', () => {
+    const nodes = [createNode('n1', 0, 0), createNode('n2', 50, 100)];
+    const edges = [createEdge('e1', 'n1', 'n2')];
+    const nodeMap = buildNodeMap(nodes);
+    const result = snapEdgeToConstraint(edges[0], 'vertical', nodeMap);
 
     expect(result).to.not.be.null;
-    // Both endpoints should have the same X (midpoint X = 25)
-    expect(result!.start.x).to.equal(result!.end.x);
-    expect(result!.start.x).to.be.closeTo(25, 0.01);
+    const n1Update = result!.nodeUpdates.find(u => u.nodeId === 'n1')!;
+    const n2Update = result!.nodeUpdates.find(u => u.nodeId === 'n2')!;
+
+    // Both should have same X (midpoint X = 25)
+    expect(n1Update.x).to.equal(n2Update.x);
+    expect(n1Update.x).to.be.closeTo(25, 0.01);
+
     // Length should be preserved
     const originalLength = Math.sqrt(50 * 50 + 100 * 100);
-    const newLength = Math.abs(result!.end.y - result!.start.y);
+    const newLength = Math.abs(n2Update.y - n1Update.y);
     expect(newLength).to.be.closeTo(originalLength, 0.01);
   });
 
-  it('should return null for already-vertical wall with vertical direction', () => {
-    const wall = createWall('w1', { x: 50, y: 0 }, { x: 50, y: 100 });
-    expect(snapWallToConstraint(wall, 'vertical')).to.be.null;
+  it('should return null for already-vertical edge', () => {
+    const nodes = [createNode('n1', 50, 0), createNode('n2', 50, 100)];
+    const edges = [createEdge('e1', 'n1', 'n2')];
+    const nodeMap = buildNodeMap(nodes);
+    expect(snapEdgeToConstraint(edges[0], 'vertical', nodeMap)).to.be.null;
   });
 
-  it('should preserve wall center when snapping to horizontal', () => {
-    const wall = createWall('w1', { x: 10, y: 20 }, { x: 110, y: 80 });
-    const result = snapWallToConstraint(wall, 'horizontal')!;
+  it('should preserve edge center when snapping to horizontal', () => {
+    const nodes = [createNode('n1', 10, 20), createNode('n2', 110, 80)];
+    const edges = [createEdge('e1', 'n1', 'n2')];
+    const nodeMap = buildNodeMap(nodes);
+    const result = snapEdgeToConstraint(edges[0], 'horizontal', nodeMap)!;
+
+    const n1Update = result.nodeUpdates.find(u => u.nodeId === 'n1')!;
+    const n2Update = result.nodeUpdates.find(u => u.nodeId === 'n2')!;
 
     const originalMidX = (10 + 110) / 2;
     const originalMidY = (20 + 80) / 2;
-    const newMidX = (result.start.x + result.end.x) / 2;
-    const newMidY = (result.start.y + result.end.y) / 2;
+    const newMidX = (n1Update.x + n2Update.x) / 2;
+    const newMidY = (n1Update.y + n2Update.y) / 2;
 
     expect(newMidX).to.be.closeTo(originalMidX, 0.01);
     expect(newMidY).to.be.closeTo(originalMidY, 0.01);
@@ -480,199 +467,347 @@ describe('snapWallToConstraint', () => {
 
 describe('solveConstraintSnap', () => {
   it('should return no updates when direction needs no geometry change', () => {
-    const walls = [
-      createWall('w1', { x: 0, y: 50 }, { x: 100, y: 50 }), // already horizontal
-    ];
-    const graph = buildConnectionGraph(walls);
-    const result = solveConstraintSnap(graph, 'w1', 'horizontal');
+    const nodes = [createNode('n1', 0, 50), createNode('n2', 100, 50)];
+    const edges = [createEdge('e1', 'n1', 'n2')];
+    const graph = buildNodeGraph(nodes, edges);
+    const result = solveConstraintSnap(graph, 'e1', 'horizontal');
 
     expect(result.blocked).to.be.false;
     expect(result.updates.length).to.equal(0);
   });
 
-  it('should snap isolated wall without connected walls', () => {
-    const walls = [
-      createWall('w1', { x: 0, y: 0 }, { x: 100, y: 50 }),
-    ];
-    const graph = buildConnectionGraph(walls);
-    const result = solveConstraintSnap(graph, 'w1', 'horizontal');
+  it('should snap isolated edge without connected edges', () => {
+    const nodes = [createNode('n1', 0, 0), createNode('n2', 100, 50)];
+    const edges = [createEdge('e1', 'n1', 'n2')];
+    const graph = buildNodeGraph(nodes, edges);
+    const result = solveConstraintSnap(graph, 'e1', 'horizontal');
 
     expect(result.blocked).to.be.false;
-    expect(result.updates.length).to.equal(1);
-    expect(result.updates[0].wallId).to.equal('w1');
-    expect(result.updates[0].newStart.y).to.equal(result.updates[0].newEnd.y);
+    expect(result.updates.length).to.equal(2); // both nodes
+
+    const n1Update = findNodeUpdate(result.updates, 'n1')!;
+    const n2Update = findNodeUpdate(result.updates, 'n2')!;
+    expect(n1Update.y).to.equal(n2Update.y);
   });
 
-  it('should keep connected walls connected when snapping to horizontal', () => {
-    const walls = [
-      createWall('w1', { x: 0, y: 0 }, { x: 100, y: 50 }), // diagonal, will snap
-      createWall('w2', { x: 100, y: 50 }, { x: 100, y: 150 }), // connected at w1's end
+  it('should keep connected edges connected when snapping to horizontal', () => {
+    const nodes = [
+      createNode('n1', 0, 0), createNode('n2', 100, 50), createNode('n3', 100, 150),
     ];
-    const graph = buildConnectionGraph(walls);
-    const result = solveConstraintSnap(graph, 'w1', 'horizontal');
+    const edges = [
+      createEdge('e1', 'n1', 'n2'),
+      createEdge('e2', 'n2', 'n3'),
+    ];
+    const graph = buildNodeGraph(nodes, edges);
+    const result = solveConstraintSnap(graph, 'e1', 'horizontal');
 
     expect(result.blocked).to.be.false;
-    expect(result.updates.length).to.equal(2);
 
-    const w1Update = result.updates.find(u => u.wallId === 'w1')!;
-    const w2Update = result.updates.find(u => u.wallId === 'w2')!;
+    const n1Update = findNodeUpdate(result.updates, 'n1')!;
+    const n2Update = findNodeUpdate(result.updates, 'n2')!;
 
-    // w1 should be horizontal
-    expect(w1Update.newStart.y).to.equal(w1Update.newEnd.y);
+    // e1 should be horizontal
+    expect(n1Update.y).to.equal(n2Update.y);
 
-    // CRITICAL: w1's end must equal w2's start (stay connected)
-    expect(coordsEqual(w1Update.newEnd, w2Update.newStart)).to.be.true;
+    // Connection maintained: n2 is shared between e1 and e2
+    // (n2 moved, so if e2 has no constraints, n3 stays put)
   });
 
-  it('should keep connected walls connected when snapping to vertical', () => {
-    const walls = [
-      createWall('w1', { x: 0, y: 0 }, { x: 50, y: 100 }), // diagonal, will snap
-      createWall('w2', { x: 0, y: 0 }, { x: -100, y: 0 }), // connected at w1's start
+  it('should keep connected edges connected when snapping to vertical', () => {
+    const nodes = [
+      createNode('n1', 0, 0), createNode('n2', 50, 100), createNode('n3', -100, 0),
     ];
-    const graph = buildConnectionGraph(walls);
-    const result = solveConstraintSnap(graph, 'w1', 'vertical');
+    const edges = [
+      createEdge('e1', 'n1', 'n2'),
+      createEdge('e2', 'n1', 'n3'),
+    ];
+    const graph = buildNodeGraph(nodes, edges);
+    const result = solveConstraintSnap(graph, 'e1', 'vertical');
 
     expect(result.blocked).to.be.false;
 
-    const w1Update = result.updates.find(u => u.wallId === 'w1')!;
-    const w2Update = result.updates.find(u => u.wallId === 'w2')!;
+    const n1Update = findNodeUpdate(result.updates, 'n1')!;
+    const n2Update = findNodeUpdate(result.updates, 'n2')!;
 
-    // w1 should be vertical
-    expect(w1Update.newStart.x).to.equal(w1Update.newEnd.x);
-
-    // CRITICAL: w1's start must equal w2's start (stay connected)
-    expect(coordsEqual(w1Update.newStart, w2Update.newStart)).to.be.true;
+    // e1 should be vertical
+    expect(n1Update.x).to.equal(n2Update.x);
   });
 
-  it('should propagate to multiple connected walls at both endpoints', () => {
-    const walls = [
-      createWall('w1', { x: 0, y: 0 }, { x: 100, y: 50 }), // diagonal, will snap
-      createWall('w2', { x: 0, y: 0 }, { x: 0, y: -100 }),   // connected at w1 start
-      createWall('w3', { x: 100, y: 50 }, { x: 200, y: 50 }), // connected at w1 end
+  it('should propagate to multiple connected edges at both endpoints', () => {
+    const nodes = [
+      createNode('n1', 0, 0), createNode('n2', 100, 50),
+      createNode('n3', 0, -100), createNode('n4', 200, 50),
     ];
-    const graph = buildConnectionGraph(walls);
-    const result = solveConstraintSnap(graph, 'w1', 'horizontal');
+    const edges = [
+      createEdge('e1', 'n1', 'n2'), // diagonal, will snap
+      createEdge('e2', 'n3', 'n1'), // connected at n1
+      createEdge('e3', 'n2', 'n4'), // connected at n2
+    ];
+    const graph = buildNodeGraph(nodes, edges);
+    const result = solveConstraintSnap(graph, 'e1', 'horizontal');
 
     expect(result.blocked).to.be.false;
 
-    const w1Update = result.updates.find(u => u.wallId === 'w1')!;
-    const w2Update = result.updates.find(u => u.wallId === 'w2')!;
-    const w3Update = result.updates.find(u => u.wallId === 'w3')!;
+    const n1Update = findNodeUpdate(result.updates, 'n1')!;
+    const n2Update = findNodeUpdate(result.updates, 'n2')!;
 
-    // w1 should be horizontal
-    expect(w1Update.newStart.y).to.equal(w1Update.newEnd.y);
-
-    // All connections maintained
-    expect(coordsEqual(w1Update.newStart, w2Update.newStart)).to.be.true;
-    expect(coordsEqual(w1Update.newEnd, w3Update.newStart)).to.be.true;
+    // e1 should be horizontal
+    expect(n1Update.y).to.equal(n2Update.y);
   });
 
   it('should return no updates for free direction', () => {
-    const walls = [
-      createWall('w1', { x: 0, y: 0 }, { x: 100, y: 50 }),
-    ];
-    const graph = buildConnectionGraph(walls);
-    const result = solveConstraintSnap(graph, 'w1', 'free');
+    const nodes = [createNode('n1', 0, 0), createNode('n2', 100, 50)];
+    const edges = [createEdge('e1', 'n1', 'n2')];
+    const graph = buildNodeGraph(nodes, edges);
+    const result = solveConstraintSnap(graph, 'e1', 'free');
     expect(result.updates.length).to.equal(0);
     expect(result.blocked).to.be.false;
   });
 
-  it('should respect direction constraints on connected walls during snap', () => {
-    // When w1 snaps horizontal, w2 (vertical direction) must stay vertical
-    const walls = [
-      createWall('w1', { x: 0, y: 0 }, { x: 100, y: 50 }), // diagonal → horizontal
-      createWall('w2', { x: 100, y: 50 }, { x: 100, y: 150 }, { direction: 'vertical' }),
+  it('should respect direction constraints on connected edges during snap', () => {
+    const nodes = [
+      createNode('n1', 0, 0), createNode('n2', 100, 50), createNode('n3', 100, 150),
     ];
-    const graph = buildConnectionGraph(walls);
-    const result = solveConstraintSnap(graph, 'w1', 'horizontal');
+    const edges = [
+      createEdge('e1', 'n1', 'n2'), // diagonal -> horizontal
+      createEdge('e2', 'n2', 'n3', { direction: 'vertical' }),
+    ];
+    const graph = buildNodeGraph(nodes, edges);
+    const result = solveConstraintSnap(graph, 'e1', 'horizontal');
 
     expect(result.blocked).to.be.false;
 
-    const w1Update = result.updates.find(u => u.wallId === 'w1')!;
-    const w2Update = result.updates.find(u => u.wallId === 'w2')!;
+    const n1Update = findNodeUpdate(result.updates, 'n1')!;
+    const n2Update = findNodeUpdate(result.updates, 'n2')!;
+    const n3Update = findNodeUpdate(result.updates, 'n3');
 
-    // w1 horizontal
-    expect(w1Update.newStart.y).to.equal(w1Update.newEnd.y);
+    // e1 horizontal
+    expect(n1Update.y).to.equal(n2Update.y);
 
-    // w2 stays vertical (same X for both endpoints)
-    expect(w2Update.newStart.x).to.equal(w2Update.newEnd.x);
-
-    // Still connected
-    expect(coordsEqual(w1Update.newEnd, w2Update.newStart)).to.be.true;
+    // e2 stays vertical (n3.x should match n2.x)
+    expect(n3Update).to.exist;
+    expect(n3Update!.x).to.equal(n2Update.x);
   });
 });
 
 describe('complex scenarios', () => {
   it('should handle a closed rectangle', () => {
-    const walls = [
-      createWall('top', { x: 0, y: 0 }, { x: 100, y: 0 }),
-      createWall('right', { x: 100, y: 0 }, { x: 100, y: 100 }),
-      createWall('bottom', { x: 100, y: 100 }, { x: 0, y: 100 }),
-      createWall('left', { x: 0, y: 100 }, { x: 0, y: 0 }),
+    const nodes = [
+      createNode('n1', 0, 0), createNode('n2', 100, 0),
+      createNode('n3', 100, 100), createNode('n4', 0, 100),
+    ];
+    const edges = [
+      createEdge('top', 'n1', 'n2'),
+      createEdge('right', 'n2', 'n3'),
+      createEdge('bottom', 'n3', 'n4'),
+      createEdge('left', 'n4', 'n1'),
     ];
 
-    const graph = buildConnectionGraph(walls);
+    const graph = buildNodeGraph(nodes, edges);
 
-    // Each corner should have 2 wall endpoints
-    expect(graph.endpoints.get('0,0')!.length).to.equal(2);
-    expect(graph.endpoints.get('100,0')!.length).to.equal(2);
-    expect(graph.endpoints.get('100,100')!.length).to.equal(2);
-    expect(graph.endpoints.get('0,100')!.length).to.equal(2);
+    // Each corner node should have 2 edge references
+    expect(graph.nodeToEdges.get('n1')!.length).to.equal(2);
+    expect(graph.nodeToEdges.get('n2')!.length).to.equal(2);
+    expect(graph.nodeToEdges.get('n3')!.length).to.equal(2);
+    expect(graph.nodeToEdges.get('n4')!.length).to.equal(2);
   });
 
   it('should handle T-junction', () => {
-    const walls = [
-      createWall('w1', { x: 0, y: 0 }, { x: 100, y: 0 }),
-      createWall('w2', { x: 100, y: 0 }, { x: 200, y: 0 }),
-      createWall('w3', { x: 100, y: 0 }, { x: 100, y: 100 }),
+    const nodes = [
+      createNode('n1', 0, 0), createNode('n2', 100, 0),
+      createNode('n3', 200, 0), createNode('n4', 100, 100),
+    ];
+    const edges = [
+      createEdge('e1', 'n1', 'n2'),
+      createEdge('e2', 'n2', 'n3'),
+      createEdge('e3', 'n2', 'n4'),
     ];
 
-    const graph = buildConnectionGraph(walls);
+    const graph = buildNodeGraph(nodes, edges);
 
-    // The T-junction point should have 3 wall endpoints
-    const junction = graph.endpoints.get('100,0');
-    expect(junction).to.exist;
-    expect(junction!.length).to.equal(3);
+    // The T-junction node n2 should have 3 edge references
+    const n2Edges = graph.nodeToEdges.get('n2');
+    expect(n2Edges).to.exist;
+    expect(n2Edges!.length).to.equal(3);
   });
 
-  it('should handle mixed constraints in connected walls while staying connected', () => {
-    const walls = [
-      createWall('w1', { x: 0, y: 0 }, { x: 100, y: 0 }, { direction: 'horizontal' }),
-      createWall('w2', { x: 100, y: 0 }, { x: 100, y: 100 }, { direction: 'vertical' }),
+  it('should handle mixed constraints in connected edges while staying connected', () => {
+    const nodes = [
+      createNode('n1', 0, 0), createNode('n2', 100, 0), createNode('n3', 100, 100),
+    ];
+    const edges = [
+      createEdge('e1', 'n1', 'n2', { direction: 'horizontal' }),
+      createEdge('e2', 'n2', 'n3', { direction: 'vertical' }),
     ];
 
-    const graph = buildConnectionGraph(walls);
+    const graph = buildNodeGraph(nodes, edges);
 
-    // Moving the shared endpoint at (100, 0) to (150, 50)
-    const result = solveWallMovement(
-      graph,
-      ['w1', 'w2'],
-      'end',
-      { x: 100, y: 0 },
-      { x: 150, y: 50 }
-    );
+    // Move n2 to (150, 50)
+    const result = solveNodeMove(graph, 'n2', 150, 50);
 
     expect(result.blocked).to.be.false;
-    expect(result.updates.length).to.equal(2);
 
-    const w1Update = result.updates.find(u => u.wallId === 'w1');
-    const w2Update = result.updates.find(u => u.wallId === 'w2');
+    const n2Update = findNodeUpdate(result.updates, 'n2')!;
+    const n1Update = findNodeUpdate(result.updates, 'n1')!;
+    const n3Update = findNodeUpdate(result.updates, 'n3')!;
 
-    // CRITICAL: Both walls' shared endpoints must be at the same position
-    expect(coordsEqual(w1Update!.newEnd, w2Update!.newStart)).to.be.true;
+    // n2 at target
+    expect(n2Update.x).to.equal(150);
+    expect(n2Update.y).to.equal(50);
 
-    // Shared endpoint should be at target position
-    expect(w1Update!.newEnd.x).to.equal(150);
-    expect(w1Update!.newEnd.y).to.equal(50);
-    expect(w2Update!.newStart.x).to.equal(150);
-    expect(w2Update!.newStart.y).to.equal(50);
+    // e1 (horizontal) → n1 Y should match n2 Y
+    expect(n1Update.y).to.equal(50);
 
-    // w1 (horizontal direction) should still be horizontal
-    expect(w1Update!.newStart.y).to.equal(w1Update!.newEnd.y);
-    expect(w1Update!.newStart.y).to.equal(50);
+    // e2 (vertical) → n3 X should match n2 X
+    expect(n3Update.x).to.equal(150);
+  });
+});
 
-    // w2 (vertical direction) should still be vertical
-    expect(w2Update!.newEnd.x).to.equal(w2Update!.newStart.x);
-    expect(w2Update!.newEnd.x).to.equal(150);
+describe('angle lock', () => {
+  it('should preserve angle and length for a single angle-locked edge', () => {
+    const nodes = [createNode('n1', 0, 0), createNode('n2', 100, 100)];
+    const edges = [createEdge('e1', 'n1', 'n2', { angle_locked: true })];
+
+    const graph = buildNodeGraph(nodes, edges);
+    const result = solveNodeMove(graph, 'n1', 50, 0);
+
+    expect(result.blocked).to.be.false;
+
+    const n1Update = findNodeUpdate(result.updates, 'n1')!;
+    const n2Update = findNodeUpdate(result.updates, 'n2')!;
+
+    // n1 moves to target
+    expect(n1Update.x).to.equal(50);
+    expect(n1Update.y).to.equal(0);
+
+    // n2 should preserve original angle (45 degrees) and length (~141.42)
+    const originalLength = Math.sqrt(100 * 100 + 100 * 100);
+    const newLength = Math.sqrt(
+      Math.pow(n2Update.x - n1Update.x, 2) +
+      Math.pow(n2Update.y - n1Update.y, 2)
+    );
+    expect(newLength).to.be.closeTo(originalLength, 0.01);
+
+    const originalAngle = Math.atan2(100, 100);
+    const newAngle = Math.atan2(
+      n2Update.y - n1Update.y,
+      n2Update.x - n1Update.x
+    );
+    expect(newAngle).to.be.closeTo(originalAngle, 0.01);
+  });
+
+  it('should make two angle-locked edges at a corner rotate rigidly', () => {
+    const nodes = [
+      createNode('n1', 0, 0), createNode('n2', 100, 0), createNode('n3', 100, 100),
+    ];
+    const edges = [
+      createEdge('e1', 'n1', 'n2', { angle_locked: true }),
+      createEdge('e2', 'n2', 'n3', { angle_locked: true }),
+    ];
+
+    const graph = buildNodeGraph(nodes, edges);
+    // Drag n2 down
+    const result = solveNodeMove(graph, 'n2', 100, 50);
+
+    expect(result.blocked).to.be.false;
+
+    const n1Update = findNodeUpdate(result.updates, 'n1')!;
+    const n2Update = findNodeUpdate(result.updates, 'n2')!;
+    const n3Update = findNodeUpdate(result.updates, 'n3')!;
+
+    // n2 at target
+    expect(n2Update.x).to.equal(100);
+    expect(n2Update.y).to.equal(50);
+
+    // e1 original angle was 0 (horizontal right), length 100
+    // n1 should be at (100-100, 50) = (0, 50)
+    expect(n1Update.x).to.be.closeTo(0, 0.01);
+    expect(n1Update.y).to.be.closeTo(50, 0.01);
+
+    // e2 original angle was pi/2 (down), length 100
+    // n3 should be at (100, 50+100) = (100, 150)
+    expect(n3Update.x).to.be.closeTo(100, 0.01);
+    expect(n3Update.y).to.be.closeTo(150, 0.01);
+  });
+
+  it('should propagate angle-locked movement to connected free edges', () => {
+    const nodes = [
+      createNode('n1', 0, 0), createNode('n2', 100, 0), createNode('n3', 0, -100),
+    ];
+    const edges = [
+      createEdge('e1', 'n1', 'n2', { angle_locked: true }),
+      createEdge('e2', 'n3', 'n1'), // connected at n1, free
+    ];
+
+    const graph = buildNodeGraph(nodes, edges);
+    // Drag n2 down
+    const result = solveNodeMove(graph, 'n2', 100, 50);
+
+    expect(result.blocked).to.be.false;
+
+    const n1Update = findNodeUpdate(result.updates, 'n1')!;
+
+    // e1 angle locked: angle was 0 (horizontal), length 100
+    // n1 should move to (0, 50)
+    expect(n1Update.x).to.be.closeTo(0, 0.01);
+    expect(n1Update.y).to.be.closeTo(50, 0.01);
+
+    // n3 stays (free edge, n3 is the other end, doesn't move)
+    const n3Update = findNodeUpdate(result.updates, 'n3');
+    expect(n3Update).to.be.undefined;
+  });
+
+  it('should let direction constraint take precedence over angle_locked', () => {
+    const nodes = [createNode('n1', 0, 0), createNode('n2', 100, 0)];
+    const edges = [createEdge('e1', 'n1', 'n2', { angle_locked: true, direction: 'horizontal' })];
+
+    const graph = buildNodeGraph(nodes, edges);
+    const result = solveNodeMove(graph, 'n2', 150, 50);
+
+    expect(result.blocked).to.be.false;
+    const n1Update = findNodeUpdate(result.updates, 'n1')!;
+    const n2Update = findNodeUpdate(result.updates, 'n2')!;
+
+    // Direction constraint: wall stays horizontal
+    expect(n1Update.y).to.equal(n2Update.y);
+    expect(n1Update.y).to.equal(50);
+
+    // Start X stays at 0
+    expect(n1Update.x).to.equal(0);
+  });
+
+  it('should handle angle-locked edges in a closed rectangle', () => {
+    const nodes = [
+      createNode('n1', 0, 0), createNode('n2', 200, 0),
+      createNode('n3', 200, 200), createNode('n4', 0, 200),
+    ];
+    const edges = [
+      createEdge('top', 'n1', 'n2', { angle_locked: true }),
+      createEdge('right', 'n2', 'n3', { angle_locked: true }),
+      createEdge('bottom', 'n3', 'n4', { angle_locked: true }),
+      createEdge('left', 'n4', 'n1', { angle_locked: true }),
+    ];
+
+    const graph = buildNodeGraph(nodes, edges);
+    // Drag n2 (top-right corner) right
+    const result = solveNodeMove(graph, 'n2', 250, 0);
+
+    expect(result.blocked).to.be.false;
+
+    const n1Update = findNodeUpdate(result.updates, 'n1')!;
+    const n2Update = findNodeUpdate(result.updates, 'n2')!;
+    const n3Update = findNodeUpdate(result.updates, 'n3')!;
+
+    // Top edge: angle locked at 0 rad (horizontal), length 200
+    // n2 at (250, 0), n1 = (250-200, 0) = (50, 0)
+    expect(n2Update.x).to.equal(250);
+    expect(n2Update.y).to.equal(0);
+    expect(n1Update.x).to.be.closeTo(50, 0.01);
+    expect(n1Update.y).to.be.closeTo(0, 0.01);
+
+    // Right edge: angle locked at pi/2 (down), length 200
+    // n2 at (250, 0), n3 = (250, 200)
+    expect(n3Update.x).to.be.closeTo(250, 0.01);
+    expect(n3Update.y).to.be.closeTo(200, 0.01);
   });
 });

@@ -12,7 +12,7 @@ from homeassistant.helpers.storage import Store
 from ..const import STORAGE_KEY, STORAGE_VERSION
 from ..models.automation_rule import VisualRule
 from ..models.device_placement import DevicePlacement, DevicePlacementCollection
-from ..models.floor_plan import Door, Floor, FloorPlan, Room, Wall, Window
+from ..models.floor_plan import Door, Edge, Floor, FloorPlan, Node, Room, Wall, Window
 from ..models.virtual_sensor import VirtualSensorConfig
 
 _LOGGER = logging.getLogger(__name__)
@@ -244,10 +244,10 @@ class FloorPlanStore:
             return result[1]
         return None
 
-    # ==================== Walls, Doors, Windows ====================
+    # ==================== Edges ====================
 
-    def add_wall(self, floor_plan_id: str, floor_id: str, wall: Wall) -> Wall | None:
-        """Add a wall to a floor."""
+    def add_edge(self, floor_plan_id: str, floor_id: str, edge: Edge) -> Edge | None:
+        """Add an edge to a floor."""
         floor_plan = self.get_floor_plan(floor_plan_id)
         if not floor_plan:
             return None
@@ -256,39 +256,9 @@ class FloorPlanStore:
         if not floor:
             return None
 
-        floor.walls.append(wall)
+        floor.edges.append(edge)
         self.update_floor_plan(floor_plan)
-        return wall
-
-    def add_door(self, floor_plan_id: str, floor_id: str, door: Door) -> Door | None:
-        """Add a door to a floor."""
-        floor_plan = self.get_floor_plan(floor_plan_id)
-        if not floor_plan:
-            return None
-
-        floor = floor_plan.get_floor(floor_id)
-        if not floor:
-            return None
-
-        floor.doors.append(door)
-        self.update_floor_plan(floor_plan)
-        return door
-
-    def add_window(
-        self, floor_plan_id: str, floor_id: str, window: Window
-    ) -> Window | None:
-        """Add a window to a floor."""
-        floor_plan = self.get_floor_plan(floor_plan_id)
-        if not floor_plan:
-            return None
-
-        floor = floor_plan.get_floor(floor_id)
-        if not floor:
-            return None
-
-        floor.windows.append(window)
-        self.update_floor_plan(floor_plan)
-        return window
+        return edge
 
     # ==================== Device Placements ====================
 

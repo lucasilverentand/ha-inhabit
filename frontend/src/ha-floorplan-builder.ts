@@ -10,6 +10,7 @@ import type {
   FloorPlan,
   Floor,
   ToolType,
+  CanvasMode,
   LayerConfig,
   ViewBox,
   SelectionState,
@@ -24,8 +25,15 @@ import { clearHistory } from "./stores/history-store";
 // Global state signals
 export const currentFloorPlan = signal<FloorPlan | null>(null);
 export const currentFloor = signal<Floor | null>(null);
+export const canvasMode = signal<CanvasMode>("walls");
 export const activeTool = signal<ToolType>("select");
 export const selection = signal<SelectionState>({ type: "none", ids: [] });
+
+export function setCanvasMode(mode: CanvasMode): void {
+  canvasMode.value = mode;
+  activeTool.value = "select";
+  selection.value = { type: "none", ids: [] };
+}
 export const viewBox = signal<ViewBox>({ x: 0, y: 0, width: 1000, height: 800 });
 export const gridSize = signal<number>(10);
 export const snapToGrid = signal<boolean>(true);

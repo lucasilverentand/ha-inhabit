@@ -165,8 +165,92 @@ export function wallPath(
 }
 
 /**
- * Group walls into connected chains
+ * Group resolved edges into connected chains by node ID.
+ * Only chains wall-type edges; doors/windows break chains.
  */
+export function groupEdgesIntoChains(
+  edges: Array<{ id: string; start_node: string; end_node: string; startPos: Coordinates; endPos: Coordinates; thickness: number; type: string }>
+): Array<Array<{ id: string; start_node: string; end_node: string; startPos: Coordinates; endPos: Coordinates; thickness: number; type: string }>> {
+  // Only chain wall-type edges
+  const wallEdges = edges.filter(e => e.type === 'wall');
+  if (wallEdges.length === 0) return [];
+
+  const used = new Set<string>();
+  const chains: Array<Array<typeof wallEdges[0]>> = [];
+
+  for (const startEdge of wallEdges) {
+    if (used.has(startEdge.id)) continue;
+
+    const chain: typeof wallEdges = [startEdge];
+    used.add(startEdge.id);
+
+    // Extend forward from end_node
+    let currentEndNode = startEdge.end_node;
+    let found = true;
+    while (found) {
+      found = false;
+      for (const edge of wallEdges) {
+        if (used.has(edge.id)) continue;
+        if (edge.start_node === currentEndNode) {
+          chain.push(edge);
+          used.add(edge.id);
+          currentEndNode = edge.end_node;
+          found = true;
+          break;
+        } else if (edge.end_node === currentEndNode) {
+          // Reverse the edge
+          chain.push({
+            ...edge,
+            start_node: edge.end_node,
+            end_node: edge.start_node,
+            startPos: edge.endPos,
+            endPos: edge.startPos,
+          });
+          used.add(edge.id);
+          currentEndNode = edge.start_node;
+          found = true;
+          break;
+        }
+      }
+    }
+
+    // Extend backward from start_node
+    let currentStartNode = startEdge.start_node;
+    found = true;
+    while (found) {
+      found = false;
+      for (const edge of wallEdges) {
+        if (used.has(edge.id)) continue;
+        if (edge.end_node === currentStartNode) {
+          chain.unshift(edge);
+          used.add(edge.id);
+          currentStartNode = edge.start_node;
+          found = true;
+          break;
+        } else if (edge.start_node === currentStartNode) {
+          // Reverse the edge
+          chain.unshift({
+            ...edge,
+            start_node: edge.end_node,
+            end_node: edge.start_node,
+            startPos: edge.endPos,
+            endPos: edge.startPos,
+          });
+          used.add(edge.id);
+          currentStartNode = edge.end_node;
+          found = true;
+          break;
+        }
+      }
+    }
+
+    chains.push(chain);
+  }
+
+  return chains;
+}
+
+/** @deprecated Use groupEdgesIntoChains instead */
 export function groupWallsIntoChains(
   walls: Array<{ id: string; start: Coordinates; end: Coordinates; thickness: number }>
 ): Array<Array<{ id: string; start: Coordinates; end: Coordinates; thickness: number }>> {
@@ -174,7 +258,7 @@ export function groupWallsIntoChains(
 
   const used = new Set<string>();
   const chains: Array<Array<typeof walls[0]>> = [];
-  const tolerance = 1; // Connection tolerance
+  const tolerance = 1;
 
   const pointsMatch = (p1: Coordinates, p2: Coordinates): boolean => {
     return Math.abs(p1.x - p2.x) < tolerance && Math.abs(p1.y - p2.y) < tolerance;
@@ -186,7 +270,6 @@ export function groupWallsIntoChains(
     const chain: typeof walls = [startWall];
     used.add(startWall.id);
 
-    // Extend forward from end
     let currentEnd = startWall.end;
     let found = true;
     while (found) {
@@ -200,7 +283,6 @@ export function groupWallsIntoChains(
           found = true;
           break;
         } else if (pointsMatch(wall.end, currentEnd)) {
-          // Reverse the wall
           chain.push({ ...wall, start: wall.end, end: wall.start });
           used.add(wall.id);
           currentEnd = wall.start;
@@ -210,7 +292,6 @@ export function groupWallsIntoChains(
       }
     }
 
-    // Extend backward from start
     let currentStart = startWall.start;
     found = true;
     while (found) {
@@ -224,7 +305,6 @@ export function groupWallsIntoChains(
           found = true;
           break;
         } else if (pointsMatch(wall.start, currentStart)) {
-          // Reverse the wall
           chain.unshift({ ...wall, start: wall.end, end: wall.start });
           used.add(wall.id);
           currentStart = wall.end;

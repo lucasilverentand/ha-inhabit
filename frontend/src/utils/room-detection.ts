@@ -1,13 +1,13 @@
 /**
- * Room detection from wall loops using planar face detection.
+ * Room detection from edge loops using planar face detection.
  *
- * Algorithm: angle-based face traversal on the planar graph formed by walls.
+ * Algorithm: angle-based face traversal on the planar graph formed by edges.
  * For each directed edge, trace the face by always picking the next edge with
  * the smallest clockwise angle. Track visited directed edges to avoid duplicates.
  * Filter out the outer (unbounded) face and faces below a minimum area threshold.
  */
 
-import type { Coordinates, Wall } from "../types";
+import type { Coordinates, Node, Edge } from "../types";
 
 export interface RoomCandidate {
   vertices: Coordinates[];
@@ -15,46 +15,43 @@ export interface RoomCandidate {
   centroid: Coordinates;
 }
 
-/** Minimum area in cm² to consider a face a room */
+/** Minimum area in cm^2 to consider a face a room */
 const MIN_AREA = 100;
 
-/** Tolerance for coordinate snapping (same as wall-solver) */
-function coordsToKey(coords: Coordinates): string {
-  return `${Math.round(coords.x)},${Math.round(coords.y)}`;
-}
-
-function keyToCoords(key: string): Coordinates {
-  const [x, y] = key.split(",").map(Number);
-  return { x, y };
-}
-
 interface AdjEntry {
-  targetKey: string;
+  targetId: string;
   angle: number;
 }
 
 /**
- * Detect all closed rooms formed by wall loops.
+ * Detect all closed rooms formed by edge loops.
  */
-export function detectRoomsFromWalls(walls: Wall[]): RoomCandidate[] {
-  if (walls.length === 0) return [];
+export function detectRoomsFromEdges(nodes: Node[], edges: Edge[]): RoomCandidate[] {
+  if (edges.length === 0) return [];
+
+  // Build node map
+  const nodeMap = new Map<string, Node>();
+  for (const node of nodes) {
+    nodeMap.set(node.id, node);
+  }
 
   // Build adjacency graph: for each node, list of neighbors sorted by angle
   const adj = new Map<string, AdjEntry[]>();
 
-  const addEdge = (from: Coordinates, to: Coordinates) => {
-    const fromKey = coordsToKey(from);
-    const toKey = coordsToKey(to);
-    if (fromKey === toKey) return;
+  const addDirectedEdge = (fromId: string, toId: string) => {
+    const fromNode = nodeMap.get(fromId);
+    const toNode = nodeMap.get(toId);
+    if (!fromNode || !toNode) return;
+    if (fromId === toId) return;
 
-    const angle = Math.atan2(to.y - from.y, to.x - from.x);
-    if (!adj.has(fromKey)) adj.set(fromKey, []);
-    adj.get(fromKey)!.push({ targetKey: toKey, angle });
+    const angle = Math.atan2(toNode.y - fromNode.y, toNode.x - fromNode.x);
+    if (!adj.has(fromId)) adj.set(fromId, []);
+    adj.get(fromId)!.push({ targetId: toId, angle });
   };
 
-  for (const wall of walls) {
-    addEdge(wall.start, wall.end);
-    addEdge(wall.end, wall.start);
+  for (const edge of edges) {
+    addDirectedEdge(edge.start_node, edge.end_node);
+    addDirectedEdge(edge.end_node, edge.start_node);
   }
 
   // Sort each adjacency list by angle
@@ -68,41 +65,41 @@ export function detectRoomsFromWalls(walls: Wall[]): RoomCandidate[] {
 
   const edgeKey = (from: string, to: string) => `${from}->${to}`;
 
-  for (const [nodeKey, neighbors] of adj) {
+  for (const [nodeId, neighbors] of adj) {
     for (const neighbor of neighbors) {
-      const ek = edgeKey(nodeKey, neighbor.targetKey);
+      const ek = edgeKey(nodeId, neighbor.targetId);
       if (visitedEdges.has(ek)) continue;
 
       // Trace face starting from this directed edge
       const face: string[] = [];
-      let currentKey = nodeKey;
-      let nextKey = neighbor.targetKey;
+      let currentId = nodeId;
+      let nextId = neighbor.targetId;
       let valid = true;
 
       for (let step = 0; step < 1000; step++) {
-        const fek = edgeKey(currentKey, nextKey);
+        const fek = edgeKey(currentId, nextId);
         if (visitedEdges.has(fek)) {
-          // We may have re-entered an already-visited edge before closing
           valid = false;
           break;
         }
         visitedEdges.add(fek);
-        face.push(currentKey);
+        face.push(currentId);
 
-        // Find the incoming edge angle (from currentKey to nextKey reversed)
+        // Find the incoming edge angle (from currentId to nextId reversed)
+        const currentNode = nodeMap.get(currentId)!;
+        const nextNode = nodeMap.get(nextId)!;
         const incomingAngle = Math.atan2(
-          keyToCoords(currentKey).y - keyToCoords(nextKey).y,
-          keyToCoords(currentKey).x - keyToCoords(nextKey).x
+          currentNode.y - nextNode.y,
+          currentNode.x - nextNode.x
         );
 
-        // At nextKey, find the next edge with smallest clockwise angle after incomingAngle
-        const nextNeighbors = adj.get(nextKey);
+        // At nextId, find the next edge with smallest clockwise angle after incomingAngle
+        const nextNeighbors = adj.get(nextId);
         if (!nextNeighbors || nextNeighbors.length === 0) {
           valid = false;
           break;
         }
 
-        // Find the edge just after incomingAngle in sorted order (clockwise = next larger angle)
         let chosen: AdjEntry | null = null;
         for (const entry of nextNeighbors) {
           if (entry.angle > incomingAngle) {
@@ -110,26 +107,26 @@ export function detectRoomsFromWalls(walls: Wall[]): RoomCandidate[] {
             break;
           }
         }
-        // Wrap around if nothing found
         if (!chosen) {
           chosen = nextNeighbors[0];
         }
 
-        currentKey = nextKey;
-        nextKey = chosen.targetKey;
+        currentId = nextId;
+        nextId = chosen.targetId;
 
-        // Check if we've closed the loop
-        if (currentKey === nodeKey && nextKey === neighbor.targetKey) {
+        if (currentId === nodeId && nextId === neighbor.targetId) {
           break;
         }
-        // Check if we've returned to start node (but via different edge - still closed)
-        if (currentKey === nodeKey) {
+        if (currentId === nodeId) {
           break;
         }
       }
 
       if (valid && face.length >= 3) {
-        faces.push(face.map(keyToCoords));
+        faces.push(face.map(id => {
+          const n = nodeMap.get(id)!;
+          return { x: n.x, y: n.y };
+        }));
       }
     }
   }
@@ -141,34 +138,68 @@ export function detectRoomsFromWalls(walls: Wall[]): RoomCandidate[] {
     const area = signedArea(vertices);
     const absArea = Math.abs(area);
 
-    // Skip faces below minimum area
     if (absArea < MIN_AREA) continue;
 
-    // Skip the outer face (largest negative area or we use the convention
-    // that CW faces are interior). In a standard coordinate system where
-    // Y increases downward (SVG), CW = negative signed area = interior faces.
-    // We keep faces with negative signed area (CW in screen coords).
+    // CW in screen coords (Y-down) = negative signed area = interior faces
     if (area > 0) continue;
 
     const centroid = computeCentroid(vertices);
     rooms.push({ vertices, area: absArea, centroid });
   }
 
-  // Deduplicate faces that share the same set of vertices (possible with
-  // different starting points). Use sorted vertex keys as signature.
+  // Deduplicate faces that share the same set of vertices
   const unique = new Map<string, RoomCandidate>();
   for (const room of rooms) {
     const sig = room.vertices
-      .map(coordsToKey)
+      .map(v => `${Math.round(v.x)},${Math.round(v.y)}`)
       .sort()
       .join("|");
-    // Keep the one with largest area if duplicated
     if (!unique.has(sig) || unique.get(sig)!.area < room.area) {
       unique.set(sig, room);
     }
   }
 
   return Array.from(unique.values());
+}
+
+/** @deprecated Use detectRoomsFromEdges instead */
+export function detectRoomsFromWalls(walls: Array<{ start: Coordinates; end: Coordinates }>): RoomCandidate[] {
+  if (walls.length === 0) return [];
+
+  // Convert walls to nodes + edges
+  const nodeMap = new Map<string, Node>();
+  const nodes: Node[] = [];
+  const edges: Edge[] = [];
+  let nodeCounter = 0;
+
+  function getOrCreateNode(x: number, y: number): string {
+    const key = `${Math.round(x)},${Math.round(y)}`;
+    if (nodeMap.has(key)) return nodeMap.get(key)!.id;
+    const id = `_n${nodeCounter++}`;
+    const node: Node = { id, x, y };
+    nodeMap.set(key, node);
+    nodes.push(node);
+    return id;
+  }
+
+  for (let i = 0; i < walls.length; i++) {
+    const w = walls[i];
+    const startId = getOrCreateNode(w.start.x, w.start.y);
+    const endId = getOrCreateNode(w.end.x, w.end.y);
+    edges.push({
+      id: `_e${i}`,
+      start_node: startId,
+      end_node: endId,
+      type: 'wall',
+      thickness: 10,
+      is_exterior: false,
+      length_locked: false,
+      direction: 'free',
+      angle_locked: false,
+    });
+  }
+
+  return detectRoomsFromEdges(nodes, edges);
 }
 
 /** Signed area using the shoelace formula. Negative = CW in screen coords. */
