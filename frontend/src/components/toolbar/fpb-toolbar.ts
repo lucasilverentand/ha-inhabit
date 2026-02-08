@@ -69,20 +69,21 @@ export class FpbToolbar extends LitElement {
     .floor-trigger {
       display: flex;
       align-items: center;
-      gap: 4px;
-      padding: 4px 8px;
+      gap: 6px;
+      padding: 6px 10px;
       border: none;
-      border-radius: 4px;
+      border-radius: 8px;
       background: transparent;
       color: inherit;
-      font-size: 16px;
-      font-weight: 400;
+      font-size: 15px;
+      font-weight: 500;
       cursor: pointer;
       white-space: nowrap;
+      transition: background 0.15s;
     }
 
     .floor-trigger:hover {
-      background: rgba(255, 255, 255, 0.1);
+      background: rgba(255, 255, 255, 0.12);
     }
 
     .floor-trigger ha-icon {
@@ -96,38 +97,40 @@ export class FpbToolbar extends LitElement {
 
     .floor-dropdown {
       position: absolute;
-      top: calc(100% + 4px);
+      top: calc(100% + 6px);
       left: 0;
       background: var(--card-background-color);
-      border-radius: 8px;
-      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-      min-width: 160px;
+      border-radius: 14px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15), 0 2px 8px rgba(0, 0, 0, 0.08);
+      min-width: 180px;
       z-index: 100;
       overflow: hidden;
-      padding: 4px 0;
+      padding: 6px;
     }
 
     .floor-option {
       display: flex;
       align-items: center;
-      gap: 8px;
-      padding: 8px 12px;
+      gap: 10px;
+      padding: 10px 12px;
       border: none;
+      border-radius: 10px;
       background: transparent;
       color: var(--primary-text-color);
       cursor: pointer;
       font-size: 14px;
       width: 100%;
       text-align: left;
+      transition: background 0.12s;
     }
 
     .floor-option:hover {
-      background: var(--secondary-background-color);
+      background: var(--secondary-background-color, #f5f5f5);
     }
 
     .floor-option.selected {
       color: var(--primary-color);
-      font-weight: 500;
+      font-weight: 600;
     }
 
     .floor-option.selected ha-icon {
@@ -141,20 +144,21 @@ export class FpbToolbar extends LitElement {
 
     .floor-dropdown-divider {
       height: 1px;
-      background: var(--divider-color);
-      margin: 4px 0;
+      background: var(--divider-color, #e8e8e8);
+      margin: 4px 6px;
     }
 
     .floor-option .delete-btn {
       display: none;
       margin-left: auto;
-      padding: 2px;
+      padding: 4px;
       border: none;
-      border-radius: 4px;
+      border-radius: 8px;
       background: transparent;
       color: var(--secondary-text-color);
       cursor: pointer;
       line-height: 1;
+      transition: color 0.12s, background 0.12s;
     }
 
     .floor-option .delete-btn ha-icon {
@@ -167,6 +171,7 @@ export class FpbToolbar extends LitElement {
 
     .floor-option .delete-btn:hover {
       color: var(--error-color, #f44336);
+      background: rgba(244, 67, 54, 0.08);
     }
 
     .floor-option.add-floor {
@@ -197,23 +202,23 @@ export class FpbToolbar extends LitElement {
       width: 36px;
       height: 36px;
       border: none;
-      border-radius: 4px;
+      border-radius: 8px;
       background: transparent;
       color: inherit;
       cursor: pointer;
-      transition: background 0.2s ease;
+      transition: background 0.15s;
     }
 
     .tool-button:hover {
-      background: rgba(255, 255, 255, 0.1);
+      background: rgba(255, 255, 255, 0.12);
     }
 
     .tool-button.active {
-      background: rgba(255, 255, 255, 0.2);
+      background: rgba(255, 255, 255, 0.22);
     }
 
     .tool-button:disabled {
-      opacity: 0.4;
+      opacity: 0.35;
       cursor: not-allowed;
     }
 
@@ -228,7 +233,10 @@ export class FpbToolbar extends LitElement {
     /* --- Mode switcher --- */
     .mode-group {
       display: flex;
-      gap: 0;
+      gap: 2px;
+      background: rgba(255, 255, 255, 0.08);
+      border-radius: 10px;
+      padding: 2px;
     }
 
     .mode-button {
@@ -237,23 +245,23 @@ export class FpbToolbar extends LitElement {
       justify-content: center;
       width: 36px;
       height: 32px;
-      border: 1px solid rgba(255, 255, 255, 0.25);
+      border: none;
+      border-radius: 8px;
       background: transparent;
       color: inherit;
       cursor: pointer;
-      transition: background 0.2s ease;
+      transition: background 0.15s;
     }
 
     .mode-button:first-child {
-      border-radius: 4px 0 0 4px;
+      border-radius: 8px;
     }
 
     .mode-button:last-child {
-      border-radius: 0 4px 4px 0;
+      border-radius: 8px;
     }
 
     .mode-button:not(:first-child) {
-      border-left: none;
     }
 
     .mode-button:hover {
@@ -261,7 +269,7 @@ export class FpbToolbar extends LitElement {
     }
 
     .mode-button.active {
-      background: rgba(255, 255, 255, 0.25);
+      background: rgba(255, 255, 255, 0.22);
     }
 
     .mode-button ha-icon {
@@ -284,11 +292,11 @@ export class FpbToolbar extends LitElement {
       width: 36px;
       height: 36px;
       border: none;
-      border-radius: 4px;
+      border-radius: 8px;
       background: rgba(255, 255, 255, 0.15);
       color: inherit;
       cursor: pointer;
-      transition: background 0.2s ease;
+      transition: background 0.15s;
     }
 
     .add-button:hover {
@@ -297,7 +305,6 @@ export class FpbToolbar extends LitElement {
 
     .add-button.menu-open {
       background: rgba(255, 255, 255, 0.25);
-      border-radius: 4px 4px 0 0;
     }
 
     .add-button ha-icon {
@@ -306,38 +313,40 @@ export class FpbToolbar extends LitElement {
 
     .add-menu {
       position: absolute;
-      top: 100%;
+      top: calc(100% + 6px);
       right: 0;
       background: var(--card-background-color);
-      border-radius: 0 0 8px 8px;
-      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-      min-width: 140px;
+      border-radius: 14px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15), 0 2px 8px rgba(0, 0, 0, 0.08);
+      min-width: 160px;
       z-index: 100;
       overflow: hidden;
-      padding: 4px 0;
+      padding: 6px;
     }
 
     .add-menu-item {
       display: flex;
       align-items: center;
-      gap: 8px;
-      padding: 8px 12px;
+      gap: 10px;
+      padding: 10px 12px;
       border: none;
+      border-radius: 10px;
       background: transparent;
       color: var(--primary-text-color);
       cursor: pointer;
       font-size: 14px;
       width: 100%;
       text-align: left;
+      transition: background 0.12s;
     }
 
     .add-menu-item:hover {
-      background: var(--secondary-background-color);
+      background: var(--secondary-background-color, #f5f5f5);
     }
 
     .add-menu-item.active {
       color: var(--primary-color);
-      font-weight: 500;
+      font-weight: 600;
     }
 
     .add-menu-item ha-icon {
