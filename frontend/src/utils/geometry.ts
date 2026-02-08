@@ -140,24 +140,39 @@ export function pointNearLine(
 }
 
 /**
- * Calculate polygon centroid
+ * Calculate polygon centroid (area-weighted using the shoelace formula)
  */
 export function polygonCentroid(polygon: Polygon): Coordinates | null {
   const vertices = polygon.vertices;
   if (vertices.length === 0) return null;
-
-  let cx = 0;
-  let cy = 0;
-
-  for (const v of vertices) {
-    cx += v.x;
-    cy += v.y;
+  if (vertices.length < 3) {
+    let cx = 0, cy = 0;
+    for (const v of vertices) { cx += v.x; cy += v.y; }
+    return { x: cx / vertices.length, y: cy / vertices.length };
   }
 
-  return {
-    x: cx / vertices.length,
-    y: cy / vertices.length,
-  };
+  let area = 0;
+  let cx = 0;
+  let cy = 0;
+  const n = vertices.length;
+
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    const cross = vertices[i].x * vertices[j].y - vertices[j].x * vertices[i].y;
+    area += cross;
+    cx += (vertices[i].x + vertices[j].x) * cross;
+    cy += (vertices[i].y + vertices[j].y) * cross;
+  }
+
+  area /= 2;
+  if (Math.abs(area) < 1e-6) {
+    let sx = 0, sy = 0;
+    for (const v of vertices) { sx += v.x; sy += v.y; }
+    return { x: sx / n, y: sy / n };
+  }
+
+  const factor = 1 / (6 * area);
+  return { x: cx * factor, y: cy * factor };
 }
 
 /**
