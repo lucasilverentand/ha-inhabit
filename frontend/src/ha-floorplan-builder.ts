@@ -21,6 +21,7 @@ import type {
 import "./components/canvas/fpb-canvas";
 import "./components/toolbar/fpb-toolbar";
 import { clearHistory } from "./stores/history-store";
+import { autoFixConstraints } from "./utils/wall-solver";
 
 // Global state signals
 export const currentFloorPlan = signal<FloorPlan | null>(null);
@@ -167,28 +168,40 @@ export class HaFloorplanBuilder extends LitElement {
 
     .empty-state .init-form input {
       width: 60px;
-      padding: 8px 12px;
-      border: 1px solid var(--divider-color);
-      border-radius: 4px;
+      padding: 10px 12px;
+      border: 1px solid var(--divider-color, #e0e0e0);
+      border-radius: 10px;
       font-size: 14px;
       text-align: center;
-      background: var(--primary-background-color);
+      background: var(--primary-background-color, #fafafa);
       color: var(--primary-text-color);
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+
+    .empty-state .init-form input:focus {
+      outline: none;
+      border-color: var(--primary-color, #2196f3);
+      box-shadow: 0 0 0 3px rgba(33, 150, 243, 0.1);
     }
 
     .empty-state button {
-      padding: 10px 20px;
+      padding: 11px 24px;
       background: var(--primary-color);
       color: var(--text-primary-color);
       border: none;
-      border-radius: 4px;
+      border-radius: 10px;
       cursor: pointer;
       font-size: 14px;
       font-weight: 500;
+      transition: opacity 0.15s, transform 0.1s;
     }
 
     .empty-state button:hover {
       opacity: 0.9;
+    }
+
+    .empty-state button:active {
+      transform: scale(0.97);
     }
   `;
 
@@ -230,11 +243,52 @@ export class HaFloorplanBuilder extends LitElement {
           currentFloor.value = updatedFp.floors[0];
         }
 
+        // Validate and auto-fix constraints on the current floor
+        await this._autoFixFloorConstraints(updatedFp);
+
         // Reload device placements
         await this._loadDevicePlacements(updatedFp.id);
       }
     } catch (err) {
       console.error("Error reloading floor data:", err);
+    }
+  }
+
+  /**
+   * Check all floors in a floor plan for constraint violations.
+   * If any are found, remove the violating constraints and persist to backend.
+   */
+  private async _autoFixFloorConstraints(floorPlan: FloorPlan): Promise<void> {
+    if (!this.hass) return;
+
+    for (const floor of floorPlan.floors) {
+      const { fixedEdgeIds } = autoFixConstraints(floor.nodes, floor.edges);
+      if (fixedEdgeIds.length === 0) continue;
+
+      console.warn(
+        `[inhabit] Auto-fixed ${fixedEdgeIds.length} overconstrained edge(s) on floor "${floor.id}":`,
+        fixedEdgeIds
+      );
+
+      // Persist fixes to backend
+      for (const edgeId of fixedEdgeIds) {
+        const edge = floor.edges.find(e => e.id === edgeId);
+        if (!edge) continue;
+
+        try {
+          await this.hass.callWS({
+            type: "inhabit/edges/update",
+            floor_plan_id: floorPlan.id,
+            floor_id: floor.id,
+            edge_id: edgeId,
+            direction: edge.direction,
+            length_locked: edge.length_locked,
+            angle_locked: edge.angle_locked,
+          });
+        } catch (err) {
+          console.error(`Failed to persist constraint fix for edge ${edgeId}:`, err);
+        }
+      }
     }
   }
 
