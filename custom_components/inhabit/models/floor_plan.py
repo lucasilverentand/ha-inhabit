@@ -257,10 +257,11 @@ class Node:
     id: str = field(default_factory=_generate_id)
     x: float = 0.0
     y: float = 0.0
+    pinned: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
-        return {"id": self.id, "x": self.x, "y": self.y}
+        return {"id": self.id, "x": self.x, "y": self.y, "pinned": self.pinned}
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Node:
@@ -269,6 +270,7 @@ class Node:
             id=data.get("id", _generate_id()),
             x=float(data["x"]),
             y=float(data["y"]),
+            pinned=data.get("pinned", False),
         )
 
 

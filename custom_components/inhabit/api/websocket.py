@@ -45,6 +45,8 @@ def async_register_websocket_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_edges_split)
     websocket_api.async_register_command(hass, ws_nodes_update)
     websocket_api.async_register_command(hass, ws_nodes_merge)
+    websocket_api.async_register_command(hass, ws_nodes_dissolve)
+    websocket_api.async_register_command(hass, ws_edges_split_at_point)
     websocket_api.async_register_command(hass, ws_devices_place)
     websocket_api.async_register_command(hass, ws_devices_update)
     websocket_api.async_register_command(hass, ws_devices_remove)
@@ -430,6 +432,59 @@ def _get_or_create_node(floor: Floor, x: float, y: float) -> Node:
     return node
 
 
+def _split_edges_at_node(floor: Floor, node: Node) -> None:
+    """If a node lies on an existing edge (not at its endpoints), split that edge."""
+    import math
+
+    to_split: list[tuple[int, Edge]] = []
+    for i, edge in enumerate(floor.edges):
+        if edge.start_node == node.id or edge.end_node == node.id:
+            continue
+        sn = next((n for n in floor.nodes if n.id == edge.start_node), None)
+        en = next((n for n in floor.nodes if n.id == edge.end_node), None)
+        if not sn or not en:
+            continue
+        # Check if node is collinear and between start/end
+        dx = en.x - sn.x
+        dy = en.y - sn.y
+        length_sq = dx * dx + dy * dy
+        if length_sq == 0:
+            continue
+        t = ((node.x - sn.x) * dx + (node.y - sn.y) * dy) / length_sq
+        if t <= 0.01 or t >= 0.99:
+            continue
+        # Project and check distance
+        proj_x = sn.x + t * dx
+        proj_y = sn.y + t * dy
+        dist = math.sqrt((node.x - proj_x) ** 2 + (node.y - proj_y) ** 2)
+        if dist <= SNAP_THRESHOLD:
+            to_split.append((i, edge))
+
+    # Split in reverse index order to preserve indices
+    for i, edge in reversed(to_split):
+        edge1 = Edge(
+            start_node=edge.start_node,
+            end_node=node.id,
+            type=edge.type,
+            thickness=edge.thickness,
+            is_exterior=edge.is_exterior,
+            length_locked=edge.length_locked,
+            direction=edge.direction,
+            angle_locked=edge.angle_locked,
+        )
+        edge2 = Edge(
+            start_node=node.id,
+            end_node=edge.end_node,
+            type=edge.type,
+            thickness=edge.thickness,
+            is_exterior=edge.is_exterior,
+            length_locked=edge.length_locked,
+            direction=edge.direction,
+            angle_locked=edge.angle_locked,
+        )
+        floor.edges[i:i + 1] = [edge1, edge2]
+
+
 def _cleanup_orphan_nodes(floor: Floor) -> list[str]:
     """Remove nodes that are not referenced by any edge. Returns removed IDs."""
     referenced = set()
@@ -454,7 +509,7 @@ def _cleanup_orphan_nodes(floor: Floor) -> list[str]:
         vol.Required("floor_id"): str,
         vol.Required("start"): dict,
         vol.Required("end"): dict,
-        vol.Optional("type", default="wall"): str,
+        vol.Optional("edge_type", default="wall"): str,
         vol.Optional("thickness", default=10.0): vol.Coerce(float),
         vol.Optional("is_exterior", default=False): bool,
         vol.Optional("length_locked", default=False): bool,
@@ -485,10 +540,14 @@ def ws_edges_add(
     start_node = _get_or_create_node(floor, float(start_coords["x"]), float(start_coords["y"]))
     end_node = _get_or_create_node(floor, float(end_coords["x"]), float(end_coords["y"]))
 
+    # Split any existing edges that the new nodes land on
+    _split_edges_at_node(floor, start_node)
+    _split_edges_at_node(floor, end_node)
+
     edge = Edge(
         start_node=start_node.id,
         end_node=end_node.id,
-        type=msg["type"],
+        type=msg["edge_type"],
         thickness=msg["thickness"],
         is_exterior=msg["is_exterior"],
         length_locked=msg["length_locked"],
@@ -714,6 +773,7 @@ def ws_edges_split(
 
     # Replace old edge with new edges
     floor.edges = [e for e in floor.edges if e.id != edge.id] + new_edges
+    _cleanup_orphan_nodes(floor)
 
     result = store.update_floor_plan(floor_plan)
     if result:
@@ -761,6 +821,8 @@ def ws_nodes_update(
             return
         node.x = float(update["x"])
         node.y = float(update["y"])
+        if "pinned" in update:
+            node.pinned = update["pinned"]
         updated_nodes.append(node)
 
     result = store.update_floor_plan(floor_plan)
@@ -825,6 +887,186 @@ def ws_nodes_merge(
         connection.send_result(msg["id"], {"success": True, "removed_node_id": remove_id})
     else:
         connection.send_error(msg["id"], "merge_failed", "Failed to merge nodes")
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{WS_PREFIX}/nodes/dissolve",
+        vol.Required("floor_plan_id"): str,
+        vol.Required("floor_id"): str,
+        vol.Required("node_id"): str,
+    }
+)
+@callback
+def ws_nodes_dissolve(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Dissolve a node: remove it and merge the two connected edges into one."""
+    store = hass.data[DOMAIN]["store"]
+    floor_plan = store.get_floor_plan(msg["floor_plan_id"])
+    if not floor_plan:
+        connection.send_error(msg["id"], "not_found", "Floor plan not found")
+        return
+
+    floor = floor_plan.get_floor(msg["floor_id"])
+    if not floor:
+        connection.send_error(msg["id"], "not_found", "Floor not found")
+        return
+
+    node_id = msg["node_id"]
+    node = floor.get_node(node_id)
+    if not node:
+        connection.send_error(msg["id"], "not_found", "Node not found")
+        return
+
+    # Find all edges connected to this node
+    connected = [e for e in floor.edges if e.start_node == node_id or e.end_node == node_id]
+
+    if len(connected) != 2:
+        connection.send_error(
+            msg["id"], "invalid_state",
+            f"Node must have exactly 2 connected edges to dissolve, found {len(connected)}"
+        )
+        return
+
+    e1, e2 = connected
+    # Find the "other" node for each edge
+    other1 = e1.end_node if e1.start_node == node_id else e1.start_node
+    other2 = e2.end_node if e2.start_node == node_id else e2.start_node
+
+    if other1 == other2:
+        connection.send_error(msg["id"], "invalid_state", "Cannot dissolve: both edges connect to the same node")
+        return
+
+    # Create merged edge inheriting properties from the first wall-type edge
+    base = e1 if e1.type == "wall" else e2
+    merged = Edge(
+        start_node=other1,
+        end_node=other2,
+        type="wall",
+        thickness=base.thickness,
+        is_exterior=base.is_exterior,
+        length_locked=False,
+        direction="free",
+        angle_locked=False,
+    )
+
+    # Remove old edges, add merged
+    old_ids = {e1.id, e2.id}
+    floor.edges = [e for e in floor.edges if e.id not in old_ids]
+    floor.edges.append(merged)
+
+    # Remove the dissolved node
+    floor.nodes = [n for n in floor.nodes if n.id != node_id]
+
+    result = store.update_floor_plan(floor_plan)
+    if result:
+        connection.send_result(msg["id"], {
+            "success": True,
+            "merged_edge": merged.to_dict(),
+            "removed_edge_ids": list(old_ids),
+            "removed_node_id": node_id,
+        })
+    else:
+        connection.send_error(msg["id"], "dissolve_failed", "Failed to dissolve node")
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{WS_PREFIX}/edges/split_at_point",
+        vol.Required("floor_plan_id"): str,
+        vol.Required("floor_id"): str,
+        vol.Required("edge_id"): str,
+        vol.Required("point"): dict,
+    }
+)
+@callback
+def ws_edges_split_at_point(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Split an edge at a specific point, creating a new node and two edges."""
+    store = hass.data[DOMAIN]["store"]
+    floor_plan = store.get_floor_plan(msg["floor_plan_id"])
+    if not floor_plan:
+        connection.send_error(msg["id"], "not_found", "Floor plan not found")
+        return
+
+    floor = floor_plan.get_floor(msg["floor_id"])
+    if not floor:
+        connection.send_error(msg["id"], "not_found", "Floor not found")
+        return
+
+    edge = floor.get_edge(msg["edge_id"])
+    if not edge:
+        connection.send_error(msg["id"], "not_found", "Edge not found")
+        return
+
+    start_node = floor.get_node(edge.start_node)
+    end_node = floor.get_node(edge.end_node)
+    if not start_node or not end_node:
+        connection.send_error(msg["id"], "invalid_state", "Edge nodes not found")
+        return
+
+    # Project the click point onto the edge to get exact split position
+    px = float(msg["point"]["x"])
+    py = float(msg["point"]["y"])
+    dx = end_node.x - start_node.x
+    dy = end_node.y - start_node.y
+    length_sq = dx * dx + dy * dy
+    if length_sq == 0:
+        connection.send_error(msg["id"], "invalid_state", "Edge has zero length")
+        return
+
+    t = ((px - start_node.x) * dx + (py - start_node.y) * dy) / length_sq
+    t = max(0.05, min(0.95, t))  # Clamp to avoid degenerate edges
+
+    split_x = start_node.x + t * dx
+    split_y = start_node.y + t * dy
+
+    # Create new node at split point
+    new_node = Node(x=split_x, y=split_y)
+    floor.nodes.append(new_node)
+
+    # Create two replacement edges
+    edge1 = Edge(
+        start_node=edge.start_node,
+        end_node=new_node.id,
+        type=edge.type,
+        thickness=edge.thickness,
+        is_exterior=edge.is_exterior,
+        length_locked=False,
+        direction=edge.direction,
+        angle_locked=False,
+    )
+    edge2 = Edge(
+        start_node=new_node.id,
+        end_node=edge.end_node,
+        type=edge.type,
+        thickness=edge.thickness,
+        is_exterior=edge.is_exterior,
+        length_locked=False,
+        direction=edge.direction,
+        angle_locked=False,
+    )
+
+    # Replace old edge
+    floor.edges = [e for e in floor.edges if e.id != edge.id]
+    floor.edges.extend([edge1, edge2])
+    _cleanup_orphan_nodes(floor)
+
+    result = store.update_floor_plan(floor_plan)
+    if result:
+        connection.send_result(msg["id"], {
+            "new_node": new_node.to_dict(),
+            "edges": [edge1.to_dict(), edge2.to_dict()],
+            "removed_edge_id": edge.id,
+        })
+    else:
+        connection.send_error(msg["id"], "split_failed", "Failed to split edge")
 
 
 # ==================== Device Placements ====================
