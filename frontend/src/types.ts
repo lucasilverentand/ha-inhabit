@@ -76,43 +76,14 @@ export interface Edge {
   is_exterior: boolean;
   length_locked: boolean;
   direction: WallDirection;
-  angle_locked: boolean;
+  angle_group?: string;
+  link_group?: string;
+  collinear_group?: string;
   // Door-specific
   swing_direction?: 'left' | 'right' | 'double' | 'sliding';
   entity_id?: string;
   // Window-specific
   height?: number;
-}
-
-/** @deprecated Use Edge with type='wall' instead */
-export interface Wall {
-  id: string;
-  start: Coordinates;
-  end: Coordinates;
-  thickness: number;
-  is_exterior: boolean;
-  length_locked: boolean;
-  direction: WallDirection;
-  angle_locked: boolean;
-}
-
-/** @deprecated Use Edge with type='door' instead */
-export interface Door {
-  id: string;
-  wall_id: string;
-  position: number;
-  width: number;
-  swing_direction: "left" | "right" | "double" | "sliding";
-  entity_id?: string;
-}
-
-/** @deprecated Use Edge with type='window' instead */
-export interface Window {
-  id: string;
-  wall_id: string;
-  position: number;
-  width: number;
-  height: number;
 }
 
 export interface Room {
@@ -138,12 +109,6 @@ export interface Floor {
   rooms: Room[];
   nodes: Node[];
   edges: Edge[];
-  /** @deprecated Use nodes + edges instead */
-  walls: Wall[];
-  /** @deprecated Use edges with type='door' instead */
-  doors: Door[];
-  /** @deprecated Use edges with type='window' instead */
-  windows: Window[];
 }
 
 export interface FloorPlan {

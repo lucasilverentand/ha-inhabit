@@ -250,76 +250,6 @@ export function groupEdgesIntoChains(
   return chains;
 }
 
-/** @deprecated Use groupEdgesIntoChains instead */
-export function groupWallsIntoChains(
-  walls: Array<{ id: string; start: Coordinates; end: Coordinates; thickness: number }>
-): Array<Array<{ id: string; start: Coordinates; end: Coordinates; thickness: number }>> {
-  if (walls.length === 0) return [];
-
-  const used = new Set<string>();
-  const chains: Array<Array<typeof walls[0]>> = [];
-  const tolerance = 1;
-
-  const pointsMatch = (p1: Coordinates, p2: Coordinates): boolean => {
-    return Math.abs(p1.x - p2.x) < tolerance && Math.abs(p1.y - p2.y) < tolerance;
-  };
-
-  for (const startWall of walls) {
-    if (used.has(startWall.id)) continue;
-
-    const chain: typeof walls = [startWall];
-    used.add(startWall.id);
-
-    let currentEnd = startWall.end;
-    let found = true;
-    while (found) {
-      found = false;
-      for (const wall of walls) {
-        if (used.has(wall.id)) continue;
-        if (pointsMatch(wall.start, currentEnd)) {
-          chain.push(wall);
-          used.add(wall.id);
-          currentEnd = wall.end;
-          found = true;
-          break;
-        } else if (pointsMatch(wall.end, currentEnd)) {
-          chain.push({ ...wall, start: wall.end, end: wall.start });
-          used.add(wall.id);
-          currentEnd = wall.start;
-          found = true;
-          break;
-        }
-      }
-    }
-
-    let currentStart = startWall.start;
-    found = true;
-    while (found) {
-      found = false;
-      for (const wall of walls) {
-        if (used.has(wall.id)) continue;
-        if (pointsMatch(wall.end, currentStart)) {
-          chain.unshift(wall);
-          used.add(wall.id);
-          currentStart = wall.start;
-          found = true;
-          break;
-        } else if (pointsMatch(wall.start, currentStart)) {
-          chain.unshift({ ...wall, start: wall.end, end: wall.start });
-          used.add(wall.id);
-          currentStart = wall.end;
-          found = true;
-          break;
-        }
-      }
-    }
-
-    chains.push(chain);
-  }
-
-  return chains;
-}
-
 /**
  * Create a wall chain path with proper miter joints at corners
  */
@@ -422,22 +352,98 @@ export function wallChainPath(
     });
   }
 
+  // Build a rounded path using quadratic bezier at corners
+  // Corner radius is proportional to wall thickness
+  const cornerR = Math.min(halfThick * 0.8, 4);
+
   // Build path: left side forward, then right side backward
   let path = `M${leftPoints[0].x},${leftPoints[0].y}`;
+
+  // Left side forward (skip first point, already in M)
   for (let i = 1; i < leftPoints.length; i++) {
-    path += ` L${leftPoints[i].x},${leftPoints[i].y}`;
+    if (i < leftPoints.length - 1 && leftPoints.length > 2) {
+      const prev = leftPoints[i - 1];
+      const curr = leftPoints[i];
+      const next = leftPoints[i + 1];
+      const dxIn = curr.x - prev.x;
+      const dyIn = curr.y - prev.y;
+      const lenIn = Math.sqrt(dxIn * dxIn + dyIn * dyIn);
+      const dxOut = next.x - curr.x;
+      const dyOut = next.y - curr.y;
+      const lenOut = Math.sqrt(dxOut * dxOut + dyOut * dyOut);
+      const rIn = Math.min(cornerR, lenIn / 2);
+      const rOut = Math.min(cornerR, lenOut / 2);
+      if (lenIn > 0 && lenOut > 0) {
+        const ax = curr.x - (dxIn / lenIn) * rIn;
+        const ay = curr.y - (dyIn / lenIn) * rIn;
+        const bx = curr.x + (dxOut / lenOut) * rOut;
+        const by = curr.y + (dyOut / lenOut) * rOut;
+        path += ` L${ax},${ay} Q${curr.x},${curr.y} ${bx},${by}`;
+      } else {
+        path += ` L${curr.x},${curr.y}`;
+      }
+    } else {
+      path += ` L${leftPoints[i].x},${leftPoints[i].y}`;
+    }
   }
 
-  // If not closed, connect to right side
+  // Right side backward
+  const rPts = [...rightPoints].reverse();
   if (!isClosed) {
-    for (let i = rightPoints.length - 1; i >= 0; i--) {
-      path += ` L${rightPoints[i].x},${rightPoints[i].y}`;
+    for (let i = 0; i < rPts.length; i++) {
+      if (i > 0 && i < rPts.length - 1 && rPts.length > 2) {
+        const prev = rPts[i - 1];
+        const curr = rPts[i];
+        const next = rPts[i + 1];
+        const dxIn = curr.x - prev.x;
+        const dyIn = curr.y - prev.y;
+        const lenIn = Math.sqrt(dxIn * dxIn + dyIn * dyIn);
+        const dxOut = next.x - curr.x;
+        const dyOut = next.y - curr.y;
+        const lenOut = Math.sqrt(dxOut * dxOut + dyOut * dyOut);
+        const rIn = Math.min(cornerR, lenIn / 2);
+        const rOut = Math.min(cornerR, lenOut / 2);
+        if (lenIn > 0 && lenOut > 0) {
+          const ax = curr.x - (dxIn / lenIn) * rIn;
+          const ay = curr.y - (dyIn / lenIn) * rIn;
+          const bx = curr.x + (dxOut / lenOut) * rOut;
+          const by = curr.y + (dyOut / lenOut) * rOut;
+          path += ` L${ax},${ay} Q${curr.x},${curr.y} ${bx},${by}`;
+        } else {
+          path += ` L${curr.x},${curr.y}`;
+        }
+      } else {
+        path += ` L${rPts[i].x},${rPts[i].y}`;
+      }
     }
   } else {
-    // For closed paths, we need to handle differently
     path += ` L${rightPoints[rightPoints.length - 1].x},${rightPoints[rightPoints.length - 1].y}`;
     for (let i = rightPoints.length - 2; i >= 0; i--) {
-      path += ` L${rightPoints[i].x},${rightPoints[i].y}`;
+      const ri = rightPoints.length - 1 - i; // index in reversed
+      if (ri > 0 && ri < rightPoints.length - 1) {
+        const prev = rightPoints[i + 1];
+        const curr = rightPoints[i];
+        const next = rightPoints[i - 1];
+        const dxIn = curr.x - prev.x;
+        const dyIn = curr.y - prev.y;
+        const lenIn = Math.sqrt(dxIn * dxIn + dyIn * dyIn);
+        const dxOut = next.x - curr.x;
+        const dyOut = next.y - curr.y;
+        const lenOut = Math.sqrt(dxOut * dxOut + dyOut * dyOut);
+        const rIn2 = Math.min(cornerR, lenIn / 2);
+        const rOut2 = Math.min(cornerR, lenOut / 2);
+        if (lenIn > 0 && lenOut > 0) {
+          const ax = curr.x - (dxIn / lenIn) * rIn2;
+          const ay = curr.y - (dyIn / lenIn) * rIn2;
+          const bx = curr.x + (dxOut / lenOut) * rOut2;
+          const by = curr.y + (dyOut / lenOut) * rOut2;
+          path += ` L${ax},${ay} Q${curr.x},${curr.y} ${bx},${by}`;
+        } else {
+          path += ` L${curr.x},${curr.y}`;
+        }
+      } else {
+        path += ` L${rightPoints[i].x},${rightPoints[i].y}`;
+      }
     }
   }
 

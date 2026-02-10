@@ -181,7 +181,7 @@ class TestOldFormatMigration:
             "name": "Test",
             "walls": [
                 {"id": "w1", "start": {"x": 0, "y": 0}, "end": {"x": 100, "y": 0},
-                 "length_locked": True, "direction": "horizontal", "angle_locked": True},
+                 "length_locked": True, "direction": "horizontal", "angle_group": "abc12345"},
             ],
         }
         floor = Floor.from_dict(data)
@@ -190,7 +190,7 @@ class TestOldFormatMigration:
         edge = floor.edges[0]
         assert edge.length_locked is True
         assert edge.direction == "horizontal"
-        assert edge.angle_locked is True
+        assert edge.angle_group == "abc12345"
 
     def test_empty_floor_no_walls(self):
         """Floor with no walls produces empty nodes and edges."""

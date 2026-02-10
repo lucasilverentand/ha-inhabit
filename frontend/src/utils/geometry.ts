@@ -243,6 +243,95 @@ export function lineIntersection(
 }
 
 /**
+ * Check if a set of points are approximately collinear.
+ * Picks the two most distant points as the reference line, then checks
+ * that all others are within `tolerance` perpendicular distance.
+ */
+export function arePointsCollinear(points: Coordinates[], tolerance: number = 2.0): boolean {
+  if (points.length < 2) return true;
+  if (points.length === 2) return true;
+
+  // Find two most distant points
+  let maxDist = 0;
+  let a = points[0], b = points[1];
+  for (let i = 0; i < points.length; i++) {
+    for (let j = i + 1; j < points.length; j++) {
+      const d = distance(points[i], points[j]);
+      if (d > maxDist) {
+        maxDist = d;
+        a = points[i];
+        b = points[j];
+      }
+    }
+  }
+  if (maxDist < 1e-9) return true; // all points coincident
+
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len = Math.sqrt(dx * dx + dy * dy);
+
+  for (const p of points) {
+    // Perpendicular distance from p to line (a→b)
+    const perpDist = Math.abs((p.x - a.x) * dy - (p.y - a.y) * dx) / len;
+    if (perpDist > tolerance) return false;
+  }
+  return true;
+}
+
+/**
+ * Fit a line through near-collinear points.
+ * Returns { anchor, dir } where dir is a unit vector.
+ * Uses the two most distant points as the reference.
+ */
+export function fitLine(points: Coordinates[]): { anchor: Coordinates; dir: Coordinates } {
+  if (points.length < 2) {
+    return { anchor: points[0] || { x: 0, y: 0 }, dir: { x: 1, y: 0 } };
+  }
+
+  let maxDist = 0;
+  let a = points[0], b = points[1];
+  for (let i = 0; i < points.length; i++) {
+    for (let j = i + 1; j < points.length; j++) {
+      const d = distance(points[i], points[j]);
+      if (d > maxDist) {
+        maxDist = d;
+        a = points[i];
+        b = points[j];
+      }
+    }
+  }
+
+  if (maxDist < 1e-9) {
+    return { anchor: a, dir: { x: 1, y: 0 } };
+  }
+
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  return {
+    anchor: a,
+    dir: { x: dx / maxDist, y: dy / maxDist },
+  };
+}
+
+/**
+ * Project a point onto a line defined by anchor + direction (unit vector).
+ * Returns the projected coordinates.
+ */
+export function projectOntoLine(
+  point: Coordinates,
+  anchor: Coordinates,
+  dir: Coordinates
+): Coordinates {
+  const dx = point.x - anchor.x;
+  const dy = point.y - anchor.y;
+  const t = dx * dir.x + dy * dir.y;
+  return {
+    x: anchor.x + t * dir.x,
+    y: anchor.y + t * dir.y,
+  };
+}
+
+/**
  * Offset a polygon by a given distance (simple approach)
  */
 export function offsetPolygon(polygon: Polygon, offset: number): Polygon {

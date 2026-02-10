@@ -42,6 +42,12 @@ def async_register_websocket_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_edges_add)
     websocket_api.async_register_command(hass, ws_edges_update)
     websocket_api.async_register_command(hass, ws_edges_delete)
+    websocket_api.async_register_command(hass, ws_edges_link)
+    websocket_api.async_register_command(hass, ws_edges_unlink)
+    websocket_api.async_register_command(hass, ws_edges_collinear_link)
+    websocket_api.async_register_command(hass, ws_edges_collinear_unlink)
+    websocket_api.async_register_command(hass, ws_edges_angle_link)
+    websocket_api.async_register_command(hass, ws_edges_angle_unlink)
     websocket_api.async_register_command(hass, ws_edges_split)
     websocket_api.async_register_command(hass, ws_nodes_update)
     websocket_api.async_register_command(hass, ws_nodes_merge)
@@ -470,7 +476,7 @@ def _split_edges_at_node(floor: Floor, node: Node) -> None:
             is_exterior=edge.is_exterior,
             length_locked=edge.length_locked,
             direction=edge.direction,
-            angle_locked=edge.angle_locked,
+            angle_group=edge.angle_group,
         )
         edge2 = Edge(
             start_node=node.id,
@@ -480,7 +486,7 @@ def _split_edges_at_node(floor: Floor, node: Node) -> None:
             is_exterior=edge.is_exterior,
             length_locked=edge.length_locked,
             direction=edge.direction,
-            angle_locked=edge.angle_locked,
+            angle_group=edge.angle_group,
         )
         floor.edges[i:i + 1] = [edge1, edge2]
 
@@ -514,7 +520,7 @@ def _cleanup_orphan_nodes(floor: Floor) -> list[str]:
         vol.Optional("is_exterior", default=False): bool,
         vol.Optional("length_locked", default=False): bool,
         vol.Optional("direction", default="free"): str,
-        vol.Optional("angle_locked", default=False): bool,
+        vol.Optional("angle_group", default=None): vol.Any(str, None),
     }
 )
 @callback
@@ -552,7 +558,7 @@ def ws_edges_add(
         is_exterior=msg["is_exterior"],
         length_locked=msg["length_locked"],
         direction=msg["direction"],
-        angle_locked=msg["angle_locked"],
+        angle_group=msg["angle_group"],
     )
     floor.edges.append(edge)
 
@@ -577,7 +583,9 @@ def ws_edges_add(
         vol.Optional("is_exterior"): bool,
         vol.Optional("length_locked"): bool,
         vol.Optional("direction"): str,
-        vol.Optional("angle_locked"): bool,
+        vol.Optional("angle_group"): vol.Any(str, None),
+        vol.Optional("link_group"): vol.Any(str, None),
+        vol.Optional("collinear_group"): vol.Any(str, None),
         vol.Optional("swing_direction"): vol.Any(str, None),
         vol.Optional("entity_id"): vol.Any(str, None),
         vol.Optional("height"): vol.Any(vol.Coerce(float), None),
@@ -616,14 +624,28 @@ def ws_edges_update(
         edge.length_locked = msg["length_locked"]
     if "direction" in msg:
         edge.direction = msg["direction"]
-    if "angle_locked" in msg:
-        edge.angle_locked = msg["angle_locked"]
+    if "angle_group" in msg:
+        edge.angle_group = msg["angle_group"]
     if "swing_direction" in msg:
         edge.swing_direction = msg["swing_direction"]
     if "entity_id" in msg:
         edge.entity_id = msg["entity_id"]
     if "height" in msg:
         edge.height = msg["height"]
+    if "link_group" in msg:
+        edge.link_group = msg["link_group"]
+    if "collinear_group" in msg:
+        edge.collinear_group = msg["collinear_group"]
+
+    # Propagate mirrored props to sibling edges in same link group
+    _LINKED_PROPS = {"thickness", "is_exterior", "direction", "length_locked"}
+    if edge.link_group is not None:
+        changed = {k for k in _LINKED_PROPS if k in msg}
+        if changed:
+            for sibling in floor.edges:
+                if sibling.id != edge.id and sibling.link_group == edge.link_group:
+                    for prop in changed:
+                        setattr(sibling, prop, getattr(edge, prop))
 
     result = store.update_floor_plan(floor_plan)
     if result:
@@ -665,7 +687,26 @@ def ws_edges_delete(
         connection.send_error(msg["id"], "not_found", "Edge not found")
         return
 
-    floor.edges.pop(edge_idx)
+    deleted_edge = floor.edges.pop(edge_idx)
+
+    # If deleted edge was in a link group and only 1 remains, clear that singleton
+    if deleted_edge.link_group:
+        siblings = [e for e in floor.edges if e.link_group == deleted_edge.link_group]
+        if len(siblings) == 1:
+            siblings[0].link_group = None
+
+    # Same for collinear group
+    if deleted_edge.collinear_group:
+        siblings = [e for e in floor.edges if e.collinear_group == deleted_edge.collinear_group]
+        if len(siblings) == 1:
+            siblings[0].collinear_group = None
+
+    # Same for angle group
+    if deleted_edge.angle_group:
+        siblings = [e for e in floor.edges if e.angle_group == deleted_edge.angle_group]
+        if len(siblings) == 1:
+            siblings[0].angle_group = None
+
     removed_nodes = _cleanup_orphan_nodes(floor)
 
     result = store.update_floor_plan(floor_plan)
@@ -676,6 +717,316 @@ def ws_edges_delete(
         })
     else:
         connection.send_error(msg["id"], "delete_failed", "Failed to delete edge")
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{WS_PREFIX}/edges/link",
+        vol.Required("floor_plan_id"): str,
+        vol.Required("floor_id"): str,
+        vol.Required("edge_ids"): [str],
+    }
+)
+@callback
+def ws_edges_link(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Link edges so property changes propagate between them."""
+    from uuid import uuid4
+
+    store = hass.data[DOMAIN]["store"]
+    floor_plan = store.get_floor_plan(msg["floor_plan_id"])
+    if not floor_plan:
+        connection.send_error(msg["id"], "not_found", "Floor plan not found")
+        return
+
+    floor = floor_plan.get_floor(msg["floor_id"])
+    if not floor:
+        connection.send_error(msg["id"], "not_found", "Floor not found")
+        return
+
+    edge_ids = msg["edge_ids"]
+    if len(edge_ids) < 2:
+        connection.send_error(msg["id"], "invalid", "At least 2 edges required")
+        return
+
+    edges = [floor.get_edge(eid) for eid in edge_ids]
+    if any(e is None for e in edges):
+        connection.send_error(msg["id"], "not_found", "One or more edges not found")
+        return
+
+    link_group = uuid4().hex[:8]
+    source = edges[0]
+    for edge in edges:
+        edge.link_group = link_group
+        edge.thickness = source.thickness
+        edge.is_exterior = source.is_exterior
+        edge.direction = source.direction
+        edge.length_locked = source.length_locked
+
+    result = store.update_floor_plan(floor_plan)
+    if result:
+        connection.send_result(msg["id"], {
+            "link_group": link_group,
+            "edge_ids": edge_ids,
+        })
+    else:
+        connection.send_error(msg["id"], "link_failed", "Failed to link edges")
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{WS_PREFIX}/edges/unlink",
+        vol.Required("floor_plan_id"): str,
+        vol.Required("floor_id"): str,
+        vol.Required("edge_ids"): [str],
+    }
+)
+@callback
+def ws_edges_unlink(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Unlink edges from their link groups."""
+    store = hass.data[DOMAIN]["store"]
+    floor_plan = store.get_floor_plan(msg["floor_plan_id"])
+    if not floor_plan:
+        connection.send_error(msg["id"], "not_found", "Floor plan not found")
+        return
+
+    floor = floor_plan.get_floor(msg["floor_id"])
+    if not floor:
+        connection.send_error(msg["id"], "not_found", "Floor not found")
+        return
+
+    # Collect affected groups before clearing
+    affected_groups: set[str] = set()
+    for eid in msg["edge_ids"]:
+        edge = floor.get_edge(eid)
+        if edge and edge.link_group:
+            affected_groups.add(edge.link_group)
+            edge.link_group = None
+
+    # For each affected group, if only 1 edge remains, clear its link_group too
+    for group in affected_groups:
+        siblings = [e for e in floor.edges if e.link_group == group]
+        if len(siblings) == 1:
+            siblings[0].link_group = None
+
+    result = store.update_floor_plan(floor_plan)
+    if result:
+        connection.send_result(msg["id"], {"success": True})
+    else:
+        connection.send_error(msg["id"], "unlink_failed", "Failed to unlink edges")
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{WS_PREFIX}/edges/collinear_link",
+        vol.Required("floor_plan_id"): str,
+        vol.Required("floor_id"): str,
+        vol.Required("edge_ids"): [str],
+    }
+)
+@callback
+def ws_edges_collinear_link(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Link edges into a collinear group so they stay on the same line."""
+    from uuid import uuid4
+
+    store = hass.data[DOMAIN]["store"]
+    floor_plan = store.get_floor_plan(msg["floor_plan_id"])
+    if not floor_plan:
+        connection.send_error(msg["id"], "not_found", "Floor plan not found")
+        return
+
+    floor = floor_plan.get_floor(msg["floor_id"])
+    if not floor:
+        connection.send_error(msg["id"], "not_found", "Floor not found")
+        return
+
+    edge_ids = msg["edge_ids"]
+    if len(edge_ids) < 2:
+        connection.send_error(msg["id"], "invalid", "At least 2 edges required")
+        return
+
+    edges = [floor.get_edge(eid) for eid in edge_ids]
+    if any(e is None for e in edges):
+        connection.send_error(msg["id"], "not_found", "One or more edges not found")
+        return
+
+    collinear_group = uuid4().hex[:8]
+    for edge in edges:
+        edge.collinear_group = collinear_group
+
+    result = store.update_floor_plan(floor_plan)
+    if result:
+        connection.send_result(msg["id"], {
+            "collinear_group": collinear_group,
+            "edge_ids": edge_ids,
+        })
+    else:
+        connection.send_error(msg["id"], "link_failed", "Failed to collinear link edges")
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{WS_PREFIX}/edges/collinear_unlink",
+        vol.Required("floor_plan_id"): str,
+        vol.Required("floor_id"): str,
+        vol.Required("edge_ids"): [str],
+    }
+)
+@callback
+def ws_edges_collinear_unlink(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Remove edges from their collinear groups."""
+    store = hass.data[DOMAIN]["store"]
+    floor_plan = store.get_floor_plan(msg["floor_plan_id"])
+    if not floor_plan:
+        connection.send_error(msg["id"], "not_found", "Floor plan not found")
+        return
+
+    floor = floor_plan.get_floor(msg["floor_id"])
+    if not floor:
+        connection.send_error(msg["id"], "not_found", "Floor not found")
+        return
+
+    # Collect affected groups before clearing
+    affected_groups: set[str] = set()
+    for eid in msg["edge_ids"]:
+        edge = floor.get_edge(eid)
+        if edge and edge.collinear_group:
+            affected_groups.add(edge.collinear_group)
+            edge.collinear_group = None
+
+    # For each affected group, if only 1 edge remains, clear its collinear_group too
+    for group in affected_groups:
+        siblings = [e for e in floor.edges if e.collinear_group == group]
+        if len(siblings) == 1:
+            siblings[0].collinear_group = None
+
+    result = store.update_floor_plan(floor_plan)
+    if result:
+        connection.send_result(msg["id"], {"success": True})
+    else:
+        connection.send_error(msg["id"], "unlink_failed", "Failed to collinear unlink edges")
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{WS_PREFIX}/edges/angle_link",
+        vol.Required("floor_plan_id"): str,
+        vol.Required("floor_id"): str,
+        vol.Required("edge_ids"): [str],
+    }
+)
+@callback
+def ws_edges_angle_link(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Link exactly 2 edges into an angle group (must share a common node)."""
+    from uuid import uuid4
+
+    store = hass.data[DOMAIN]["store"]
+    floor_plan = store.get_floor_plan(msg["floor_plan_id"])
+    if not floor_plan:
+        connection.send_error(msg["id"], "not_found", "Floor plan not found")
+        return
+
+    floor = floor_plan.get_floor(msg["floor_id"])
+    if not floor:
+        connection.send_error(msg["id"], "not_found", "Floor not found")
+        return
+
+    edge_ids = msg["edge_ids"]
+    if len(edge_ids) != 2:
+        connection.send_error(msg["id"], "invalid", "Exactly 2 edges required")
+        return
+
+    edges = [floor.get_edge(eid) for eid in edge_ids]
+    if any(e is None for e in edges):
+        connection.send_error(msg["id"], "not_found", "One or more edges not found")
+        return
+
+    # Validate the two edges share a common node
+    nodes_a = {edges[0].start_node, edges[0].end_node}
+    nodes_b = {edges[1].start_node, edges[1].end_node}
+    shared = nodes_a & nodes_b
+    if not shared:
+        connection.send_error(msg["id"], "invalid", "Edges must share a common node")
+        return
+
+    angle_group = uuid4().hex[:8]
+    for edge in edges:
+        edge.angle_group = angle_group
+
+    result = store.update_floor_plan(floor_plan)
+    if result:
+        connection.send_result(msg["id"], {
+            "angle_group": angle_group,
+            "edge_ids": edge_ids,
+        })
+    else:
+        connection.send_error(msg["id"], "link_failed", "Failed to angle link edges")
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{WS_PREFIX}/edges/angle_unlink",
+        vol.Required("floor_plan_id"): str,
+        vol.Required("floor_id"): str,
+        vol.Required("edge_ids"): [str],
+    }
+)
+@callback
+def ws_edges_angle_unlink(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Remove edges from their angle groups."""
+    store = hass.data[DOMAIN]["store"]
+    floor_plan = store.get_floor_plan(msg["floor_plan_id"])
+    if not floor_plan:
+        connection.send_error(msg["id"], "not_found", "Floor plan not found")
+        return
+
+    floor = floor_plan.get_floor(msg["floor_id"])
+    if not floor:
+        connection.send_error(msg["id"], "not_found", "Floor not found")
+        return
+
+    # Collect affected groups before clearing
+    affected_groups: set[str] = set()
+    for eid in msg["edge_ids"]:
+        edge = floor.get_edge(eid)
+        if edge and edge.angle_group:
+            affected_groups.add(edge.angle_group)
+            edge.angle_group = None
+
+    # For each affected group, if only 1 edge remains, clear its angle_group too
+    for group in affected_groups:
+        siblings = [e for e in floor.edges if e.angle_group == group]
+        if len(siblings) == 1:
+            siblings[0].angle_group = None
+
+    result = store.update_floor_plan(floor_plan)
+    if result:
+        connection.send_result(msg["id"], {"success": True})
+    else:
+        connection.send_error(msg["id"], "unlink_failed", "Failed to angle unlink edges")
 
 
 @websocket_api.websocket_command(
@@ -750,6 +1101,7 @@ def ws_edges_split(
             type="wall",
             thickness=edge.thickness,
             is_exterior=edge.is_exterior,
+            link_group=edge.link_group,
         ))
     opening_edge = Edge(
         start_node=n1.id,
@@ -769,6 +1121,7 @@ def ws_edges_split(
             type="wall",
             thickness=edge.thickness,
             is_exterior=edge.is_exterior,
+            link_group=edge.link_group,
         ))
 
     # Replace old edge with new edges
@@ -950,7 +1303,6 @@ def ws_nodes_dissolve(
         is_exterior=base.is_exterior,
         length_locked=False,
         direction="free",
-        angle_locked=False,
     )
 
     # Remove old edges, add merged
@@ -1040,7 +1392,7 @@ def ws_edges_split_at_point(
         is_exterior=edge.is_exterior,
         length_locked=False,
         direction=edge.direction,
-        angle_locked=False,
+        link_group=edge.link_group,
     )
     edge2 = Edge(
         start_node=new_node.id,
@@ -1050,7 +1402,7 @@ def ws_edges_split_at_point(
         is_exterior=edge.is_exterior,
         length_locked=False,
         direction=edge.direction,
-        angle_locked=False,
+        link_group=edge.link_group,
     )
 
     # Replace old edge

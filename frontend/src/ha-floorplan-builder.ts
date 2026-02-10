@@ -21,7 +21,8 @@ import type {
 import "./components/canvas/fpb-canvas";
 import "./components/toolbar/fpb-toolbar";
 import { clearHistory } from "./stores/history-store";
-import { autoFixConstraints } from "./utils/wall-solver";
+import { validateConstraints } from "./utils/wall-solver";
+import type { ConstraintViolation } from "./utils/wall-solver";
 
 // Global state signals
 export const currentFloorPlan = signal<FloorPlan | null>(null);
@@ -51,6 +52,7 @@ export const layers = signal<LayerConfig[]>([
 ]);
 
 export const devicePlacements = signal<DevicePlacement[]>([]);
+export const constraintConflicts = signal<Map<string, ConstraintViolation[]>>(new Map());
 
 // Function to reload current floor plan data (called after modifications)
 let _reloadFloorData: (() => Promise<void>) | null = null;
@@ -243,9 +245,6 @@ export class HaFloorplanBuilder extends LitElement {
           currentFloor.value = updatedFp.floors[0];
         }
 
-        // Validate and auto-fix constraints on the current floor
-        await this._autoFixFloorConstraints(updatedFp);
-
         // Reload device placements
         await this._loadDevicePlacements(updatedFp.id);
       }
@@ -255,41 +254,23 @@ export class HaFloorplanBuilder extends LitElement {
   }
 
   /**
-   * Check all floors in a floor plan for constraint violations.
-   * If any are found, remove the violating constraints and persist to backend.
+   * Detect constraint violations on all floors and surface them via the
+   * constraintConflicts signal. The user sees amber highlights on the
+   * canvas and decides what to fix — no silent mutation of constraints.
    */
-  private async _autoFixFloorConstraints(floorPlan: FloorPlan): Promise<void> {
-    if (!this.hass) return;
-
+  private _detectFloorConflicts(floorPlan: FloorPlan): void {
+    const conflicts = new Map<string, ConstraintViolation[]>();
     for (const floor of floorPlan.floors) {
-      const { fixedEdgeIds } = autoFixConstraints(floor.nodes, floor.edges);
-      if (fixedEdgeIds.length === 0) continue;
-
-      console.warn(
-        `[inhabit] Auto-fixed ${fixedEdgeIds.length} overconstrained edge(s) on floor "${floor.id}":`,
-        fixedEdgeIds
-      );
-
-      // Persist fixes to backend
-      for (const edgeId of fixedEdgeIds) {
-        const edge = floor.edges.find(e => e.id === edgeId);
-        if (!edge) continue;
-
-        try {
-          await this.hass.callWS({
-            type: "inhabit/edges/update",
-            floor_plan_id: floorPlan.id,
-            floor_id: floor.id,
-            edge_id: edgeId,
-            direction: edge.direction,
-            length_locked: edge.length_locked,
-            angle_locked: edge.angle_locked,
-          });
-        } catch (err) {
-          console.error(`Failed to persist constraint fix for edge ${edgeId}:`, err);
-        }
+      const violations = validateConstraints(floor.nodes, floor.edges);
+      if (violations.length > 0) {
+        conflicts.set(floor.id, violations);
+        console.warn(
+          `[inhabit] Detected ${violations.length} constraint conflict(s) on floor "${floor.id}":`,
+          violations.map(v => `${v.edgeId} (${v.type})`)
+        );
       }
     }
+    constraintConflicts.value = conflicts;
   }
 
   override updated(changedProps: PropertyValues): void {
@@ -323,6 +304,9 @@ export class HaFloorplanBuilder extends LitElement {
           currentFloor.value = result[0].floors[0];
           gridSize.value = result[0].grid_size;
         }
+
+        // Detect constraint conflicts on initial load (highlight, don't auto-fix)
+        this._detectFloorConflicts(result[0]);
 
         // Load device placements
         await this._loadDevicePlacements(result[0].id);

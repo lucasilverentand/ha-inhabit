@@ -138,15 +138,15 @@ class Wall:
     id: str = field(default_factory=_generate_id)
     start: Coordinates = field(default_factory=lambda: Coordinates(0, 0))
     end: Coordinates = field(default_factory=lambda: Coordinates(0, 0))
-    thickness: float = 10.0
+    thickness: float = 6.0
     is_exterior: bool = False
     length_locked: bool = False
     direction: str = "free"  # "free", "horizontal", "vertical"
-    angle_locked: bool = False
+    angle_group: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
-        return {
+        result: dict[str, Any] = {
             "id": self.id,
             "start": self.start.to_dict(),
             "end": self.end.to_dict(),
@@ -154,8 +154,10 @@ class Wall:
             "is_exterior": self.is_exterior,
             "length_locked": self.length_locked,
             "direction": self.direction,
-            "angle_locked": self.angle_locked,
         }
+        if self.angle_group is not None:
+            result["angle_group"] = self.angle_group
+        return result
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Wall:
@@ -175,11 +177,11 @@ class Wall:
             id=data.get("id", _generate_id()),
             start=Coordinates.from_dict(data["start"]),
             end=Coordinates.from_dict(data["end"]),
-            thickness=float(data.get("thickness", 10.0)),
+            thickness=float(data.get("thickness", 6.0)),
             is_exterior=bool(data.get("is_exterior", False)),
             length_locked=bool(length_locked),
             direction=direction,
-            angle_locked=bool(data.get("angle_locked", False)),
+            angle_group=data.get("angle_group"),
         )
 
 
@@ -282,11 +284,13 @@ class Edge:
     start_node: str = ""  # Node ID
     end_node: str = ""  # Node ID
     type: str = "wall"  # "wall" | "door" | "window"
-    thickness: float = 10.0
+    thickness: float = 6.0
     is_exterior: bool = False
     length_locked: bool = False
     direction: str = "free"  # "free", "horizontal", "vertical"
-    angle_locked: bool = False
+    angle_group: str | None = None
+    link_group: str | None = None
+    collinear_group: str | None = None
     # Door-specific
     swing_direction: str | None = None
     entity_id: str | None = None
@@ -304,8 +308,13 @@ class Edge:
             "is_exterior": self.is_exterior,
             "length_locked": self.length_locked,
             "direction": self.direction,
-            "angle_locked": self.angle_locked,
         }
+        if self.angle_group is not None:
+            result["angle_group"] = self.angle_group
+        if self.link_group is not None:
+            result["link_group"] = self.link_group
+        if self.collinear_group is not None:
+            result["collinear_group"] = self.collinear_group
         if self.swing_direction is not None:
             result["swing_direction"] = self.swing_direction
         if self.entity_id is not None:
@@ -322,11 +331,13 @@ class Edge:
             start_node=data.get("start_node", ""),
             end_node=data.get("end_node", ""),
             type=data.get("type", "wall"),
-            thickness=float(data.get("thickness", 10.0)),
+            thickness=float(data.get("thickness", 6.0)),
             is_exterior=bool(data.get("is_exterior", False)),
             length_locked=bool(data.get("length_locked", False)),
             direction=data.get("direction", "free"),
-            angle_locked=bool(data.get("angle_locked", False)),
+            angle_group=data.get("angle_group"),
+            link_group=data.get("link_group"),
+            collinear_group=data.get("collinear_group"),
             swing_direction=data.get("swing_direction"),
             entity_id=data.get("entity_id"),
             height=data.get("height"),
@@ -500,7 +511,7 @@ def _migrate_walls_to_graph(
             is_exterior=wall.is_exterior,
             length_locked=wall.length_locked,
             direction=wall.direction,
-            angle_locked=wall.angle_locked,
+            angle_group=wall.angle_group,
         )
         wall_id_to_edge[wall.id] = edge
         edges.append(edge)

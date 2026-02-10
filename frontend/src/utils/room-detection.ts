@@ -162,46 +162,6 @@ export function detectRoomsFromEdges(nodes: Node[], edges: Edge[]): RoomCandidat
   return Array.from(unique.values());
 }
 
-/** @deprecated Use detectRoomsFromEdges instead */
-export function detectRoomsFromWalls(walls: Array<{ start: Coordinates; end: Coordinates }>): RoomCandidate[] {
-  if (walls.length === 0) return [];
-
-  // Convert walls to nodes + edges
-  const nodeMap = new Map<string, Node>();
-  const nodes: Node[] = [];
-  const edges: Edge[] = [];
-  let nodeCounter = 0;
-
-  function getOrCreateNode(x: number, y: number): string {
-    const key = `${Math.round(x)},${Math.round(y)}`;
-    if (nodeMap.has(key)) return nodeMap.get(key)!.id;
-    const id = `_n${nodeCounter++}`;
-    const node: Node = { id, x, y, pinned: false };
-    nodeMap.set(key, node);
-    nodes.push(node);
-    return id;
-  }
-
-  for (let i = 0; i < walls.length; i++) {
-    const w = walls[i];
-    const startId = getOrCreateNode(w.start.x, w.start.y);
-    const endId = getOrCreateNode(w.end.x, w.end.y);
-    edges.push({
-      id: `_e${i}`,
-      start_node: startId,
-      end_node: endId,
-      type: 'wall',
-      thickness: 10,
-      is_exterior: false,
-      length_locked: false,
-      direction: 'free',
-      angle_locked: false,
-    });
-  }
-
-  return detectRoomsFromEdges(nodes, edges);
-}
-
 /** Signed area using the shoelace formula. Negative = CW in screen coords. */
 function signedArea(vertices: Coordinates[]): number {
   let area = 0;

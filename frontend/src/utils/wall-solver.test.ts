@@ -9,6 +9,8 @@ import {
   solveConstraintSnap,
   validateConstraints,
   autoFixConstraints,
+  findDegenerateEdges,
+  solveCollinearTotalLength,
 } from './wall-solver.js';
 import type { Node, Edge, WallDirection, EdgeType } from '../types.js';
 import { buildNodeMap } from './node-graph.js';
@@ -26,7 +28,7 @@ function createEdge(
   id: string,
   startNode: string,
   endNode: string,
-  opts?: { direction?: WallDirection; length_locked?: boolean; angle_locked?: boolean; type?: EdgeType }
+  opts?: { direction?: WallDirection; length_locked?: boolean; angle_group?: string; link_group?: string; type?: EdgeType }
 ): Edge {
   return {
     id,
@@ -37,7 +39,8 @@ function createEdge(
     is_exterior: false,
     length_locked: opts?.length_locked ?? false,
     direction: opts?.direction ?? 'free',
-    angle_locked: opts?.angle_locked ?? false,
+    angle_group: opts?.angle_group,
+    link_group: opts?.link_group,
   };
 }
 
@@ -260,13 +263,13 @@ describe('solveNodeMove', () => {
     expect(distance(n1, n2)).to.be.closeTo(100, 0.01);
   });
 
-  it('length_locked: moving node onto other node (zero distance) does not crash', () => {
+  it('length_locked: moving node onto other node (zero distance) is blocked', () => {
     const nodes = [createNode('n1', 0, 0), createNode('n2', 100, 0)];
     const edges = [createEdge('e1', 'n1', 'n2', { length_locked: true })];
     const graph = buildNodeGraph(nodes, edges);
-    // Move n2 exactly on top of n1
+    // Move n2 exactly on top of n1 — violates length lock (original length=100)
     const result = solveNodeMove(graph, 'n2', 0, 0);
-    expect(result.blocked).to.be.false;
+    expect(result.blocked).to.be.true;
   });
 
   // ── propagation ────────────────────────────────────────────────────────
@@ -584,124 +587,121 @@ describe('solveNodeMove – closed shapes', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 5. solveNodeMove – angle lock
+// 5. solveNodeMove – angle group (pair-based)
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('solveNodeMove – angle lock', () => {
-  it('should preserve angle and length for a single angle-locked edge', () => {
-    const nodes = [createNode('n1', 0, 0), createNode('n2', 100, 100)];
-    const edges = [createEdge('e1', 'n1', 'n2', { angle_locked: true })];
-    const graph = buildNodeGraph(nodes, edges);
-    const result = solveNodeMove(graph, 'n1', 50, 0);
-
-    const n1 = findUpdate(result.updates, 'n1')!;
-    const n2 = findUpdate(result.updates, 'n2')!;
-
-    const origLen = Math.sqrt(100 * 100 + 100 * 100);
-    expect(distance(n1, n2)).to.be.closeTo(origLen, 0.01);
-
-    const origAngle = Math.atan2(100, 100);
-    const newAngle = Math.atan2(n2.y - n1.y, n2.x - n1.x);
-    expect(newAngle).to.be.closeTo(origAngle, 0.01);
-  });
-
-  it('should make two angle-locked edges at a corner rotate rigidly', () => {
+describe('solveNodeMove – angle group', () => {
+  it('should preserve 90° angle between two edges at a shared node', () => {
+    // L-shape: n1--n2--n3, right angle at n2
     const nodes = [
       createNode('n1', 0, 0), createNode('n2', 100, 0), createNode('n3', 100, 100),
     ];
     const edges = [
-      createEdge('e1', 'n1', 'n2', { angle_locked: true }),
-      createEdge('e2', 'n2', 'n3', { angle_locked: true }),
+      createEdge('e1', 'n1', 'n2', { angle_group: 'ag1' }),
+      createEdge('e2', 'n2', 'n3', { angle_group: 'ag1' }),
     ];
     const graph = buildNodeGraph(nodes, edges);
+    // Move shared node n2 downward
     const result = solveNodeMove(graph, 'n2', 100, 50);
 
-    const n1 = findUpdate(result.updates, 'n1')!;
-    const n3 = findUpdate(result.updates, 'n3')!;
+    // After moving n2 to (100,50), the angle between e1 and e2 at n2 should stay 90°
+    const n1 = resolvedPos(result.updates, 'n1', nodes);
+    const n2 = resolvedPos(result.updates, 'n2', nodes);
+    const n3 = resolvedPos(result.updates, 'n3', nodes);
 
-    expect(n1.x).to.be.closeTo(0, 0.01);
-    expect(n1.y).to.be.closeTo(50, 0.01);
-    expect(n3.x).to.be.closeTo(100, 0.01);
-    expect(n3.y).to.be.closeTo(150, 0.01);
+    const angleE1 = Math.atan2(n1.y - n2.y, n1.x - n2.x);
+    const angleE2 = Math.atan2(n3.y - n2.y, n3.x - n2.x);
+    let angleBetween = ((angleE2 - angleE1) + 2 * Math.PI) % (2 * Math.PI);
+    // Original angle between edges at n2: atan2(0-0, 0-100) to atan2(100-0, 100-100) = π to π/2
+    // = (π/2 - π + 2π) % 2π = 3π/2 (or equivalently -π/2)
+    // The solver preserves this angle
+    expect(angleBetween).to.be.closeTo(3 * Math.PI / 2, 0.1);
   });
 
-  it('should propagate angle-locked movement to connected free edges', () => {
+  it('should preserve angle with a free third edge at the shared node', () => {
+    // T-junction: e1 and e2 are angle-grouped at n2, e3 is free
     const nodes = [
-      createNode('n1', 0, 0), createNode('n2', 100, 0), createNode('n3', 0, -100),
+      createNode('n1', 0, 0), createNode('n2', 100, 0),
+      createNode('n3', 100, 100), createNode('n4', 200, 0),
     ];
     const edges = [
-      createEdge('e1', 'n1', 'n2', { angle_locked: true }),
-      createEdge('e2', 'n3', 'n1'),
+      createEdge('e1', 'n1', 'n2', { angle_group: 'ag1' }),
+      createEdge('e2', 'n2', 'n3', { angle_group: 'ag1' }),
+      createEdge('e3', 'n2', 'n4'), // free edge
     ];
     const graph = buildNodeGraph(nodes, edges);
-    const result = solveNodeMove(graph, 'n2', 100, 50);
+    const result = solveNodeMove(graph, 'n1', 0, 50);
 
-    const n1 = findUpdate(result.updates, 'n1')!;
-    expect(n1.x).to.be.closeTo(0, 0.01);
-    expect(n1.y).to.be.closeTo(50, 0.01);
-    // n3 doesn't move (free)
-    expect(findUpdate(result.updates, 'n3')).to.be.undefined;
+    // The angle between e1 and e2 at n2 should be preserved
+    const n1 = resolvedPos(result.updates, 'n1', nodes);
+    const n2 = resolvedPos(result.updates, 'n2', nodes);
+    const n3 = resolvedPos(result.updates, 'n3', nodes);
+
+    const angleE1 = Math.atan2(n1.y - n2.y, n1.x - n2.x);
+    const angleE2 = Math.atan2(n3.y - n2.y, n3.x - n2.x);
+    const angleBetween = ((angleE2 - angleE1) + 2 * Math.PI) % (2 * Math.PI);
+    expect(angleBetween).to.be.closeTo(3 * Math.PI / 2, 0.1);
   });
 
-  it('should let direction constraint take precedence over angle_locked', () => {
-    const nodes = [createNode('n1', 0, 0), createNode('n2', 100, 0)];
-    const edges = [createEdge('e1', 'n1', 'n2', { angle_locked: true, direction: 'horizontal' })];
-    const graph = buildNodeGraph(nodes, edges);
-    const result = solveNodeMove(graph, 'n2', 150, 50);
-
-    const n1 = findUpdate(result.updates, 'n1')!;
-    const n2 = findUpdate(result.updates, 'n2')!;
-    // Direction wins: horizontal
-    expect(n1.y).to.equal(n2.y);
-    expect(n1.x).to.equal(0);
-  });
-
-  it('should handle angle-locked edges in a closed rectangle', () => {
+  it('should handle angle group in a closed rectangle', () => {
+    // Rectangle with all 4 corners angle-grouped
     const nodes = [
       createNode('n1', 0, 0), createNode('n2', 200, 0),
       createNode('n3', 200, 200), createNode('n4', 0, 200),
     ];
     const edges = [
-      createEdge('top', 'n1', 'n2', { angle_locked: true }),
-      createEdge('right', 'n2', 'n3', { angle_locked: true }),
-      createEdge('bottom', 'n3', 'n4', { angle_locked: true }),
-      createEdge('left', 'n4', 'n1', { angle_locked: true }),
+      createEdge('top', 'n1', 'n2', { angle_group: 'ag1' }),
+      createEdge('right', 'n2', 'n3', { angle_group: 'ag1' }),
+      // Different angle group for the other corner
+      createEdge('bottom', 'n3', 'n4', { angle_group: 'ag2' }),
+      createEdge('left', 'n4', 'n1', { angle_group: 'ag2' }),
     ];
     const graph = buildNodeGraph(nodes, edges);
     const result = solveNodeMove(graph, 'n2', 250, 0);
     expect(result.blocked).to.be.false;
+  });
 
-    const n1 = findUpdate(result.updates, 'n1')!;
+  it('edges without angle_group are not affected by angle constraints', () => {
+    // Two edges sharing node but NO angle_group — should move freely
+    const nodes = [
+      createNode('n1', 0, 0), createNode('n2', 100, 0), createNode('n3', 100, 100),
+    ];
+    const edges = [
+      createEdge('e1', 'n1', 'n2'),
+      createEdge('e2', 'n2', 'n3'),
+    ];
+    const graph = buildNodeGraph(nodes, edges);
+    const result = solveNodeMove(graph, 'n3', 150, 100);
+
+    // n3 should move to requested position since edges are free
     const n3 = findUpdate(result.updates, 'n3')!;
-    expect(n1.x).to.be.closeTo(50, 0.01);
-    expect(n3.x).to.be.closeTo(250, 0.01);
-    expect(n3.y).to.be.closeTo(200, 0.01);
+    expect(n3.x).to.be.closeTo(150, 0.01);
+    expect(n3.y).to.be.closeTo(100, 0.01);
+    // n1 should not move
+    expect(findUpdate(result.updates, 'n1')).to.be.undefined;
   });
 
-  it('angle_locked with a 45-degree edge: translation preserves geometry', () => {
-    const nodes = [createNode('n1', 0, 0), createNode('n2', 100, 100)];
-    const edges = [createEdge('e1', 'n1', 'n2', { angle_locked: true })];
+  it('should preserve angle when dragging an outer node', () => {
+    // Drag n3 (outer node of e2) — angle at n2 should be preserved
+    const nodes = [
+      createNode('n1', 0, 0), createNode('n2', 100, 0), createNode('n3', 100, 100),
+    ];
+    const edges = [
+      createEdge('e1', 'n1', 'n2', { angle_group: 'ag1' }),
+      createEdge('e2', 'n2', 'n3', { angle_group: 'ag1' }),
+    ];
     const graph = buildNodeGraph(nodes, edges);
-    const result = solveNodeMove(graph, 'n1', 50, 50);
+    const result = solveNodeMove(graph, 'n3', 150, 100);
 
-    const n2 = findUpdate(result.updates, 'n2')!;
-    // Should translate: n2 = (150, 150)
-    expect(n2.x).to.be.closeTo(150, 0.01);
-    expect(n2.y).to.be.closeTo(150, 0.01);
-  });
+    const n1 = resolvedPos(result.updates, 'n1', nodes);
+    const n2 = resolvedPos(result.updates, 'n2', nodes);
+    const n3 = resolvedPos(result.updates, 'n3', nodes);
 
-  it('angle_locked: moving end node should reposition start node', () => {
-    const nodes = [createNode('n1', 0, 0), createNode('n2', 0, 100)];
-    const edges = [createEdge('e1', 'n1', 'n2', { angle_locked: true })];
-    const graph = buildNodeGraph(nodes, edges);
-    const result = solveNodeMove(graph, 'n2', 50, 100);
-
-    const n1 = findUpdate(result.updates, 'n1')!;
-    // Original angle from n2's perspective: atan2(0-100, 0-0) = atan2(-100, 0) = -π/2
-    // From n1's perspective: angle n1→n2 = atan2(100, 0) = π/2
-    // n1 adjusts: n2(50,100) + cos(-π/2)*100, sin(-π/2)*100 = (50, 0)
-    expect(n1.x).to.be.closeTo(50, 0.01);
-    expect(n1.y).to.be.closeTo(0, 0.01);
+    const angleE1 = Math.atan2(n1.y - n2.y, n1.x - n2.x);
+    const angleE2 = Math.atan2(n3.y - n2.y, n3.x - n2.x);
+    const angleBetween = ((angleE2 - angleE1) + 2 * Math.PI) % (2 * Math.PI);
+    // Original angle is 3π/2 (270°)
+    expect(angleBetween).to.be.closeTo(3 * Math.PI / 2, 0.1);
   });
 });
 
@@ -744,7 +744,7 @@ describe('solveEdgeLengthChange', () => {
     const result = solveEdgeLengthChange(graph, 'e1', 200);
 
     expect(result.blocked).to.be.true;
-    expect(result.blockedBy).to.equal('e1');
+    expect(result.blockedBy).to.deep.equal(['e1']);
     expect(result.updates.length).to.equal(0);
   });
 
@@ -1073,7 +1073,7 @@ describe('previewNodeDrag', () => {
       createNode('n1', 0, 0), createNode('n2', 100, 0), createNode('n3', 100, 100),
     ];
     const edges = [createEdge('e1', 'n1', 'n2'), createEdge('e2', 'n2', 'n3')];
-    const preview = previewNodeDrag(nodes, edges, 'n2', 150, 0);
+    const { positions: preview } = previewNodeDrag(nodes, edges, 'n2', 150, 0);
     expect(preview.size).to.be.greaterThan(0);
     expect(preview.has('n2')).to.be.true;
   });
@@ -1091,7 +1091,7 @@ describe('previewNodeDrag', () => {
   it('should include constrained nodes in preview', () => {
     const nodes = [createNode('n1', 0, 0), createNode('n2', 100, 0)];
     const edges = [createEdge('e1', 'n1', 'n2', { direction: 'horizontal' })];
-    const preview = previewNodeDrag(nodes, edges, 'n2', 100, 50);
+    const { positions: preview } = previewNodeDrag(nodes, edges, 'n2', 100, 50);
     expect(preview.has('n1')).to.be.true;
     expect(preview.get('n1')!.y).to.equal(50);
   });
@@ -1398,13 +1398,13 @@ describe('numeric edge cases', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('blockedBy reason reporting', () => {
-  it('blockedBy should contain the edge ID that caused blocking', () => {
+  it('blockedBy should contain the edge IDs that caused blocking', () => {
     const nodes = [createNode('n1', 0, 0), createNode('n2', 100, 0)];
     const edges = [createEdge('my-locked-wall', 'n1', 'n2', { length_locked: true })];
     const graph = buildNodeGraph(nodes, edges);
     const result = solveEdgeLengthChange(graph, 'my-locked-wall', 500);
     expect(result.blocked).to.be.true;
-    expect(result.blockedBy).to.equal('my-locked-wall');
+    expect(result.blockedBy).to.deep.equal(['my-locked-wall']);
   });
 
   it('free edge length change is never blocked', () => {
@@ -1416,12 +1416,33 @@ describe('blockedBy reason reporting', () => {
     expect(result.blockedBy).to.be.undefined;
   });
 
-  it('node move is never blocked (constraints propagate instead)', () => {
+  it('node move propagates constraints without blocking when satisfiable', () => {
     const nodes = [createNode('n1', 0, 0), createNode('n2', 100, 0)];
-    const edges = [createEdge('e1', 'n1', 'n2', { length_locked: true, direction: 'horizontal', angle_locked: true })];
+    const edges = [createEdge('e1', 'n1', 'n2', { length_locked: true, direction: 'horizontal' })];
     const graph = buildNodeGraph(nodes, edges);
     const result = solveNodeMove(graph, 'n1', 500, 500);
+    // n2 should propagate to (600, 500) — horizontal + length 100 is satisfiable
     expect(result.blocked).to.be.false;
+  });
+
+  it('node move is blocked when constraints cannot be satisfied', () => {
+    // n1 —[horizontal, length_locked=100]— n2 —[horizontal, length_locked=100]— n3 (pinned)
+    // Moving n1 vertically while n3 is pinned at y=0 means the horizontal
+    // constraints between n1(y=200) and the chain to n3(y=0) can't all hold.
+    const nodes = [
+      createNode('n1', 0, 0),
+      createNode('n2', 100, 0),
+      { ...createNode('n3', 200, 0), pinned: true },
+    ];
+    const edges = [
+      createEdge('e1', 'n1', 'n2', { length_locked: true, direction: 'horizontal' }),
+      createEdge('e2', 'n2', 'n3', { length_locked: true, direction: 'horizontal' }),
+    ];
+    const graph = buildNodeGraph(nodes, edges);
+    // Move n1 far off the horizontal line — solver can't keep both edges horizontal
+    const result = solveNodeMove(graph, 'n1', 0, 200);
+    expect(result.blocked).to.be.true;
+    expect(result.blockedBy).to.be.an('array').that.is.not.empty;
   });
 
   it('constraint snap is never blocked', () => {
@@ -1489,9 +1510,9 @@ describe('validateConstraints', () => {
   });
 
   it('should respect tolerance', () => {
-    const nodes = [createNode('n1', 0, 0), createNode('n2', 100, 0.3)];
+    const nodes = [createNode('n1', 0, 0), createNode('n2', 100, 0.15)];
     const edges = [createEdge('e1', 'n1', 'n2', { direction: 'horizontal' })];
-    // Default tolerance 0.5 — 0.3 is within tolerance
+    // Default tolerance 0.2 — 0.15 is within tolerance
     expect(validateConstraints(nodes, edges)).to.have.length(0);
     // Tighter tolerance
     expect(validateConstraints(nodes, edges, 0.1)).to.have.length(1);
@@ -1763,10 +1784,9 @@ describe('solveNodeMove – length lock enforcement after solve', () => {
     ];
     const graph = buildNodeGraph(nodes, edges);
     const result = solveNodeMove(graph, 'n3', 300, 100);
-    // Should not crash
-    expect(result.blocked).to.be.false;
-    // n1 pinned — should not move
-    expect(findUpdate(result.updates, 'n1')).to.be.undefined;
+    // Should not crash — but the move is blocked because pinned n1 prevents
+    // the chain from satisfying both length locks at the requested position
+    expect(result.blocked).to.be.true;
   });
 
   it('star topology: all length-locked spokes preserve length', () => {
@@ -1851,5 +1871,577 @@ describe('solveNodeMove – length lock enforcement after solve', () => {
       );
       expect(edgeLengthAfter(result.updates, edge, nodes)).to.be.closeTo(origLen, 1.0, `Edge ${edge.id} length violated`);
     }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 17. findDegenerateEdges
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('findDegenerateEdges', () => {
+  it('should return empty for normal-length edges', () => {
+    const nodes = [createNode('n1', 0, 0), createNode('n2', 100, 0)];
+    const edges = [createEdge('e1', 'n1', 'n2')];
+    expect(findDegenerateEdges(nodes, edges)).to.deep.equal([]);
+  });
+
+  it('should detect an edge whose endpoints are identical', () => {
+    const nodes = [createNode('n1', 50, 50), createNode('n2', 50, 50)];
+    const edges = [createEdge('e1', 'n1', 'n2')];
+    expect(findDegenerateEdges(nodes, edges)).to.deep.equal(['e1']);
+  });
+
+  it('should detect an edge with length below the default threshold', () => {
+    const nodes = [createNode('n1', 10, 10), createNode('n2', 10.2, 10.3)];
+    const edges = [createEdge('e1', 'n1', 'n2')];
+    // distance = sqrt(0.04 + 0.09) ≈ 0.36, below 0.5 threshold → degenerate
+    expect(findDegenerateEdges(nodes, edges)).to.deep.equal(['e1']);
+  });
+
+  it('should not flag an edge just above the threshold', () => {
+    const nodes = [createNode('n1', 0, 0), createNode('n2', 1, 0)];
+    const edges = [createEdge('e1', 'n1', 'n2')];
+    expect(findDegenerateEdges(nodes, edges)).to.deep.equal([]);
+  });
+
+  it('should detect multiple degenerate edges', () => {
+    const nodes = [
+      createNode('n1', 0, 0), createNode('n2', 0, 0),
+      createNode('n3', 100, 0), createNode('n4', 100, 0),
+      createNode('n5', 200, 0), createNode('n6', 300, 0),
+    ];
+    const edges = [
+      createEdge('e1', 'n1', 'n2'),
+      createEdge('e2', 'n3', 'n4'),
+      createEdge('e3', 'n5', 'n6'),
+    ];
+    const result = findDegenerateEdges(nodes, edges);
+    expect(result).to.include('e1');
+    expect(result).to.include('e2');
+    expect(result).to.not.include('e3');
+  });
+
+  it('should respect a custom threshold', () => {
+    const nodes = [createNode('n1', 0, 0), createNode('n2', 3, 0)];
+    const edges = [createEdge('e1', 'n1', 'n2')];
+    // 3cm is above default threshold but below custom 5cm threshold
+    expect(findDegenerateEdges(nodes, edges, 5)).to.deep.equal(['e1']);
+    expect(findDegenerateEdges(nodes, edges, 2)).to.deep.equal([]);
+  });
+
+  it('should skip edges with missing nodes', () => {
+    const nodes = [createNode('n1', 0, 0)];
+    const edges = [createEdge('e1', 'n1', 'n_missing')];
+    // Missing node — edge should be skipped, not crash
+    expect(findDegenerateEdges(nodes, edges)).to.deep.equal([]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// solveCollinearTotalLength
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('solveCollinearTotalLength', () => {
+  it('should scale 3-edge horizontal chain proportionally', () => {
+    // n1(0,0)--e1--n2(100,0)--e2--n3(200,0)--e3--n4(300,0)
+    // Total = 300, scale to 600
+    const nodes: Node[] = [
+      { id: 'n1', x: 0, y: 0, pinned: false },
+      { id: 'n2', x: 100, y: 0, pinned: false },
+      { id: 'n3', x: 200, y: 0, pinned: false },
+      { id: 'n4', x: 300, y: 0, pinned: false },
+    ];
+    const edges: Edge[] = [
+      createEdge('e1', 'n1', 'n2'),
+      createEdge('e2', 'n2', 'n3'),
+      createEdge('e3', 'n3', 'n4'),
+    ];
+    const graph = buildNodeGraph(nodes, edges);
+    const result = solveCollinearTotalLength(graph, ['e1', 'e2', 'e3'], 600);
+
+    expect(result.blocked).to.be.false;
+
+    // n1 stays at 0, n4 moves to 600
+    const n2 = findUpdate(result.updates, 'n2');
+    const n3 = findUpdate(result.updates, 'n3');
+    const n4 = findUpdate(result.updates, 'n4');
+
+    expect(n4).to.exist;
+    expect(n4!.x).to.be.closeTo(600, 1);
+    expect(n4!.y).to.be.closeTo(0, 1);
+
+    // Proportional: n2 was at 1/3, n3 was at 2/3
+    expect(n2).to.exist;
+    expect(n2!.x).to.be.closeTo(200, 1);
+    expect(n3).to.exist;
+    expect(n3!.x).to.be.closeTo(400, 1);
+  });
+
+  it('should block when a length-locked edge is included', () => {
+    const nodes: Node[] = [
+      { id: 'n1', x: 0, y: 0, pinned: false },
+      { id: 'n2', x: 100, y: 0, pinned: false },
+      { id: 'n3', x: 200, y: 0, pinned: false },
+    ];
+    const edges: Edge[] = [
+      createEdge('e1', 'n1', 'n2', { length_locked: true }),
+      createEdge('e2', 'n2', 'n3'),
+    ];
+    const graph = buildNodeGraph(nodes, edges);
+    const result = solveCollinearTotalLength(graph, ['e1', 'e2'], 300);
+
+    expect(result.blocked).to.be.true;
+    expect(result.blockedBy).to.include('e1');
+  });
+
+  it('should handle scaling down', () => {
+    // n1(0,0)--e1--n2(200,0)--e2--n3(400,0)
+    // Total = 400, scale to 200
+    const nodes: Node[] = [
+      { id: 'n1', x: 0, y: 0, pinned: false },
+      { id: 'n2', x: 200, y: 0, pinned: false },
+      { id: 'n3', x: 400, y: 0, pinned: false },
+    ];
+    const edges: Edge[] = [
+      createEdge('e1', 'n1', 'n2'),
+      createEdge('e2', 'n2', 'n3'),
+    ];
+    const graph = buildNodeGraph(nodes, edges);
+    const result = solveCollinearTotalLength(graph, ['e1', 'e2'], 200);
+
+    expect(result.blocked).to.be.false;
+    const n2 = findUpdate(result.updates, 'n2');
+    const n3 = findUpdate(result.updates, 'n3');
+    expect(n2).to.exist;
+    expect(n2!.x).to.be.closeTo(100, 1);
+    expect(n3).to.exist;
+    expect(n3!.x).to.be.closeTo(200, 1);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Collinear constraint in solveNodeMove
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('collinear constraint enforcement', () => {
+  it('should project node back onto line when dragged perpendicular', () => {
+    // Two horizontal edges sharing a collinear group
+    // n1(0,0)--e1--n2(100,0)--e2--n3(200,0)
+    const nodes: Node[] = [
+      { id: 'n1', x: 0, y: 0, pinned: false },
+      { id: 'n2', x: 100, y: 0, pinned: false },
+      { id: 'n3', x: 200, y: 0, pinned: false },
+    ];
+    const edges: Edge[] = [
+      { ...createEdge('e1', 'n1', 'n2'), collinear_group: 'cg1' },
+      { ...createEdge('e2', 'n2', 'n3'), collinear_group: 'cg1' },
+    ];
+    const graph = buildNodeGraph(nodes, edges);
+
+    // Drag n2 perpendicular (to y=50) — should be projected back onto the line
+    const result = solveNodeMove(graph, 'n2', 100, 50);
+
+    // The perpendicular component is removed — projected back to (100,0),
+    // which is the original position, so no update is emitted (no-op move).
+    const n2 = findUpdate(result.updates, 'n2');
+    expect(n2).to.be.undefined; // projected back to original = no movement
+
+    // Drag diagonally — should only keep the along-line component
+    const result2 = solveNodeMove(graph, 'n2', 150, 50);
+    const n2b = findUpdate(result2.updates, 'n2');
+    expect(n2b).to.exist;
+    expect(n2b!.x).to.be.closeTo(150, 1);
+    expect(n2b!.y).to.be.closeTo(0, 1); // perpendicular removed
+  });
+
+  it('should allow drag along the collinear line', () => {
+    const nodes: Node[] = [
+      { id: 'n1', x: 0, y: 0, pinned: false },
+      { id: 'n2', x: 100, y: 0, pinned: false },
+      { id: 'n3', x: 200, y: 0, pinned: false },
+    ];
+    const edges: Edge[] = [
+      { ...createEdge('e1', 'n1', 'n2'), collinear_group: 'cg1' },
+      { ...createEdge('e2', 'n2', 'n3'), collinear_group: 'cg1' },
+    ];
+    const graph = buildNodeGraph(nodes, edges);
+
+    // Drag n2 along the line (to x=150)
+    const result = solveNodeMove(graph, 'n2', 150, 0);
+    expect(result.blocked).to.be.false;
+    const n2 = findUpdate(result.updates, 'n2');
+    expect(n2).to.exist;
+    expect(n2!.x).to.equal(150);
+    expect(n2!.y).to.equal(0);
+  });
+
+  it('should detect collinear violations in validateConstraints', () => {
+    // Nodes that are NOT collinear but have collinear_group set
+    const nodes: Node[] = [
+      { id: 'n1', x: 0, y: 0, pinned: false },
+      { id: 'n2', x: 100, y: 50, pinned: false }, // off-line
+      { id: 'n3', x: 200, y: 0, pinned: false },
+    ];
+    const edges: Edge[] = [
+      { ...createEdge('e1', 'n1', 'n2'), collinear_group: 'cg1' },
+      { ...createEdge('e2', 'n2', 'n3'), collinear_group: 'cg1' },
+    ];
+    const violations = validateConstraints(nodes, edges, 0.5);
+    const collinearViolation = violations.find(v => v.type === 'collinear');
+    expect(collinearViolation).to.exist;
+    expect(collinearViolation!.actual).to.be.greaterThan(0.5);
+  });
+
+  it('should auto-fix collinear violations by clearing collinear_group', () => {
+    const nodes: Node[] = [
+      { id: 'n1', x: 0, y: 0, pinned: false },
+      { id: 'n2', x: 100, y: 50, pinned: false }, // off-line
+      { id: 'n3', x: 200, y: 0, pinned: false },
+    ];
+    const edges: Edge[] = [
+      { ...createEdge('e1', 'n1', 'n2'), collinear_group: 'cg1' },
+      { ...createEdge('e2', 'n2', 'n3'), collinear_group: 'cg1' },
+    ];
+    const result = autoFixConstraints(nodes, edges, 0.5);
+    expect(result.fixedEdgeIds.length).to.be.greaterThan(0);
+    // The violating edge should have collinear_group cleared
+    const fixedEdge = edges.find(e => result.fixedEdgeIds.includes(e.id));
+    expect(fixedEdge).to.exist;
+    expect(fixedEdge!.collinear_group).to.be.undefined;
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Iterative convergence (no post-solve fighting)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('iterative convergence without post-solve fighting', () => {
+  it('length lock and collinear constraint on shared node converge without fighting', () => {
+    // n1(0,0)--e1[collinear,length_locked]--n2(100,0)--e2[collinear]--n3(200,0)
+    // Drag n2 along the line — length lock and collinear must both hold.
+    const nodes: Node[] = [
+      { id: 'n1', x: 0, y: 0, pinned: false },
+      { id: 'n2', x: 100, y: 0, pinned: false },
+      { id: 'n3', x: 200, y: 0, pinned: false },
+    ];
+    const edges: Edge[] = [
+      { ...createEdge('e1', 'n1', 'n2', { length_locked: true }), collinear_group: 'cg1' },
+      { ...createEdge('e2', 'n2', 'n3'), collinear_group: 'cg1' },
+    ];
+    const graph = buildNodeGraph(nodes, edges);
+
+    // Drag n2 diagonally — collinear projects back onto line, length lock must hold
+    const result = solveNodeMove(graph, 'n2', 150, 50);
+    expect(result.blocked).to.be.false;
+
+    // e1 length must be preserved
+    expect(edgeLengthAfter(result.updates, edges[0], nodes)).to.be.closeTo(100, 0.5);
+
+    // All nodes must remain on the collinear line (y ≈ 0)
+    const n1 = resolvedPos(result.updates, 'n1', nodes);
+    const n2 = resolvedPos(result.updates, 'n2', nodes);
+    const n3 = resolvedPos(result.updates, 'n3', nodes);
+    expect(n1.y).to.be.closeTo(0, 0.5);
+    expect(n2.y).to.be.closeTo(0, 0.5);
+    expect(n3.y).to.be.closeTo(0, 0.5);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pre-existing violation worsening detection
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('pre-existing violation worsening', () => {
+  it('pre-existing violation worsened by move → blocked', () => {
+    // n1 at (0,0), n2 at (100,5): horizontal constraint already violated by 5.
+    // n3 at (200,5): free edge.
+    // Moving n2 to (100,50) worsens the horizontal violation from 5 to 50 → should block.
+    const nodes: Node[] = [
+      { id: 'n1', x: 0, y: 0, pinned: true },
+      { id: 'n2', x: 100, y: 5, pinned: false },
+      { id: 'n3', x: 200, y: 5, pinned: false },
+    ];
+    const edges: Edge[] = [
+      createEdge('e1', 'n1', 'n2', { direction: 'horizontal' }),
+      createEdge('e2', 'n2', 'n3'),
+    ];
+    const graph = buildNodeGraph(nodes, edges);
+    const result = solveNodeMove(graph, 'n2', 100, 50);
+    expect(result.blocked).to.be.true;
+    expect(result.blockedBy).to.include('e1');
+  });
+
+  it('pre-existing violation improved by move → not blocked', () => {
+    // n1 at (0,0), n2 at (100,5): horizontal constraint violated by 5.
+    // Moving n2 to (100,2) improves it from 5 to 2 → should NOT block.
+    const nodes: Node[] = [
+      { id: 'n1', x: 0, y: 0, pinned: true },
+      { id: 'n2', x: 100, y: 5, pinned: false },
+    ];
+    const edges: Edge[] = [
+      createEdge('e1', 'n1', 'n2', { direction: 'horizontal' }),
+    ];
+    const graph = buildNodeGraph(nodes, edges);
+    const result = solveNodeMove(graph, 'n2', 100, 2);
+    expect(result.blocked).to.be.false;
+  });
+
+  it('pre-existing violation unchanged → not blocked', () => {
+    // n1 at (0,0), n2 at (100,5): horizontal constraint violated by 5.
+    // Moving n2 to (150,5) keeps the violation at 5 → should NOT block.
+    const nodes: Node[] = [
+      { id: 'n1', x: 0, y: 0, pinned: true },
+      { id: 'n2', x: 100, y: 5, pinned: false },
+    ];
+    const edges: Edge[] = [
+      createEdge('e1', 'n1', 'n2', { direction: 'horizontal' }),
+    ];
+    const graph = buildNodeGraph(nodes, edges);
+    const result = solveNodeMove(graph, 'n2', 150, 5);
+    expect(result.blocked).to.be.false;
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Angle groups with 3+ edges
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('angle groups with 3+ edges', () => {
+  it('3-edge T-junction preserves all relative angles', () => {
+    // T-junction at n2: n1--n2--n3 (horizontal), n2--n4 (vertical)
+    // All 3 edges in the same angle group — should preserve 90° angles.
+    const nodes: Node[] = [
+      { id: 'n1', x: 0, y: 0, pinned: false },
+      { id: 'n2', x: 100, y: 0, pinned: false },
+      { id: 'n3', x: 200, y: 0, pinned: false },
+      { id: 'n4', x: 100, y: 100, pinned: false },
+    ];
+    const edges: Edge[] = [
+      createEdge('e1', 'n1', 'n2', { angle_group: 'ag3' }),
+      createEdge('e2', 'n2', 'n3', { angle_group: 'ag3' }),
+      createEdge('e3', 'n2', 'n4', { angle_group: 'ag3' }),
+    ];
+    const graph = buildNodeGraph(nodes, edges);
+
+    // Move shared node n2
+    const result = solveNodeMove(graph, 'n2', 120, 30);
+    expect(result.blocked).to.be.false;
+
+    const n1 = resolvedPos(result.updates, 'n1', nodes);
+    const n2 = resolvedPos(result.updates, 'n2', nodes);
+    const n3 = resolvedPos(result.updates, 'n3', nodes);
+    const n4 = resolvedPos(result.updates, 'n4', nodes);
+
+    // Compute angles from shared node n2
+    const a1 = Math.atan2(n1.y - n2.y, n1.x - n2.x);
+    const a3 = Math.atan2(n3.y - n2.y, n3.x - n2.x);
+    const a4 = Math.atan2(n4.y - n2.y, n4.x - n2.x);
+
+    // Original angles: e1→n1 = π, e2→n3 = 0, e3→n4 = π/2
+    // Relative angles: n1-to-n3 = π (180°), n1-to-n4 = -π/2 (-90°)
+    let diff13 = a3 - a1;
+    while (diff13 > Math.PI) diff13 -= 2 * Math.PI;
+    while (diff13 < -Math.PI) diff13 += 2 * Math.PI;
+    expect(Math.abs(diff13)).to.be.closeTo(Math.PI, 0.15); // ~180°
+
+    let diff14 = a4 - a1;
+    while (diff14 > Math.PI) diff14 -= 2 * Math.PI;
+    while (diff14 < -Math.PI) diff14 += 2 * Math.PI;
+    expect(Math.abs(diff14)).to.be.closeTo(Math.PI / 2, 0.15); // ~90°
+  });
+
+  it('4-edge cross preserves 90° angles', () => {
+    // Cross at center: 4 edges going N/E/S/W
+    const nodes: Node[] = [
+      { id: 'c', x: 100, y: 100, pinned: false },
+      { id: 'n', x: 100, y: 0, pinned: false },
+      { id: 'e', x: 200, y: 100, pinned: false },
+      { id: 's', x: 100, y: 200, pinned: false },
+      { id: 'w', x: 0, y: 100, pinned: false },
+    ];
+    const edges: Edge[] = [
+      createEdge('cn', 'c', 'n', { angle_group: 'cross' }),
+      createEdge('ce', 'c', 'e', { angle_group: 'cross' }),
+      createEdge('cs', 'c', 's', { angle_group: 'cross' }),
+      createEdge('cw', 'c', 'w', { angle_group: 'cross' }),
+    ];
+    const graph = buildNodeGraph(nodes, edges);
+    const result = solveNodeMove(graph, 'c', 120, 110);
+    expect(result.blocked).to.be.false;
+
+    const c = resolvedPos(result.updates, 'c', nodes);
+    const n = resolvedPos(result.updates, 'n', nodes);
+    const e_pos = resolvedPos(result.updates, 'e', nodes);
+    const s = resolvedPos(result.updates, 's', nodes);
+    const w = resolvedPos(result.updates, 'w', nodes);
+
+    // All 4 angles from center should remain 90° apart
+    const aN = Math.atan2(n.y - c.y, n.x - c.x);
+    const aE = Math.atan2(e_pos.y - c.y, e_pos.x - c.x);
+    const aS = Math.atan2(s.y - c.y, s.x - c.x);
+    const aW = Math.atan2(w.y - c.y, w.x - c.x);
+
+    function angleDiff(a: number, b: number) {
+      let d = a - b;
+      while (d > Math.PI) d -= 2 * Math.PI;
+      while (d < -Math.PI) d += 2 * Math.PI;
+      return d;
+    }
+
+    // N→E should be ~90° (π/2)
+    expect(Math.abs(angleDiff(aE, aN))).to.be.closeTo(Math.PI / 2, 0.15);
+    // E→S should be ~90°
+    expect(Math.abs(angleDiff(aS, aE))).to.be.closeTo(Math.PI / 2, 0.15);
+    // S→W should be ~90°
+    expect(Math.abs(angleDiff(aW, aS))).to.be.closeTo(Math.PI / 2, 0.15);
+  });
+
+  it('3-edge group with one pinned outer node', () => {
+    // T-junction at n2, with n1 pinned — angles should be driven by n1's fixed angle
+    const nodes: Node[] = [
+      { id: 'n1', x: 0, y: 0, pinned: true },
+      { id: 'n2', x: 100, y: 0, pinned: false },
+      { id: 'n3', x: 200, y: 0, pinned: false },
+      { id: 'n4', x: 100, y: 100, pinned: false },
+    ];
+    const edges: Edge[] = [
+      createEdge('e1', 'n1', 'n2', { angle_group: 'ag3' }),
+      createEdge('e2', 'n2', 'n3', { angle_group: 'ag3' }),
+      createEdge('e3', 'n2', 'n4', { angle_group: 'ag3' }),
+    ];
+    const graph = buildNodeGraph(nodes, edges);
+    const result = solveNodeMove(graph, 'n2', 100, 30);
+    expect(result.blocked).to.be.false;
+
+    // n1 must not move (pinned)
+    expect(findUpdate(result.updates, 'n1')).to.be.undefined;
+  });
+
+  it('existing 2-edge angle group still works (regression)', () => {
+    // Same test as existing "should preserve 90° angle between two edges"
+    const nodes: Node[] = [
+      { id: 'n1', x: 0, y: 0, pinned: false },
+      { id: 'n2', x: 100, y: 0, pinned: false },
+      { id: 'n3', x: 100, y: 100, pinned: false },
+    ];
+    const edges: Edge[] = [
+      createEdge('e1', 'n1', 'n2', { angle_group: 'ag1' }),
+      createEdge('e2', 'n2', 'n3', { angle_group: 'ag1' }),
+    ];
+    const graph = buildNodeGraph(nodes, edges);
+    const result = solveNodeMove(graph, 'n2', 100, 50);
+
+    const n1 = resolvedPos(result.updates, 'n1', nodes);
+    const n2 = resolvedPos(result.updates, 'n2', nodes);
+    const n3 = resolvedPos(result.updates, 'n3', nodes);
+
+    const angleE1 = Math.atan2(n1.y - n2.y, n1.x - n2.x);
+    const angleE2 = Math.atan2(n3.y - n2.y, n3.x - n2.x);
+    let angleBetween = ((angleE2 - angleE1) + 2 * Math.PI) % (2 * Math.PI);
+    expect(angleBetween).to.be.closeTo(3 * Math.PI / 2, 0.1);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Link group solver enforcement
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('link group solver enforcement', () => {
+  it('linked edges synchronize lengths during node drag', () => {
+    // Two parallel edges linked: both should maintain same length.
+    // e1: n1(0,0)→n2(100,0) and e2: n3(0,100)→n4(100,100), both 100cm.
+    // Drag n2 to (150,0) → solver should also extend e2 to match.
+    const nodes: Node[] = [
+      { id: 'n1', x: 0, y: 0, pinned: false },
+      { id: 'n2', x: 100, y: 0, pinned: false },
+      { id: 'n3', x: 0, y: 100, pinned: false },
+      { id: 'n4', x: 100, y: 100, pinned: false },
+      // Connect them with a vertical edge so solver can reach e2
+      { id: 'n5', x: 100, y: 50, pinned: false },
+    ];
+    const edges: Edge[] = [
+      createEdge('e1', 'n1', 'n2', { link_group: 'lg1' }),
+      createEdge('e2', 'n3', 'n4', { link_group: 'lg1' }),
+      // Connect n2 to n4 through n5 for propagation
+      createEdge('v1', 'n2', 'n5'),
+      createEdge('v2', 'n5', 'n4'),
+    ];
+    const graph = buildNodeGraph(nodes, edges);
+    const result = solveNodeMove(graph, 'n2', 150, 0);
+
+    // Both linked edges should have the same length
+    const len1 = edgeLengthAfter(result.updates, edges[0], nodes);
+    const len2 = edgeLengthAfter(result.updates, edges[1], nodes);
+    expect(Math.abs(len1 - len2)).to.be.lessThan(2.0);
+  });
+
+  it('link group violation detected by computeViolations', () => {
+    // Two edges with link_group where lengths differ
+    const nodes: Node[] = [
+      { id: 'n1', x: 0, y: 0, pinned: false },
+      { id: 'n2', x: 100, y: 0, pinned: false },
+      { id: 'n3', x: 0, y: 100, pinned: false },
+      { id: 'n4', x: 200, y: 100, pinned: false }, // length 200 vs 100
+    ];
+    const edges: Edge[] = [
+      createEdge('e1', 'n1', 'n2', { link_group: 'lg1' }),
+      createEdge('e2', 'n3', 'n4', { link_group: 'lg1' }),
+    ];
+    // Validate: avg length = 150, max deviation = 50 > 0.2 tolerance
+    const v = validateConstraints(nodes, edges);
+    const linkViolation = v.find(vv => vv.type === 'link_group');
+    expect(linkViolation).to.exist;
+    expect(linkViolation!.actual).to.be.greaterThan(0.2);
+  });
+
+  it('link group does not interfere with direction constraints', () => {
+    // Two horizontal linked edges — dragging should keep both horizontal AND same length
+    const nodes: Node[] = [
+      { id: 'n1', x: 0, y: 0, pinned: false },
+      { id: 'n2', x: 100, y: 0, pinned: false },
+      { id: 'n3', x: 0, y: 100, pinned: false },
+      { id: 'n4', x: 100, y: 100, pinned: false },
+    ];
+    const edges: Edge[] = [
+      createEdge('e1', 'n1', 'n2', { direction: 'horizontal', link_group: 'lg1' }),
+      createEdge('e2', 'n3', 'n4', { direction: 'horizontal', link_group: 'lg1' }),
+      // Connect for propagation
+      createEdge('v1', 'n2', 'n4'),
+    ];
+    const graph = buildNodeGraph(nodes, edges);
+    const result = solveNodeMove(graph, 'n1', 0, 20);
+
+    // e1 should stay horizontal
+    const n1 = resolvedPos(result.updates, 'n1', nodes);
+    const n2 = resolvedPos(result.updates, 'n2', nodes);
+    expect(Math.abs(n1.y - n2.y)).to.be.lessThan(0.5);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// validateConstraints reports violations without mutating edges
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('validateConstraints immutability', () => {
+  it('reports violations without mutating edges', () => {
+    // Create edges with constraints that are violated
+    const nodes: Node[] = [
+      { id: 'n1', x: 0, y: 0, pinned: false },
+      { id: 'n2', x: 100, y: 10, pinned: false }, // violates horizontal
+      { id: 'n3', x: 200, y: 10, pinned: false },
+    ];
+    const edges: Edge[] = [
+      createEdge('e1', 'n1', 'n2', { direction: 'horizontal' }),
+      { ...createEdge('e2', 'n2', 'n3'), collinear_group: 'cg1' },
+    ];
+
+    // Deep-clone edges to compare after
+    const edgesBefore = JSON.parse(JSON.stringify(edges));
+
+    const violations = validateConstraints(nodes, edges);
+    expect(violations.length).to.be.greaterThan(0);
+
+    // Edges must not be mutated
+    expect(JSON.stringify(edges)).to.equal(JSON.stringify(edgesBefore));
   });
 });

@@ -1,5 +1,5 @@
 import { expect } from '@open-wc/testing';
-import { detectRoomsFromEdges, detectRoomsFromWalls } from './room-detection.js';
+import { detectRoomsFromEdges } from './room-detection.js';
 import type { Node, Edge, Coordinates } from '../types.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -20,7 +20,6 @@ function createEdge(id: string, startNode: string, endNode: string): Edge {
     is_exterior: false,
     length_locked: false,
     direction: 'free',
-    angle_locked: false,
   };
 }
 
@@ -569,53 +568,7 @@ describe('room detection – real floor plan scenarios', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 10. Legacy API (detectRoomsFromWalls)
-// ─────────────────────────────────────────────────────────────────────────────
-
-describe('detectRoomsFromWalls (legacy)', () => {
-  it('should detect a room from wall segments', () => {
-    const walls = [
-      { start: { x: 0, y: 0 }, end: { x: 200, y: 0 } },
-      { start: { x: 200, y: 0 }, end: { x: 200, y: 200 } },
-      { start: { x: 200, y: 200 }, end: { x: 0, y: 200 } },
-      { start: { x: 0, y: 200 }, end: { x: 0, y: 0 } },
-    ];
-    const rooms = detectRoomsFromWalls(walls);
-    expect(rooms.length).to.equal(1);
-    expect(rooms[0].area).to.be.closeTo(40000, 10);
-  });
-
-  it('should return empty for no walls', () => {
-    const rooms = detectRoomsFromWalls([]);
-    expect(rooms.length).to.equal(0);
-  });
-
-  it('should merge coincident endpoints into shared nodes', () => {
-    // Walls defined as separate segments that share endpoints
-    const walls = [
-      { start: { x: 0, y: 0 }, end: { x: 100, y: 0 } },
-      { start: { x: 100, y: 0 }, end: { x: 100, y: 100 } },
-      { start: { x: 100, y: 100 }, end: { x: 0, y: 100 } },
-      { start: { x: 0, y: 100 }, end: { x: 0, y: 0 } },
-    ];
-    const rooms = detectRoomsFromWalls(walls);
-    expect(rooms.length).to.equal(1);
-  });
-
-  it('should handle walls with nearly-coincident endpoints (rounding)', () => {
-    const walls = [
-      { start: { x: 0.4, y: 0.4 }, end: { x: 100.4, y: 0.4 } },
-      { start: { x: 100.4, y: 0.4 }, end: { x: 100.4, y: 100.4 } },
-      { start: { x: 100.4, y: 100.4 }, end: { x: 0.4, y: 100.4 } },
-      { start: { x: 0.4, y: 100.4 }, end: { x: 0.4, y: 0.4 } },
-    ];
-    const rooms = detectRoomsFromWalls(walls);
-    expect(rooms.length).to.equal(1);
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// 11. Numeric edge cases
+// 10. Numeric edge cases
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('room detection – numeric edge cases', () => {

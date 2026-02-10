@@ -404,7 +404,7 @@ export class FpbImportExportDialog extends LitElement {
       const safeName = fp.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
       const suffix =
         floors.length === 1
-          ? ((floors[0] as any).floor?.name || "floor")
+          ? (((floors[0] as Record<string, unknown>).floor as Record<string, unknown> | undefined)?.name as string || "floor")
               .toLowerCase()
               .replace(/[^a-z0-9]+/g, "-")
           : "floors";
@@ -470,7 +470,8 @@ export class FpbImportExportDialog extends LitElement {
           name: (floor?.name as string) || `Floor ${i + 1}`,
           level: (floor?.level as number) ?? i,
           roomCount: Array.isArray(floor?.rooms) ? (floor!.rooms as unknown[]).length : 0,
-          wallCount: Array.isArray(floor?.walls) ? (floor!.walls as unknown[]).length : 0,
+          wallCount: Array.isArray(floor?.edges) ? (floor!.edges as unknown[]).length
+                   : Array.isArray(floor?.walls) ? (floor!.walls as unknown[]).length : 0,
           selected: true,
         };
       });
@@ -487,7 +488,8 @@ export class FpbImportExportDialog extends LitElement {
           name: (floor?.name as string) || "Imported Floor",
           level: (floor?.level as number) ?? 0,
           roomCount: Array.isArray(floor?.rooms) ? (floor!.rooms as unknown[]).length : 0,
-          wallCount: Array.isArray(floor?.walls) ? (floor!.walls as unknown[]).length : 0,
+          wallCount: Array.isArray(floor?.edges) ? (floor!.edges as unknown[]).length
+                   : Array.isArray(floor?.walls) ? (floor!.walls as unknown[]).length : 0,
           selected: true,
         },
       ];
@@ -668,7 +670,7 @@ export class FpbImportExportDialog extends LitElement {
                 <div class="floor-item-name">${f.name}</div>
                 <div class="floor-item-meta">
                   ${f.rooms.length} room${f.rooms.length !== 1 ? "s" : ""},
-                  ${f.walls.length} wall${f.walls.length !== 1 ? "s" : ""}
+                  ${f.edges.length} edge${f.edges.length !== 1 ? "s" : ""}
                 </div>
               </div>
             </label>
