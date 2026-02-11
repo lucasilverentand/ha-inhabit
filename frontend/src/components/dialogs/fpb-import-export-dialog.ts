@@ -7,9 +7,9 @@
  */
 
 import { LitElement, html, css, nothing } from "lit";
-import { customElement, property, state } from "lit/decorators.js";
+import { property, state } from "lit/decorators.js";
 import type { HomeAssistant, Floor } from "../../types";
-import { currentFloorPlan } from "../../ha-floorplan-builder";
+import { currentFloorPlan } from "../../stores/signals";
 
 type DialogMode = "export" | "import";
 
@@ -19,10 +19,10 @@ interface ImportFloorEntry {
   level: number;
   roomCount: number;
   wallCount: number;
+  deviceCount: number;
   selected: boolean;
 }
 
-@customElement("fpb-import-export-dialog")
 export class FpbImportExportDialog extends LitElement {
   @property({ attribute: false })
   hass?: HomeAssistant;
@@ -415,9 +415,9 @@ export class FpbImportExportDialog extends LitElement {
       URL.revokeObjectURL(url);
 
       this.close();
-    } catch (err) {
+    } catch (err: any) {
       console.error("Export error:", err);
-      this._error = `Export failed: ${err}`;
+      this._error = `Export failed: ${err?.message || err}`;
     } finally {
       this._exporting = false;
     }
@@ -465,6 +465,7 @@ export class FpbImportExportDialog extends LitElement {
       this._importData = floorExports;
       this._importEntries = floorExports.map((fe, i) => {
         const floor = fe.floor as Record<string, unknown> | undefined;
+        const devices = fe.devices as unknown[] | undefined;
         return {
           index: i,
           name: (floor?.name as string) || `Floor ${i + 1}`,
@@ -472,6 +473,7 @@ export class FpbImportExportDialog extends LitElement {
           roomCount: Array.isArray(floor?.rooms) ? (floor!.rooms as unknown[]).length : 0,
           wallCount: Array.isArray(floor?.edges) ? (floor!.edges as unknown[]).length
                    : Array.isArray(floor?.walls) ? (floor!.walls as unknown[]).length : 0,
+          deviceCount: Array.isArray(devices) ? devices.length : 0,
           selected: true,
         };
       });
@@ -482,6 +484,7 @@ export class FpbImportExportDialog extends LitElement {
     if (obj.export_type === "floor") {
       this._importData = [obj];
       const floor = obj.floor as Record<string, unknown> | undefined;
+      const devices = obj.devices as unknown[] | undefined;
       this._importEntries = [
         {
           index: 0,
@@ -490,6 +493,7 @@ export class FpbImportExportDialog extends LitElement {
           roomCount: Array.isArray(floor?.rooms) ? (floor!.rooms as unknown[]).length : 0,
           wallCount: Array.isArray(floor?.edges) ? (floor!.edges as unknown[]).length
                    : Array.isArray(floor?.walls) ? (floor!.walls as unknown[]).length : 0,
+          deviceCount: Array.isArray(devices) ? devices.length : 0,
           selected: true,
         },
       ];
@@ -550,9 +554,9 @@ export class FpbImportExportDialog extends LitElement {
       );
 
       this.close();
-    } catch (err) {
+    } catch (err: any) {
       console.error("Import error:", err);
-      this._error = `Import failed: ${err}`;
+      this._error = `Import failed: ${err?.message || err}`;
     } finally {
       this._importing = false;
     }
@@ -716,7 +720,7 @@ export class FpbImportExportDialog extends LitElement {
                 <div class="floor-item-name">${entry.name}</div>
                 <div class="floor-item-meta">
                   ${entry.roomCount} room${entry.roomCount !== 1 ? "s" : ""},
-                  ${entry.wallCount} wall${entry.wallCount !== 1 ? "s" : ""}
+                  ${entry.wallCount} wall${entry.wallCount !== 1 ? "s" : ""}${entry.deviceCount > 0 ? `, ${entry.deviceCount} device${entry.deviceCount !== 1 ? "s" : ""}` : ""}
                 </div>
               </div>
             </label>
@@ -725,6 +729,10 @@ export class FpbImportExportDialog extends LitElement {
       </div>
     `;
   }
+}
+
+if (!customElements.get("fpb-import-export-dialog")) {
+  customElements.define("fpb-import-export-dialog", FpbImportExportDialog);
 }
 
 declare global {

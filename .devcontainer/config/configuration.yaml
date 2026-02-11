@@ -75,6 +75,18 @@ binary_sensor:
         friendly_name: "Office Motion"
         device_class: motion
         value_template: "{{ states('input_boolean.office_motion_sim') }}"
+      toilet_motion:
+        friendly_name: "Toilet Motion"
+        device_class: motion
+        value_template: "{{ states('input_boolean.toilet_motion_sim') }}"
+      shower_motion:
+        friendly_name: "Shower Motion"
+        device_class: motion
+        value_template: "{{ states('input_boolean.shower_motion_sim') }}"
+      storage_motion:
+        friendly_name: "Storage Motion"
+        device_class: motion
+        value_template: "{{ states('input_boolean.storage_motion_sim') }}"
       # Door sensors
       front_door:
         friendly_name: "Front Door"
@@ -92,15 +104,51 @@ binary_sensor:
         friendly_name: "Office Door"
         device_class: door
         value_template: "{{ states('input_boolean.office_door_sim') }}"
+      toilet_door:
+        friendly_name: "Toilet Door"
+        device_class: door
+        value_template: "{{ states('input_boolean.toilet_door_sim') }}"
+      storage_door:
+        friendly_name: "Storage Door"
+        device_class: door
+        value_template: "{{ states('input_boolean.storage_door_sim') }}"
+      living_room_door_1:
+        friendly_name: "Living Room Door 1"
+        device_class: door
+        value_template: "{{ states('input_boolean.living_room_door_1_sim') }}"
+      living_room_door_2:
+        friendly_name: "Living Room Door 2"
+        device_class: door
+        value_template: "{{ states('input_boolean.living_room_door_2_sim') }}"
+      shower_door:
+        friendly_name: "Shower Door"
+        device_class: door
+        value_template: "{{ states('input_boolean.shower_door_sim') }}"
       # Window sensors
-      living_room_window:
-        friendly_name: "Living Room Window"
+      living_room_window_1:
+        friendly_name: "Living Room Window 1"
         device_class: window
-        value_template: "{{ states('input_boolean.living_room_window_sim') }}"
-      bedroom_window:
-        friendly_name: "Bedroom Window"
+        value_template: "{{ states('input_boolean.living_room_window_1_sim') }}"
+      living_room_window_2:
+        friendly_name: "Living Room Window 2"
         device_class: window
-        value_template: "{{ states('input_boolean.bedroom_window_sim') }}"
+        value_template: "{{ states('input_boolean.living_room_window_2_sim') }}"
+      living_room_window_3:
+        friendly_name: "Living Room Window 3"
+        device_class: window
+        value_template: "{{ states('input_boolean.living_room_window_3_sim') }}"
+      bedroom_window_1:
+        friendly_name: "Bedroom Window 1"
+        device_class: window
+        value_template: "{{ states('input_boolean.bedroom_window_1_sim') }}"
+      bedroom_window_2:
+        friendly_name: "Bedroom Window 2"
+        device_class: window
+        value_template: "{{ states('input_boolean.bedroom_window_2_sim') }}"
+      bedroom_window_3:
+        friendly_name: "Bedroom Window 3"
+        device_class: window
+        value_template: "{{ states('input_boolean.bedroom_window_3_sim') }}"
 
 # Input booleans to simulate sensor states
 input_boolean:
@@ -123,6 +171,15 @@ input_boolean:
   office_motion_sim:
     name: "Simulate Office Motion"
     icon: mdi:motion-sensor
+  toilet_motion_sim:
+    name: "Simulate Toilet Motion"
+    icon: mdi:motion-sensor
+  shower_motion_sim:
+    name: "Simulate Shower Motion"
+    icon: mdi:motion-sensor
+  storage_motion_sim:
+    name: "Simulate Storage Motion"
+    icon: mdi:motion-sensor
   # Door simulators
   front_door_sim:
     name: "Simulate Front Door"
@@ -136,12 +193,39 @@ input_boolean:
   office_door_sim:
     name: "Simulate Office Door"
     icon: mdi:door
+  toilet_door_sim:
+    name: "Simulate Toilet Door"
+    icon: mdi:door
+  storage_door_sim:
+    name: "Simulate Storage Door"
+    icon: mdi:door
+  living_room_door_1_sim:
+    name: "Simulate Living Room Door 1"
+    icon: mdi:door
+  living_room_door_2_sim:
+    name: "Simulate Living Room Door 2"
+    icon: mdi:door
+  shower_door_sim:
+    name: "Simulate Shower Door"
+    icon: mdi:door
   # Window simulators
-  living_room_window_sim:
-    name: "Simulate Living Room Window"
+  living_room_window_1_sim:
+    name: "Simulate Living Room Window 1"
     icon: mdi:window-closed
-  bedroom_window_sim:
-    name: "Simulate Bedroom Window"
+  living_room_window_2_sim:
+    name: "Simulate Living Room Window 2"
+    icon: mdi:window-closed
+  living_room_window_3_sim:
+    name: "Simulate Living Room Window 3"
+    icon: mdi:window-closed
+  bedroom_window_1_sim:
+    name: "Simulate Bedroom Window 1"
+    icon: mdi:window-closed
+  bedroom_window_2_sim:
+    name: "Simulate Bedroom Window 2"
+    icon: mdi:window-closed
+  bedroom_window_3_sim:
+    name: "Simulate Bedroom Window 3"
     icon: mdi:window-closed
 
 # Temperature and humidity sensors

@@ -120,7 +120,7 @@ export function doorSwingPath(
   hingePoint: Coordinates,
   doorWidth: number,
   direction: "left" | "right",
-  angle: number = 90
+  angle: number = 85
 ): string {
   const startAngle = direction === "left" ? 0 : 180 - angle;
   const endAngle = direction === "left" ? angle : 180;

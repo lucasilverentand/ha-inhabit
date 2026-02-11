@@ -20,6 +20,7 @@ from ..models.floor_plan import (
     Node,
     Polygon,
     Room,
+    _generate_id,
 )
 from ..models.virtual_sensor import SensorBinding, VirtualSensorConfig
 
@@ -36,6 +37,8 @@ def async_register_websocket_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_floors_add)
     websocket_api.async_register_command(hass, ws_floors_update)
     websocket_api.async_register_command(hass, ws_floors_delete)
+    websocket_api.async_register_command(hass, ws_floors_export)
+    websocket_api.async_register_command(hass, ws_floors_import)
     websocket_api.async_register_command(hass, ws_rooms_add)
     websocket_api.async_register_command(hass, ws_rooms_update)
     websocket_api.async_register_command(hass, ws_rooms_delete)
@@ -281,6 +284,152 @@ def ws_floors_delete(
         connection.send_result(msg["id"], {"success": True})
     else:
         connection.send_error(msg["id"], "not_found", "Floor not found")
+
+
+# ==================== Floor Export / Import ====================
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{WS_PREFIX}/floors/export",
+        vol.Required("floor_plan_id"): str,
+        vol.Required("floor_id"): str,
+    }
+)
+@callback
+def ws_floors_export(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Export a single floor with device placements and sensor configs."""
+    store = hass.data[DOMAIN]["store"]
+    floor_plan = store.get_floor_plan(msg["floor_plan_id"])
+    if not floor_plan:
+        connection.send_error(msg["id"], "not_found", "Floor plan not found")
+        return
+
+    floor = floor_plan.get_floor(msg["floor_id"])
+    if not floor:
+        connection.send_error(msg["id"], "not_found", "Floor not found")
+        return
+
+    # Gather device placements on this floor
+    collection = store.get_device_placements(msg["floor_plan_id"])
+    devices = [d.to_dict() for d in collection.devices if d.floor_id == floor.id]
+
+    # Gather sensor configs for rooms on this floor
+    room_ids = {r.id for r in floor.rooms}
+    sensor_configs = []
+    for room_id in room_ids:
+        cfg = store.get_sensor_config(room_id)
+        if cfg:
+            sensor_configs.append(cfg.to_dict())
+
+    connection.send_result(
+        msg["id"],
+        {
+            "inhabit_version": "1.0",
+            "export_type": "floor",
+            "floor": floor.to_dict(),
+            "devices": devices,
+            "sensor_configs": sensor_configs,
+        },
+    )
+
+
+def _remap_floor_ids(floor: Floor) -> dict[str, str]:
+    """Assign fresh IDs to all objects in a floor, returning old->new mapping."""
+    id_map: dict[str, str] = {}
+
+    # Floor ID
+    old_floor_id = floor.id
+    floor.id = _generate_id()
+    id_map[old_floor_id] = floor.id
+
+    # Node IDs
+    for node in floor.nodes:
+        old_id = node.id
+        node.id = _generate_id()
+        id_map[old_id] = node.id
+
+    # Edge IDs + remap node references
+    for edge in floor.edges:
+        old_id = edge.id
+        edge.id = _generate_id()
+        id_map[old_id] = edge.id
+        edge.start_node = id_map.get(edge.start_node, edge.start_node)
+        edge.end_node = id_map.get(edge.end_node, edge.end_node)
+
+    # Room IDs: first pass assigns new IDs
+    for room in floor.rooms:
+        old_id = room.id
+        room.id = _generate_id()
+        id_map[old_id] = room.id
+
+    # Room references: second pass remaps floor_id and connected_rooms
+    for room in floor.rooms:
+        room.floor_id = floor.id
+        room.connected_rooms = [
+            id_map.get(cid, cid) for cid in room.connected_rooms
+        ]
+
+    return id_map
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{WS_PREFIX}/floors/import",
+        vol.Required("floor_plan_id"): str,
+        vol.Required("data"): dict,
+    }
+)
+@callback
+def ws_floors_import(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Import a floor with device placements and sensor configs."""
+    store = hass.data[DOMAIN]["store"]
+    floor_plan_id = msg["floor_plan_id"]
+    floor_plan = store.get_floor_plan(floor_plan_id)
+    if not floor_plan:
+        connection.send_error(msg["id"], "not_found", "Floor plan not found")
+        return
+
+    data = msg["data"]
+    floor_data = data.get("floor")
+    if not floor_data or not isinstance(floor_data, dict):
+        connection.send_error(msg["id"], "invalid_format", "Missing 'floor' key in import data")
+        return
+
+    # Parse floor and remap all IDs to avoid collisions
+    floor = Floor.from_dict(floor_data)
+    id_map = _remap_floor_ids(floor)
+
+    result = store.add_floor(floor_plan_id, floor)
+    if not result:
+        connection.send_error(msg["id"], "import_failed", "Failed to import floor")
+        return
+
+    # Import device placements
+    for dev_data in data.get("devices", []):
+        device = DevicePlacement.from_dict(dev_data)
+        device.id = _generate_id()
+        device.floor_id = floor.id
+        device.room_id = id_map.get(device.room_id, device.room_id) if device.room_id else None
+        store.place_device(floor_plan_id, device)
+
+    # Import sensor configs
+    for cfg_data in data.get("sensor_configs", []):
+        cfg = VirtualSensorConfig.from_dict(cfg_data)
+        old_room_id = cfg.room_id
+        cfg.room_id = id_map.get(old_room_id, old_room_id)
+        cfg.floor_plan_id = floor_plan_id
+        store.create_sensor_config(cfg)
+
+    connection.send_result(msg["id"], result.to_dict())
 
 
 # ==================== Rooms ====================
@@ -586,9 +735,12 @@ def ws_edges_add(
         vol.Optional("angle_group"): vol.Any(str, None),
         vol.Optional("link_group"): vol.Any(str, None),
         vol.Optional("collinear_group"): vol.Any(str, None),
+        vol.Optional("opening_parts"): vol.Any(str, None),
+        vol.Optional("opening_type"): vol.Any(str, None),
         vol.Optional("swing_direction"): vol.Any(str, None),
         vol.Optional("entity_id"): vol.Any(str, None),
         vol.Optional("height"): vol.Any(vol.Coerce(float), None),
+        vol.Optional("swap_nodes"): bool,
     }
 )
 @callback
@@ -614,6 +766,8 @@ def ws_edges_update(
         connection.send_error(msg["id"], "not_found", "Edge not found")
         return
 
+    if msg.get("swap_nodes"):
+        edge.start_node, edge.end_node = edge.end_node, edge.start_node
     if "edge_type" in msg:
         edge.type = msg["edge_type"]
     if "thickness" in msg:
@@ -626,10 +780,24 @@ def ws_edges_update(
         edge.direction = msg["direction"]
     if "angle_group" in msg:
         edge.angle_group = msg["angle_group"]
+    if "opening_parts" in msg:
+        edge.opening_parts = msg["opening_parts"]
+    if "opening_type" in msg:
+        edge.opening_type = msg["opening_type"]
     if "swing_direction" in msg:
         edge.swing_direction = msg["swing_direction"]
     if "entity_id" in msg:
-        edge.entity_id = msg["entity_id"]
+        new_entity_id = msg["entity_id"]
+        if new_entity_id is not None:
+            for other in floor.edges:
+                if other.id != edge.id and other.entity_id == new_entity_id:
+                    connection.send_error(
+                        msg["id"],
+                        "duplicate_sensor",
+                        f"Sensor {new_entity_id} is already assigned to another edge",
+                    )
+                    return
+        edge.entity_id = new_entity_id
     if "height" in msg:
         edge.height = msg["height"]
     if "link_group" in msg:
@@ -1038,6 +1206,8 @@ def ws_edges_angle_unlink(
         vol.Required("position"): vol.Coerce(float),
         vol.Required("new_type"): str,
         vol.Optional("width", default=80.0): vol.Coerce(float),
+        vol.Optional("opening_parts"): vol.Any(str, None),
+        vol.Optional("opening_type"): vol.Any(str, None),
         vol.Optional("swing_direction"): vol.Any(str, None),
         vol.Optional("entity_id"): vol.Any(str, None),
         vol.Optional("height"): vol.Any(vol.Coerce(float), None),
@@ -1092,16 +1262,30 @@ def ws_edges_split(
     n2 = Node(x=start_node.x + t_end * dx, y=start_node.y + t_end * dy)
     floor.nodes.extend([n1, n2])
 
+    # All replacement edges share a collinear group so the solver keeps them
+    # on the same line.  Re-use the original group if one existed, otherwise
+    # create a new one (only needed when there will be > 1 replacement edge).
+    from uuid import uuid4
+
+    has_before = t_start > 1e-9
+    has_after = t_end < 1.0 - 1e-9
+    num_edges = 1 + int(has_before) + int(has_after)
+    collinear = edge.collinear_group
+    if collinear is None and num_edges > 1:
+        collinear = uuid4().hex[:8]
+
     # Build the 3 replacement edges
     new_edges = []
-    if t_start > 1e-9:
+    if has_before:
         new_edges.append(Edge(
             start_node=edge.start_node,
             end_node=n1.id,
             type="wall",
             thickness=edge.thickness,
             is_exterior=edge.is_exterior,
+            direction=edge.direction,
             link_group=edge.link_group,
+            collinear_group=collinear,
         ))
     opening_edge = Edge(
         start_node=n1.id,
@@ -1109,19 +1293,25 @@ def ws_edges_split(
         type=msg["new_type"],
         thickness=edge.thickness,
         is_exterior=edge.is_exterior,
+        direction=edge.direction,
+        collinear_group=collinear,
+        opening_parts=msg.get("opening_parts", "single"),
+        opening_type=msg.get("opening_type", "swing"),
         swing_direction=msg.get("swing_direction"),
         entity_id=msg.get("entity_id"),
         height=msg.get("height"),
     )
     new_edges.append(opening_edge)
-    if t_end < 1.0 - 1e-9:
+    if has_after:
         new_edges.append(Edge(
             start_node=n2.id,
             end_node=edge.end_node,
             type="wall",
             thickness=edge.thickness,
             is_exterior=edge.is_exterior,
+            direction=edge.direction,
             link_group=edge.link_group,
+            collinear_group=collinear,
         ))
 
     # Replace old edge with new edges

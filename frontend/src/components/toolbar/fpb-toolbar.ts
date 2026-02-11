@@ -3,7 +3,7 @@
  */
 
 import { LitElement, html, css } from "lit";
-import { customElement, property, state } from "lit/decorators.js";
+import { property, state } from "lit/decorators.js";
 import { effect } from "@preact/signals-core";
 import type { HomeAssistant, FloorPlan, ToolType, CanvasMode } from "../../types";
 import {
@@ -12,7 +12,7 @@ import {
   activeTool,
   canvasMode,
   setCanvasMode,
-} from "../../ha-floorplan-builder";
+} from "../../stores/signals";
 import { canUndo, canRedo, undo, redo } from "../../stores/history-store";
 
 interface AddMenuItem {
@@ -23,15 +23,14 @@ interface AddMenuItem {
 
 const WALLS_MENU_ITEMS: AddMenuItem[] = [
   { id: "wall", icon: "mdi:wall", label: "Wall" },
+  { id: "door", icon: "mdi:door", label: "Door" },
+  { id: "window", icon: "mdi:window-closed-variant", label: "Window" },
 ];
 
 const PLACEMENT_MENU_ITEMS: AddMenuItem[] = [
-  { id: "door", icon: "mdi:door", label: "Door" },
-  { id: "window", icon: "mdi:window-closed-variant", label: "Window" },
   { id: "device", icon: "mdi:devices", label: "Device" },
 ];
 
-@customElement("fpb-toolbar")
 export class FpbToolbar extends LitElement {
   @property({ attribute: false })
   hass?: HomeAssistant;
@@ -47,6 +46,12 @@ export class FpbToolbar extends LitElement {
 
   @state()
   private _canvasMode: CanvasMode = "walls";
+
+  @state()
+  private _renamingFloorId: string | null = null;
+
+  @state()
+  private _renameValue = "";
 
   private _cleanupEffects: (() => void)[] = [];
 
@@ -174,11 +179,52 @@ export class FpbToolbar extends LitElement {
       background: rgba(244, 67, 54, 0.08);
     }
 
-    .floor-option.add-floor {
+    .floor-option .rename-btn {
+      display: none;
+      margin-left: auto;
+      padding: 4px;
+      border: none;
+      border-radius: 8px;
+      background: transparent;
+      color: var(--secondary-text-color);
+      cursor: pointer;
+      line-height: 1;
+      transition: color 0.12s, background 0.12s;
+    }
+
+    .floor-option .rename-btn ha-icon {
+      --mdc-icon-size: 16px;
+    }
+
+    .floor-option:hover .rename-btn {
+      display: flex;
+    }
+
+    .floor-option .rename-btn:hover {
+      color: var(--primary-color);
+      background: rgba(var(--rgb-primary-color, 33, 150, 243), 0.08);
+    }
+
+    .floor-option .rename-input {
+      flex: 1;
+      min-width: 0;
+      padding: 4px 8px;
+      border: 1px solid var(--primary-color);
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 500;
+      background: var(--card-background-color);
+      color: var(--primary-text-color);
+      outline: none;
+    }
+
+    .floor-option.add-floor,
+    .floor-option.action-item {
       color: var(--secondary-text-color);
     }
 
-    .floor-option.add-floor:hover {
+    .floor-option.add-floor:hover,
+    .floor-option.action-item:hover {
       color: var(--primary-text-color);
     }
 
@@ -401,6 +447,56 @@ export class FpbToolbar extends LitElement {
     );
   }
 
+  private _startRename(e: Event, floorId: string, currentName: string): void {
+    e.stopPropagation();
+    this._renamingFloorId = floorId;
+    this._renameValue = currentName;
+    this.updateComplete.then(() => {
+      const input = this.shadowRoot?.querySelector(".rename-input") as HTMLInputElement | null;
+      if (input) {
+        input.focus();
+        input.select();
+      }
+    });
+  }
+
+  private _commitRename(): void {
+    const id = this._renamingFloorId;
+    const name = this._renameValue.trim();
+    this._renamingFloorId = null;
+    if (!id || !name) return;
+
+    this.dispatchEvent(
+      new CustomEvent("rename-floor", {
+        detail: { id, name },
+        bubbles: true,
+        composed: true,
+      })
+    );
+  }
+
+  private _cancelRename(): void {
+    this._renamingFloorId = null;
+  }
+
+  private _handleRenameKeyDown(e: KeyboardEvent): void {
+    if (e.key === "Enter") {
+      this._commitRename();
+    } else if (e.key === "Escape") {
+      this._cancelRename();
+    }
+  }
+
+  private _openImportExport(): void {
+    this._floorMenuOpen = false;
+    this.dispatchEvent(
+      new CustomEvent("open-import-export", {
+        bubbles: true,
+        composed: true,
+      })
+    );
+  }
+
   private _toggleAddMenu(): void {
     this._addMenuOpen = !this._addMenuOpen;
     this._floorMenuOpen = false;
@@ -465,25 +561,50 @@ export class FpbToolbar extends LitElement {
           ${this._floorMenuOpen ? html`
             <div class="floor-dropdown">
               ${floors.map(
-                (f) => html`
-                  <button
-                    class="floor-option ${f.id === floor?.id ? "selected" : ""}"
-                    @click=${() => this._selectFloor(f.id)}
-                  >
-                    <ha-icon icon="mdi:layers"></ha-icon>
-                    ${f.name}
-                    <span class="delete-btn"
-                          @click=${(e: Event) => this._handleDeleteFloor(e, f.id, f.name)}
-                          title="Delete floor">
-                      <ha-icon icon="mdi:delete-outline"></ha-icon>
-                    </span>
-                  </button>
-                `
+                (f) => this._renamingFloorId === f.id
+                  ? html`
+                    <div class="floor-option">
+                      <ha-icon icon="mdi:layers"></ha-icon>
+                      <input
+                        class="rename-input"
+                        .value=${this._renameValue}
+                        @input=${(e: InputEvent) => {
+                          this._renameValue = (e.target as HTMLInputElement).value;
+                        }}
+                        @keydown=${this._handleRenameKeyDown}
+                        @blur=${this._commitRename}
+                        @click=${(e: Event) => e.stopPropagation()}
+                      />
+                    </div>
+                  `
+                  : html`
+                    <button
+                      class="floor-option ${f.id === floor?.id ? "selected" : ""}"
+                      @click=${() => this._selectFloor(f.id)}
+                    >
+                      <ha-icon icon="mdi:layers"></ha-icon>
+                      ${f.name}
+                      <span class="rename-btn"
+                            @click=${(e: Event) => this._startRename(e, f.id, f.name)}
+                            title="Rename floor">
+                        <ha-icon icon="mdi:pencil-outline"></ha-icon>
+                      </span>
+                      <span class="delete-btn"
+                            @click=${(e: Event) => this._handleDeleteFloor(e, f.id, f.name)}
+                            title="Delete floor">
+                        <ha-icon icon="mdi:delete-outline"></ha-icon>
+                      </span>
+                    </button>
+                  `
               )}
               <div class="floor-dropdown-divider"></div>
               <button class="floor-option add-floor" @click=${this._handleAddFloor}>
                 <ha-icon icon="mdi:plus"></ha-icon>
                 Add floor
+              </button>
+              <button class="floor-option action-item" @click=${this._openImportExport}>
+                <ha-icon icon="mdi:swap-horizontal"></ha-icon>
+                Import / Export
               </button>
             </div>
           ` : null}
@@ -499,13 +620,6 @@ export class FpbToolbar extends LitElement {
 
       <!-- Mode Switcher -->
       <div class="mode-group">
-        <button
-          class="mode-button ${mode === "viewing" ? "active" : ""}"
-          @click=${() => setCanvasMode("viewing")}
-          title="View mode"
-        >
-          <ha-icon icon="mdi:eye-outline"></ha-icon>
-        </button>
         <button
           class="mode-button ${mode === "walls" ? "active" : ""}"
           @click=${() => setCanvasMode("walls")}
@@ -546,7 +660,7 @@ export class FpbToolbar extends LitElement {
 
       <div class="divider"></div>
 
-      <!-- Add Menu (right side, hidden in viewing mode) -->
+      <!-- Add Menu -->
       ${menuItems.length > 0 ? html`
         <div class="add-button-container">
           <button
@@ -577,6 +691,10 @@ export class FpbToolbar extends LitElement {
       ` : null}
     `;
   }
+}
+
+if (!customElements.get("fpb-toolbar")) {
+  customElements.define("fpb-toolbar", FpbToolbar);
 }
 
 declare global {

@@ -3,7 +3,7 @@
  */
 
 import { LitElement, html, css, svg } from "lit";
-import { customElement, property, state, query } from "lit/decorators.js";
+import { property, state, query } from "lit/decorators.js";
 import { effect } from "@preact/signals-core";
 import type { HomeAssistant, Coordinates, ViewBox, Edge, Node, Room, WallDirection, CanvasMode, Floor, SelectionState, HassEntity, DevicePlacement } from "../../types";
 import {
@@ -19,13 +19,42 @@ import {
   devicePlacements,
   reloadFloorData,
   constraintConflicts,
-} from "../../ha-floorplan-builder";
+  focusedRoomId,
+} from "../../stores/signals";
 import { polygonToPath, viewBoxToString, groupEdgesIntoChains, wallChainPath } from "../../utils/svg";
 import { snapToGrid as snapPoint, arePointsCollinear } from "../../utils/geometry";
 import { buildNodeGraph, solveNodeMove, solveEdgeLengthChange, solveConstraintSnap, previewNodeDrag, checkConstraintsFeasible, findDegenerateEdges, solveCollinearTotalLength } from "../../utils/wall-solver";
 import { resolveFloorEdges, buildNodeMap, findNearestNode, edgesAtNode } from "../../utils/node-graph";
 import { detectRoomsFromEdges } from "../../utils/room-detection";
 import { pushAction, undo, redo } from "../../stores/history-store";
+
+/** Door swing angle: how far a door opens (degrees from closed/wall position). */
+const DOOR_SWING_DEG = 85;
+const DOOR_SWING_RAD = DOOR_SWING_DEG * Math.PI / 180;
+/**
+ * Compute arc geometry for a swing opening.
+ * Returns the open-end position and cubic Bézier control points for the arc.
+ */
+function swingArcGeom(
+  hx: number, hy: number,  // hinge (arc centre)
+  fx: number, fy: number,  // free end (closed position, arc start)
+  angleDeg: number,         // swing angle in degrees
+  ccw: boolean,             // true = left hinge (CCW rotation), false = right hinge (CW)
+) {
+  const rad = angleDeg * Math.PI / 180;
+  const s = ccw ? 1 : -1;
+  const c = Math.cos(rad), sa = s * Math.sin(rad);
+  const rfx = fx - hx, rfy = fy - hy;
+  const ox = hx + c * rfx - sa * rfy;
+  const oy = hy + sa * rfx + c * rfy;
+  const rox = ox - hx, roy = oy - hy;
+  const ks = s * (4 / 3) * Math.tan(rad / 4);
+  return {
+    ox, oy,
+    cp1x: fx - ks * rfy, cp1y: fy + ks * rfx,
+    cp2x: ox + ks * roy, cp2y: oy - ks * rox,
+  };
+}
 
 const LINK_COLORS = [
   "#e91e63", "#9c27b0", "#3f51b5", "#00bcd4",
@@ -39,7 +68,6 @@ function linkGroupColor(group: string): string {
   return LINK_COLORS[Math.abs(hash) % LINK_COLORS.length];
 }
 
-@customElement("fpb-canvas")
 export class FpbCanvas extends LitElement {
   @property({ attribute: false })
   hass?: HomeAssistant;
@@ -69,7 +97,7 @@ export class FpbCanvas extends LitElement {
   private _roomEditor: { room: Room; editName: string; editColor: string; editAreaId: string | null } | null = null;
 
   @state()
-  private _haAreas: Array<{ area_id: string; name: string }> = [];
+  private _haAreas: Array<{ area_id: string; name: string; icon?: string | null }> = [];
 
   @state()
   private _hoveredNode: Node | null = null;
@@ -99,9 +127,36 @@ export class FpbCanvas extends LitElement {
   private _editingDirection: WallDirection = "free";
 
   @state()
+  private _editingOpeningParts: 'single' | 'double' = "single";
+
+  @state()
+  private _editingOpeningType: 'swing' | 'sliding' | 'tilt' = "swing";
+
+  @state()
+  private _editingSwingDirection: 'left' | 'right' = "left";
+
+  @state()
+  private _editingEntityId: string | null = null;
+
+  @state()
+  private _openingSensorSearch: string = "";
+
+  @state()
+  private _openingSensorPickerOpen: boolean = false;
+
+  @state()
   private _blinkingEdgeIds: string[] = [];
 
   private _blinkTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /** Animated swing angles per edge id (radians). */
+  private _swingAngles: Map<string, number> = new Map();
+  private _swingRaf: number | null = null;
+
+  @state()
+  private _focusedRoomId: string | null = null;
+
+  private _viewBoxAnimation: number | null = null;
 
   @state()
   private _pendingDevice: { position: Coordinates } | null = null;
@@ -110,7 +165,20 @@ export class FpbCanvas extends LitElement {
   private _entitySearch: string = "";
 
   @state()
+  private _openingPreview: {
+    edgeId: string;
+    position: Coordinates;
+    startPos: Coordinates;
+    endPos: Coordinates;
+    thickness: number;
+    t: number; // projection parameter along edge (0-1)
+  } | null = null;
+
+  @state()
   private _canvasMode: CanvasMode = "walls";
+
+  /** Tracks the last floor ID we fitted to, so we only auto-fit on floor switch. */
+  private _lastFittedFloorId: string | null = null;
 
   private _cleanupEffects: (() => void)[] = [];
 
@@ -202,15 +270,109 @@ export class FpbCanvas extends LitElement {
     }
 
     .door {
-      fill: var(--card-background-color, #fff);
-      stroke: var(--primary-text-color, #333);
+      fill: rgba(255, 253, 245, 0.9);
+      stroke: #9e9e9e;
+      stroke-width: 1.2;
+      stroke-linejoin: round;
+      stroke-linecap: round;
+    }
+
+    .door-swing {
+      fill: none;
+      stroke: #78909c;
       stroke-width: 1;
+      opacity: 0.2;
+      stroke-dasharray: 4,3;
+      stroke-linecap: round;
+    }
+
+    .door-leaf-panel {
+      fill: rgba(255, 253, 245, 0.55);
+      stroke: #9e9e9e;
+      stroke-width: 0.6;
+      stroke-linejoin: round;
+      stroke-linecap: round;
+    }
+
+    .swing-wedge {
+      fill: rgba(120, 144, 156, 0.08);
+      stroke: none;
+    }
+
+    .window-leaf-panel {
+      fill: rgba(144, 202, 249, 0.5);
+      stroke: rgba(100, 181, 246, 0.8);
+      stroke-width: 0.6;
+      stroke-linejoin: round;
+      stroke-linecap: round;
+    }
+
+    .window-swing-wedge {
+      fill: rgba(100, 181, 246, 0.06);
+    }
+
+    .door-jamb {
+      stroke: #9e9e9e;
+      stroke-width: 1.2;
+      stroke-linecap: round;
+      opacity: 0.6;
     }
 
     .window {
-      fill: #b3e5fc;
-      stroke: var(--primary-text-color, #333);
+      fill: rgba(144, 202, 249, 0.6);
+      stroke: rgba(100, 181, 246, 0.8);
+      stroke-width: 1.5;
+      stroke-linejoin: round;
+      stroke-linecap: round;
+    }
+
+    .window-pane {
+      stroke: rgba(100, 181, 246, 0.4);
+      stroke-width: 0.8;
+      stroke-linecap: round;
+    }
+
+    .hinge-dot {
+      fill: #78909c;
+      stroke: var(--card-background-color, #fff);
+      stroke-width: 0.8;
+    }
+
+    .hinge-glow {
+      fill: #78909c;
+      opacity: 0.2;
+    }
+
+    .sliding-arrow {
+      fill: #78909c;
+      opacity: 0.35;
+    }
+
+    .opening-stop {
+      fill: var(--primary-text-color, #333);
+      stroke: none;
+    }
+
+    .door-closed-segment {
+      fill: var(--primary-text-color, #333);
+      stroke: none;
+    }
+
+    .window-closed-segment {
+      fill: rgba(100, 181, 246, 0.35);
+      stroke: rgba(100, 181, 246, 0.6);
       stroke-width: 1;
+    }
+
+    .metal-hinge {
+      fill: #9e9e9e;
+      stroke: #757575;
+      stroke-width: 0.8;
+    }
+
+.opening-ghost {
+      opacity: 0.5;
+      pointer-events: none;
     }
 
     .device-marker {
@@ -507,6 +669,32 @@ export class FpbCanvas extends LitElement {
       color: white;
     }
 
+    .room-side-btn {
+      flex: 1;
+      text-align: center;
+      padding: 5px 8px;
+      border-radius: 6px;
+      border: 2px solid transparent;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: border-color 0.15s, box-shadow 0.15s;
+      color: var(--primary-text-color, #333);
+    }
+
+    .room-side-btn:disabled {
+      cursor: default;
+    }
+
+    .room-side-btn:not(:disabled):hover {
+      border-color: var(--primary-color, #2196f3);
+    }
+
+    .room-side-btn.active {
+      border-color: var(--primary-color, #2196f3);
+      box-shadow: 0 0 0 1px var(--primary-color, #2196f3);
+    }
+
     .wall-editor-select {
       width: 100%;
       padding: 10px 12px;
@@ -650,10 +838,49 @@ export class FpbCanvas extends LitElement {
     .device-preview {
       pointer-events: none;
     }
+
+    .room-dimmed {
+      opacity: 0.15;
+      transition: opacity 0.3s ease;
+    }
+
+    .room-focused {
+      transition: opacity 0.3s ease;
+    }
+
+    .edges-dimmed {
+      opacity: 0.15;
+      transition: opacity 0.3s ease;
+    }
+
+    .edges-focused {
+      transition: opacity 0.3s ease;
+    }
+
+    .label-dimmed {
+      opacity: 0.15;
+      transition: opacity 0.3s ease;
+    }
+
+    .label-focused {
+      transition: opacity 0.3s ease;
+    }
+
+    .device-dimmed {
+      opacity: 0.15;
+      transition: opacity 0.3s ease;
+    }
+
+    .device-focused {
+      transition: opacity 0.3s ease;
+    }
   `;
 
   override connectedCallback(): void {
     super.connectedCallback();
+
+    // Reset so we re-fit when the new panel loads its floor data
+    this._lastFittedFloorId = null;
 
     this._cleanupEffects.push(
       effect(() => {
@@ -661,6 +888,25 @@ export class FpbCanvas extends LitElement {
       }),
       effect(() => {
         this._canvasMode = canvasMode.value;
+      }),
+      effect(() => {
+        const floor = currentFloor.value;
+        if (floor && floor.id !== this._lastFittedFloorId) {
+          this._lastFittedFloorId = floor.id;
+          // Defer to next frame so SVG element is rendered and has dimensions
+          requestAnimationFrame(() => this._fitToFloor(floor));
+        }
+      }),
+      effect(() => {
+        const roomId = focusedRoomId.value;
+        const prev = this._focusedRoomId;
+        this._focusedRoomId = roomId;
+        if (roomId) {
+          requestAnimationFrame(() => this._animateToRoom(roomId));
+        } else if (prev !== null) {
+          // "All" clicked — animate back to show entire floor
+          requestAnimationFrame(() => this._animateToFloor());
+        }
       })
     );
 
@@ -669,6 +915,7 @@ export class FpbCanvas extends LitElement {
 
   override disconnectedCallback(): void {
     super.disconnectedCallback();
+    this._cancelViewBoxAnimation();
     this._cleanupEffects.forEach((cleanup) => cleanup());
     this._cleanupEffects = [];
   }
@@ -676,7 +923,7 @@ export class FpbCanvas extends LitElement {
   private async _loadHaAreas(): Promise<void> {
     if (!this.hass) return;
     try {
-      const areas = await this.hass.callWS<Array<{ area_id: string; name: string }>>({
+      const areas = await this.hass.callWS<Array<{ area_id: string; name: string; icon?: string | null }>>({
         type: "config/area_registry/list",
       });
       this._haAreas = areas;
@@ -687,6 +934,7 @@ export class FpbCanvas extends LitElement {
 
   private _handleWheel(e: WheelEvent): void {
     e.preventDefault();
+    this._cancelViewBoxAnimation();
 
     const zoomFactor = e.deltaY > 0 ? 1.1 : 0.9;
     const point = this._screenToSvg({ x: e.clientX, y: e.clientY });
@@ -717,6 +965,7 @@ export class FpbCanvas extends LitElement {
 
     // Middle button always pans
     if (e.button === 1) {
+      this._cancelViewBoxAnimation();
       this._isPanning = true;
       this._panStart = { x: e.clientX, y: e.clientY };
       this._svg?.setPointerCapture(e.pointerId);
@@ -725,6 +974,7 @@ export class FpbCanvas extends LitElement {
 
     // Viewing mode: left-click always pans
     if (mode === "viewing" && e.button === 0) {
+      this._cancelViewBoxAnimation();
       this._isPanning = true;
       this._panStart = { x: e.clientX, y: e.clientY };
       this._svg?.setPointerCapture(e.pointerId);
@@ -765,6 +1015,13 @@ export class FpbCanvas extends LitElement {
         this._edgeEditor = null;
         this._multiEdgeEditor = null;
         this._handleDeviceClick(snappedPoint);
+      } else if (tool === "door" || tool === "window") {
+        if (this._openingPreview) {
+          this._edgeEditor = null;
+          this._multiEdgeEditor = null;
+          this._roomEditor = null;
+          this._placeOpening(tool);
+        }
       } else {
         // Other tools - pan on empty space
         this._edgeEditor = null;
@@ -781,6 +1038,101 @@ export class FpbCanvas extends LitElement {
     // Open entity picker at this position
     this._pendingDevice = { position: point };
     this._entitySearch = "";
+  }
+
+  private async _placeOpening(tool: "door" | "window"): Promise<void> {
+    if (!this.hass || !this._openingPreview) return;
+
+    const floor = currentFloor.value;
+    const floorPlan = currentFloorPlan.value;
+    if (!floor || !floorPlan) return;
+
+    const hass = this.hass;
+    const fpId = floorPlan.id;
+    const fId = floor.id;
+    const { edgeId, t, startPos, endPos, thickness, position } = this._openingPreview;
+    const openingWidth = tool === "door" ? 80 : 100;
+    const newType = tool;
+
+    // Capture values for undo/redo closures (openingPreview will change)
+    const savedStartPos = { ...startPos };
+    const savedEndPos = { ...endPos };
+    const savedThickness = thickness;
+    const savedPosition = { ...position };
+
+    try {
+      const result = await hass.callWS<{ edges: Array<{ id: string; type: string }> }>({
+        type: "inhabit/edges/split",
+        floor_plan_id: fpId,
+        floor_id: fId,
+        edge_id: edgeId,
+        position: t,
+        new_type: newType,
+        width: openingWidth,
+        ...(tool === "door" ? { opening_parts: "single", opening_type: "swing", swing_direction: "left" } : { opening_parts: "single", opening_type: "swing" }),
+      });
+
+      await reloadFloorData();
+      await this._syncRoomsWithEdges();
+
+      const allEdgeIds = result.edges.map(e => e.id);
+
+      pushAction({
+        type: "opening_place",
+        description: `Place ${tool}`,
+        undo: async () => {
+          for (const eid of allEdgeIds) {
+            try {
+              await hass.callWS({
+                type: "inhabit/edges/delete",
+                floor_plan_id: fpId,
+                floor_id: fId,
+                edge_id: eid,
+              });
+            } catch { /* edge may already be gone */ }
+          }
+          await hass.callWS({
+            type: "inhabit/edges/add",
+            floor_plan_id: fpId,
+            floor_id: fId,
+            start: savedStartPos,
+            end: savedEndPos,
+            thickness: savedThickness,
+          });
+          await reloadFloorData();
+          await this._syncRoomsWithEdges();
+        },
+        redo: async () => {
+          const updatedFloor = currentFloor.value;
+          if (!updatedFloor) return;
+          const resolved = resolveFloorEdges(updatedFloor);
+          const target = resolved.find(re => {
+            if (re.type !== "wall") return false;
+            const proj = this._getClosestPointOnSegment(savedPosition, re.startPos, re.endPos);
+            const dist = Math.sqrt(
+              (proj.x - savedPosition.x) ** 2 + (proj.y - savedPosition.y) ** 2
+            );
+            return dist < 5;
+          });
+          if (target) {
+            await hass.callWS({
+              type: "inhabit/edges/split",
+              floor_plan_id: fpId,
+              floor_id: fId,
+              edge_id: target.id,
+              position: t,
+              new_type: newType,
+              width: openingWidth,
+              ...(tool === "door" ? { opening_parts: "single", opening_type: "swing", swing_direction: "left" } : { opening_parts: "single", opening_type: "swing" }),
+            });
+          }
+          await reloadFloorData();
+          await this._syncRoomsWithEdges();
+        },
+      });
+    } catch (err) {
+      console.error("Error placing opening:", err);
+    }
   }
 
   private _handlePointerMove(e: PointerEvent): void {
@@ -837,6 +1189,11 @@ export class FpbCanvas extends LitElement {
     if (!this._wallStartPoint && tool === "select" && this._canvasMode === "walls") {
       this._checkNodeHover(point);
     }
+
+    // Opening tool: snap ghost preview to nearest wall edge
+    if (tool === "door" || tool === "window") {
+      this._updateOpeningPreview(point);
+    }
   }
 
   private _checkNodeHover(point: Coordinates): void {
@@ -848,6 +1205,59 @@ export class FpbCanvas extends LitElement {
 
     const nearest = findNearestNode(point, floor.nodes, 15);
     this._hoveredNode = nearest;
+  }
+
+  private _updateOpeningPreview(point: Coordinates): void {
+    const floor = currentFloor.value;
+    if (!floor) {
+      this._openingPreview = null;
+      return;
+    }
+
+    const resolved = resolveFloorEdges(floor);
+    const snapDistance = 30; // generous snap distance for openings
+    let bestEdge: typeof resolved[0] | null = null;
+    let bestDist = snapDistance;
+    let bestPoint: Coordinates = point;
+    let bestT = 0;
+
+    for (const re of resolved) {
+      // Only snap to wall-type edges
+      if (re.type !== "wall") continue;
+
+      const projected = this._getClosestPointOnSegment(point, re.startPos, re.endPos);
+      const dist = Math.sqrt(
+        (point.x - projected.x) ** 2 + (point.y - projected.y) ** 2
+      );
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestEdge = re;
+        bestPoint = projected;
+
+        // Calculate t parameter
+        const edx = re.endPos.x - re.startPos.x;
+        const edy = re.endPos.y - re.startPos.y;
+        const lenSq = edx * edx + edy * edy;
+        bestT = lenSq > 0
+          ? ((projected.x - re.startPos.x) * edx + (projected.y - re.startPos.y) * edy) / lenSq
+          : 0;
+      }
+    }
+
+    if (bestEdge) {
+      this._openingPreview = {
+        edgeId: bestEdge.id,
+        position: bestPoint,
+        startPos: bestEdge.startPos,
+        endPos: bestEdge.endPos,
+        thickness: bestEdge.thickness,
+        t: bestT,
+      };
+    } else {
+      this._openingPreview = null;
+    }
+
+    this.requestUpdate();
   }
 
   private _handlePointerUp(e: PointerEvent): void {
@@ -1105,7 +1515,12 @@ export class FpbCanvas extends LitElement {
     const lengthChanged = Math.abs(newLength - this._edgeEditor.length) >= 0.01;
     const directionChanged = this._editingDirection !== edge.direction;
     const lengthLockChanged = this._editingLengthLocked !== edge.length_locked;
-    const anyEdgePropChanged = directionChanged || lengthLockChanged;
+    const isEdgeOpening = edge.type === "door" || edge.type === "window";
+    const partsChanged = isEdgeOpening && this._editingOpeningParts !== (edge.opening_parts ?? "single");
+    const openingTypeChanged = isEdgeOpening && this._editingOpeningType !== (edge.opening_type ?? "swing");
+    const swingChanged = isEdgeOpening && this._editingSwingDirection !== (edge.swing_direction ?? "left");
+    const entityChanged = isEdgeOpening && (this._editingEntityId ?? null) !== (edge.entity_id ?? null);
+    const anyEdgePropChanged = directionChanged || lengthLockChanged || partsChanged || openingTypeChanged || swingChanged || entityChanged;
 
     try {
       // 1. Apply direction change (may move nodes via constraint snap)
@@ -1145,6 +1560,10 @@ export class FpbCanvas extends LitElement {
         };
         if (directionChanged) edgeUpdate.direction = this._editingDirection;
         if (lengthLockChanged) edgeUpdate.length_locked = this._editingLengthLocked;
+        if (partsChanged) edgeUpdate.opening_parts = this._editingOpeningParts;
+        if (openingTypeChanged) edgeUpdate.opening_type = this._editingOpeningType;
+        if (swingChanged) edgeUpdate.swing_direction = this._editingSwingDirection;
+        if (entityChanged) edgeUpdate.entity_id = this._editingEntityId || null;
 
         await this.hass.callWS(edgeUpdate);
         await reloadFloorData();
@@ -1160,6 +1579,47 @@ export class FpbCanvas extends LitElement {
   private _handleEditorCancel(): void {
     this._edgeEditor = null;
     selection.value = { type: "none", ids: [] };
+  }
+
+  private async _setDoorOpensToSide(side: "a" | "b", edge: Edge): Promise<void> {
+    if (!this.hass) return;
+    // Side "a" is the positive-normal side (where the arc already renders).
+    // If user picks "a", nothing to do — arc is already on that side.
+    if (side === "a") return;
+
+    // To flip the arc to side "b", swap start_node/end_node which reverses
+    // the perpendicular normal.  Also flip left↔right so the hinge stays
+    // on the same physical node.
+    const floor = currentFloor.value;
+    const floorPlan = currentFloorPlan.value;
+    if (!floor || !floorPlan) return;
+
+    const flipSwing: Record<string, string> = { left: "right", right: "left" };
+    const currentSwing = this._editingSwingDirection;
+    const newSwing = flipSwing[currentSwing] ?? currentSwing;
+
+    try {
+      await this.hass.callWS({
+        type: "inhabit/edges/update",
+        floor_plan_id: floorPlan.id,
+        floor_id: floor.id,
+        edge_id: edge.id,
+        swap_nodes: true,
+        swing_direction: newSwing,
+      });
+      this._editingSwingDirection = newSwing as typeof this._editingSwingDirection;
+      await reloadFloorData();
+      // Re-open editor on the updated edge
+      const updatedFloor = currentFloor.value;
+      if (updatedFloor) {
+        const updatedEdge = updatedFloor.edges.find(e => e.id === edge.id);
+        if (updatedEdge) {
+          this._updateEdgeEditorForSelection([updatedEdge.id]);
+        }
+      }
+    } catch (err) {
+      console.error("Error flipping door side:", err);
+    }
   }
 
   private async _handleEdgeDelete(): Promise<void> {
@@ -1512,6 +1972,12 @@ export class FpbCanvas extends LitElement {
           this._editingLength = Math.round(currentLength).toString();
           this._editingLengthLocked = edge.length_locked;
           this._editingDirection = edge.direction;
+          this._editingOpeningParts = edge.opening_parts ?? "single";
+          this._editingOpeningType = edge.opening_type ?? "swing";
+          this._editingSwingDirection = edge.swing_direction ?? "left";
+          this._editingEntityId = edge.entity_id ?? null;
+          this._openingSensorSearch = "";
+          this._openingSensorPickerOpen = false;
         }
       }
       this._multiEdgeEditor = null;
@@ -1685,6 +2151,233 @@ export class FpbCanvas extends LitElement {
       x: this._viewBox.x + (screenPoint.x - rect.left) * scaleX,
       y: this._viewBox.y + (screenPoint.y - rect.top) * scaleY,
     };
+  }
+
+  /**
+   * Compute the bounding box of a floor's content and set the viewBox to fit
+   * it centered with some margin.
+   */
+  private _cancelViewBoxAnimation(): void {
+    if (this._viewBoxAnimation !== null) {
+      cancelAnimationFrame(this._viewBoxAnimation);
+      this._viewBoxAnimation = null;
+    }
+  }
+
+  private _animateToRoom(roomId: string): void {
+    const floor = currentFloor.value;
+    if (!floor) return;
+
+    const room = floor.rooms.find(r => r.id === roomId);
+    if (!room || room.polygon.vertices.length === 0) return;
+
+    const xs = room.polygon.vertices.map(v => v.x);
+    const ys = room.polygon.vertices.map(v => v.y);
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    const minY = Math.min(...ys);
+    const maxY = Math.max(...ys);
+
+    const contentW = maxX - minX;
+    const contentH = maxY - minY;
+
+    // 15% padding
+    const padW = Math.max(contentW, 50) * 0.15;
+    const padH = Math.max(contentH, 50) * 0.15;
+
+    let fitW = contentW + padW * 2;
+    let fitH = contentH + padH * 2;
+
+    // Match SVG aspect ratio
+    const svgRect = this._svg?.getBoundingClientRect();
+    const svgAspect = svgRect && svgRect.width > 0 && svgRect.height > 0
+      ? svgRect.width / svgRect.height
+      : 1000 / 800;
+
+    const fitAspect = fitW / fitH;
+    if (fitAspect > svgAspect) {
+      fitH = fitW / svgAspect;
+    } else {
+      fitW = fitH * svgAspect;
+    }
+
+    const cx = (minX + maxX) / 2;
+    const cy = (minY + maxY) / 2;
+
+    this._animateViewBox({
+      x: cx - fitW / 2,
+      y: cy - fitH / 2,
+      width: fitW,
+      height: fitH,
+    }, 400);
+  }
+
+  private _animateToFloor(): void {
+    const floor = currentFloor.value;
+    if (!floor) return;
+
+    const xs: number[] = [];
+    const ys: number[] = [];
+
+    for (const node of floor.nodes) {
+      xs.push(node.x);
+      ys.push(node.y);
+    }
+    for (const room of floor.rooms) {
+      for (const v of room.polygon.vertices) {
+        xs.push(v.x);
+        ys.push(v.y);
+      }
+    }
+    for (const device of devicePlacements.value) {
+      if (device.floor_id === floor.id) {
+        xs.push(device.position.x);
+        ys.push(device.position.y);
+      }
+    }
+
+    if (xs.length === 0) return;
+
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    const minY = Math.min(...ys);
+    const maxY = Math.max(...ys);
+
+    const contentW = maxX - minX;
+    const contentH = maxY - minY;
+
+    const padW = Math.max(contentW, 50) * 0.1;
+    const padH = Math.max(contentH, 50) * 0.1;
+
+    let fitW = contentW + padW * 2;
+    let fitH = contentH + padH * 2;
+
+    const svgRect = this._svg?.getBoundingClientRect();
+    const svgAspect = svgRect && svgRect.width > 0 && svgRect.height > 0
+      ? svgRect.width / svgRect.height
+      : 1000 / 800;
+
+    const fitAspect = fitW / fitH;
+    if (fitAspect > svgAspect) {
+      fitH = fitW / svgAspect;
+    } else {
+      fitW = fitH * svgAspect;
+    }
+
+    const cx = (minX + maxX) / 2;
+    const cy = (minY + maxY) / 2;
+
+    this._animateViewBox({
+      x: cx - fitW / 2,
+      y: cy - fitH / 2,
+      width: fitW,
+      height: fitH,
+    }, 400);
+  }
+
+  private _animateViewBox(target: ViewBox, durationMs: number): void {
+    this._cancelViewBoxAnimation();
+
+    const start = { ...this._viewBox };
+    const startTime = performance.now();
+
+    const step = (now: number) => {
+      const elapsed = now - startTime;
+      const t = Math.min(elapsed / durationMs, 1);
+      // Ease-out cubic: 1 - (1-t)^3
+      const ease = 1 - Math.pow(1 - t, 3);
+
+      const current: ViewBox = {
+        x: start.x + (target.x - start.x) * ease,
+        y: start.y + (target.y - start.y) * ease,
+        width: start.width + (target.width - start.width) * ease,
+        height: start.height + (target.height - start.height) * ease,
+      };
+
+      this._viewBox = current;
+      viewBox.value = current;
+
+      if (t < 1) {
+        this._viewBoxAnimation = requestAnimationFrame(step);
+      } else {
+        this._viewBoxAnimation = null;
+      }
+    };
+
+    this._viewBoxAnimation = requestAnimationFrame(step);
+  }
+
+  private _fitToFloor(floor: Floor): void {
+    // Collect all points: nodes, room polygon vertices, device positions
+    const xs: number[] = [];
+    const ys: number[] = [];
+
+    for (const node of floor.nodes) {
+      xs.push(node.x);
+      ys.push(node.y);
+    }
+
+    for (const room of floor.rooms) {
+      for (const v of room.polygon.vertices) {
+        xs.push(v.x);
+        ys.push(v.y);
+      }
+    }
+
+    for (const device of devicePlacements.value) {
+      if (device.floor_id === floor.id) {
+        xs.push(device.position.x);
+        ys.push(device.position.y);
+      }
+    }
+
+    // Nothing to fit — keep default
+    if (xs.length === 0) return;
+
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    const minY = Math.min(...ys);
+    const maxY = Math.max(...ys);
+
+    const contentW = maxX - minX;
+    const contentH = maxY - minY;
+
+    // Determine SVG element aspect ratio for proper fitting
+    const svgRect = this._svg?.getBoundingClientRect();
+    const svgAspect = svgRect && svgRect.width > 0 && svgRect.height > 0
+      ? svgRect.width / svgRect.height
+      : 1000 / 800;
+
+    // Add 10% margin on each side (20% total)
+    const margin = 0.1;
+    const padW = Math.max(contentW, 50) * margin;
+    const padH = Math.max(contentH, 50) * margin;
+
+    let fitW = contentW + padW * 2;
+    let fitH = contentH + padH * 2;
+
+    // Adjust to match the SVG element's aspect ratio so the floor isn't stretched
+    const fitAspect = fitW / fitH;
+    if (fitAspect > svgAspect) {
+      // Content is wider — expand height to match
+      fitH = fitW / svgAspect;
+    } else {
+      // Content is taller — expand width to match
+      fitW = fitH * svgAspect;
+    }
+
+    const cx = (minX + maxX) / 2;
+    const cy = (minY + maxY) / 2;
+
+    const newViewBox: ViewBox = {
+      x: cx - fitW / 2,
+      y: cy - fitH / 2,
+      width: fitW,
+      height: fitH,
+    };
+
+    viewBox.value = newViewBox;
+    this._viewBox = newViewBox;
   }
 
   private _pointInPolygon(point: Coordinates, vertices: Coordinates[]): boolean {
@@ -1996,7 +2689,7 @@ export class FpbCanvas extends LitElement {
     `;
   }
 
-  private _renderEdgeChains(floor: Floor, sel: SelectionState) {
+  private _renderEdgeChains(floor: Floor, sel: SelectionState, focusedEdgeIds: Set<string> | null = null) {
     const resolved = resolveFloorEdges(floor);
 
     // If dragging a node, use the solver to preview all affected node positions
@@ -2008,6 +2701,10 @@ export class FpbCanvas extends LitElement {
       endPos: re.endPos,
       thickness: re.thickness,
       type: re.type,
+      opening_parts: re.opening_parts,
+      opening_type: re.opening_type,
+      swing_direction: re.swing_direction,
+      entity_id: re.entity_id,
     }));
 
     if (this._draggingNode) {
@@ -2031,6 +2728,10 @@ export class FpbCanvas extends LitElement {
           endPos: preview.get(re.end_node) ?? re.endPos,
           thickness: re.thickness,
           type: re.type,
+          opening_parts: re.opening_parts,
+          opening_type: re.opening_type,
+          swing_direction: re.swing_direction,
+          entity_id: re.entity_id,
         }));
       }
     }
@@ -2048,13 +2749,322 @@ export class FpbCanvas extends LitElement {
       ? new Set(floorConflicts.map(v => v.edgeId))
       : new Set<string>();
 
+    // Door and window edges (not part of wall chains)
+    const openingEdges = edgesForChains.filter(e => e.type === "door" || e.type === "window");
+
+    // When a room is focused, split chains into sub-chains of consecutive
+    // focused / non-focused edges so each segment dims independently.
+    type WallSeg = { id: string; startPos: Coordinates; endPos: Coordinates; thickness: number };
+    const wallSegments: Array<{ edges: WallSeg[]; dimClass: string }> = [];
+    for (const chain of chains) {
+      if (!focusedEdgeIds) {
+        wallSegments.push({ edges: chain, dimClass: "" });
+      } else {
+        let run: WallSeg[] = [];
+        let runFocused = false;
+        for (const e of chain) {
+          const ef = focusedEdgeIds.has(e.id);
+          if (run.length === 0) {
+            run.push(e);
+            runFocused = ef;
+          } else if (ef === runFocused) {
+            run.push(e);
+          } else {
+            wallSegments.push({ edges: run, dimClass: runFocused ? "edges-focused" : "edges-dimmed" });
+            run = [e];
+            runFocused = ef;
+          }
+        }
+        if (run.length > 0) {
+          wallSegments.push({ edges: run, dimClass: runFocused ? "edges-focused" : "edges-dimmed" });
+        }
+      }
+    }
+
     return svg`
-      <!-- Base edges rendered as chains for proper corners -->
-      ${chains.map((chain, idx) => svg`
-        <path class="wall"
-              d="${wallChainPath(chain.map(e => ({ start: e.startPos, end: e.endPos, thickness: e.thickness })))}"
-              data-chain-idx="${idx}"/>
+      <!-- Base edges rendered as chains (split by focus state) -->
+      ${wallSegments.map(seg => svg`
+        <path class="wall ${seg.dimClass}"
+              d="${wallChainPath(seg.edges.map(e => ({ start: e.startPos, end: e.endPos, thickness: e.thickness })))}"/>
       `)}
+
+      <!-- Door and window openings -->
+      ${openingEdges.map(edge => {
+        const rectPath = this._singleEdgePath({ start: edge.startPos, end: edge.endPos, thickness: edge.thickness });
+        const edgeFocused = focusedEdgeIds ? focusedEdgeIds.has(edge.id) : false;
+        const dimClass = focusedEdgeIds ? (edgeFocused ? "edges-focused" : "edges-dimmed") : "";
+
+        // Determine target swing angle from entity state
+        let targetSwing = 0;
+        if (edge.entity_id && this.hass?.states[edge.entity_id]) {
+          const entity = this.hass.states[edge.entity_id];
+          const st = entity.state;
+          if (st === "on" || st === "open") {
+            const maxSwing = edge.type === "door" ? DOOR_SWING_RAD : Math.PI / 2;
+            const pos = (entity.attributes as Record<string, unknown>).current_position as number | undefined;
+            if (pos !== undefined && pos >= 0 && pos <= 100) {
+              targetSwing = (pos / 100) * maxSwing;
+            } else {
+              targetSwing = maxSwing;
+            }
+          }
+        }
+        // Animate toward target
+        const curSwing = this._swingAngles.get(edge.id) ?? 0;
+        let swingAngle = curSwing;
+        const diff = targetSwing - curSwing;
+        if (Math.abs(diff) > 0.001) {
+          swingAngle = curSwing + diff * 0.15;
+          this._swingAngles.set(edge.id, swingAngle);
+          if (!this._swingRaf) {
+            this._swingRaf = requestAnimationFrame(() => {
+              this._swingRaf = null;
+              this.requestUpdate();
+            });
+          }
+        } else if (swingAngle !== targetSwing) {
+          swingAngle = targetSwing;
+          this._swingAngles.set(edge.id, targetSwing);
+        }
+        // Door/window: background gap + swing arc / sliding lines / tilt line
+        const dx = edge.endPos.x - edge.startPos.x;
+        const dy = edge.endPos.y - edge.startPos.y;
+        const edgeLen = Math.sqrt(dx * dx + dy * dy);
+        if (edgeLen === 0) return null;
+
+        const ux = dx / edgeLen;
+        const uy = dy / edgeLen;
+        const nx = -uy;
+        const ny = ux;
+
+        const parts = edge.opening_parts ?? "single";
+        const oType = edge.opening_type ?? "swing";
+        const cls = edge.type === "window" ? "window" : "door";
+
+// Swing-type: always render via closed-state style (posts, segment, hinge)
+        // with segment rotated by swingAngle for animation.
+        if (oType === "swing") {
+          const postDepth = edge.thickness * 0.5; // how far the post extends along the wall axis
+          const postSize = edge.thickness * 0.7; // post half-thickness (perpendicular), slightly thicker than wall
+          const doorGap = 1.5; // gap between post inner face and door/window segment
+
+          // Door posts sit at the very ends of the opening, flush with the wall.
+          // Post at start: from startPos inward by postDepth
+          // Post at end: from endPos inward by postDepth
+          const postPath = (origin: Coordinates, inward: number) => {
+            // origin = edge endpoint, inward = +1 (start side) or -1 (end side)
+            const ox = origin.x;
+            const oy = origin.y;
+            const ix = ox + ux * inward * postDepth;
+            const iy = oy + uy * inward * postDepth;
+            return `M${ox - nx * postSize},${oy - ny * postSize}
+                    L${ox + nx * postSize},${oy + ny * postSize}
+                    L${ix + nx * postSize},${iy + ny * postSize}
+                    L${ix - nx * postSize},${iy - ny * postSize} Z`;
+          };
+
+          // Door/window segment starts after post + gap on each side
+          const segInset = postDepth + doorGap;
+          const segStart = { x: edge.startPos.x + ux * segInset, y: edge.startPos.y + uy * segInset };
+          const segEnd = { x: edge.endPos.x - ux * segInset, y: edge.endPos.y - uy * segInset };
+
+          // Hinge: sits on the inner face of the hinge-side post, on the wall surface
+          const hinge_c = edge.swing_direction ?? "left";
+          const hingePost = hinge_c === "right" ? edge.endPos : edge.startPos;
+          const hingeInward = hinge_c === "right" ? -1 : 1;
+          const hingeCx = hingePost.x + ux * hingeInward * postDepth + nx * (edge.thickness / 2);
+          const hingeCy = hingePost.y + uy * hingeInward * postDepth + ny * (edge.thickness / 2);
+
+          if (cls === "door") {
+            // Swing arc — standard floor plan convention
+            const hOff_c = edge.thickness / 2;
+            const hX_c = hingePost.x + nx * hOff_c;
+            const hY_c = hingePost.y + ny * hOff_c;
+            const freePost = hinge_c === "right" ? edge.startPos : edge.endPos;
+            const fX_c = freePost.x + nx * hOff_c;
+            const fY_c = freePost.y + ny * hOff_c;
+            const arc_c = swingArcGeom(hX_c, hY_c, fX_c, fY_c, DOOR_SWING_DEG, hinge_c === "left");
+            const wedgePath_c = `M${hX_c},${hY_c} L${fX_c},${fY_c} C${arc_c.cp1x},${arc_c.cp1y} ${arc_c.cp2x},${arc_c.cp2y} ${arc_c.ox},${arc_c.oy} Z`;
+
+            // Rotate segment around hinge by swingAngle
+            const cosA_c = Math.cos(swingAngle), sinA_c = Math.sin(swingAngle);
+            const s_c = hinge_c === "left" ? 1 : -1;
+            const rotSeg = (pt: Coordinates) => {
+              const dx = pt.x - hingeCx, dy = pt.y - hingeCy;
+              return { x: hingeCx + cosA_c * dx - s_c * sinA_c * dy, y: hingeCy + s_c * sinA_c * dx + cosA_c * dy };
+            };
+            const rSegStart = rotSeg(segStart);
+            const rSegEnd = rotSeg(segEnd);
+            const animSegPath = this._singleEdgePath({ start: rSegStart, end: rSegEnd, thickness: edge.thickness });
+
+            return svg`
+              <g class="${dimClass}">
+                ${this._fadedWedge(edge.id, wedgePath_c, hX_c, hY_c, edgeLen, 'rgba(120, 144, 156, 0.08)')}
+                <path class="door-swing"
+                      d="M${fX_c},${fY_c} C${arc_c.cp1x},${arc_c.cp1y} ${arc_c.cp2x},${arc_c.cp2y} ${arc_c.ox},${arc_c.oy}"/>
+                <path class="opening-stop" d="${postPath(edge.startPos, 1)}"/>
+                <path class="opening-stop" d="${postPath(edge.endPos, -1)}"/>
+                <path class="door-closed-segment" d="${animSegPath}"/>
+                <circle class="metal-hinge" cx="${hingeCx}" cy="${hingeCy}" r="2.5"/>
+              </g>
+            `;
+          }
+          // Window closed: transparent blue glass fill + swing arc
+          // Single swing arc (reuses hinge_c/hingePost from above)
+          const hOff_w = edge.thickness / 2;
+          const hX_w = hingePost.x + nx * hOff_w;
+          const hY_w = hingePost.y + ny * hOff_w;
+          const freePost_w = hinge_c === "right" ? edge.startPos : edge.endPos;
+          const fX_w = freePost_w.x + nx * hOff_w;
+          const fY_w = freePost_w.y + ny * hOff_w;
+          const oX_w = hX_w + nx * edgeLen;
+          const oY_w = hY_w + ny * edgeLen;
+          const k_w = 0.5522847498;
+          const rfx_w = fX_w - hX_w, rfy_w = fY_w - hY_w;
+          const rox_w = oX_w - hX_w, roy_w = oY_w - hY_w;
+          const cp1x_w = fX_w + k_w * rox_w, cp1y_w = fY_w + k_w * roy_w;
+          const cp2x_w = oX_w + k_w * rfx_w, cp2y_w = oY_w + k_w * rfy_w;
+          const arcPath_w = `M${fX_w},${fY_w} C${cp1x_w},${cp1y_w} ${cp2x_w},${cp2y_w} ${oX_w},${oY_w}`;
+          const wedgePath_w = `M${hX_w},${hY_w} L${fX_w},${fY_w} C${cp1x_w},${cp1y_w} ${cp2x_w},${cp2y_w} ${oX_w},${oY_w} Z`;
+
+          if (parts === "double") {
+            // Two glass panes with center mullion + double swing arcs
+            const segMidX = (segStart.x + segEnd.x) / 2;
+            const segMidY = (segStart.y + segEnd.y) / 2;
+            const mGap = doorGap * 0.5;
+            // Double swing arcs: both leaves swing from center
+            const midX_d = (edge.startPos.x + edge.endPos.x) / 2;
+            const midY_d = (edge.startPos.y + edge.endPos.y) / 2;
+            const halfLen_d = edgeLen / 2;
+            const hL_X = edge.startPos.x + nx * hOff_w;
+            const hL_Y = edge.startPos.y + ny * hOff_w;
+            const hR_X = edge.endPos.x + nx * hOff_w;
+            const hR_Y = edge.endPos.y + ny * hOff_w;
+            const mOff_X = midX_d + nx * hOff_w;
+            const mOff_Y = midY_d + ny * hOff_w;
+            const oL_X = hL_X + nx * halfLen_d;
+            const oL_Y = hL_Y + ny * halfLen_d;
+            const oR_X = hR_X + nx * halfLen_d;
+            const oR_Y = hR_Y + ny * halfLen_d;
+            const rLfx = mOff_X - hL_X, rLfy = mOff_Y - hL_Y;
+            const rLox = oL_X - hL_X, rLoy = oL_Y - hL_Y;
+            const cpL1x = mOff_X + k_w * rLox, cpL1y = mOff_Y + k_w * rLoy;
+            const cpL2x = oL_X + k_w * rLfx, cpL2y = oL_Y + k_w * rLfy;
+            const rRfx = mOff_X - hR_X, rRfy = mOff_Y - hR_Y;
+            const rRox = oR_X - hR_X, rRoy = oR_Y - hR_Y;
+            const cpR1x = mOff_X + k_w * rRox, cpR1y = mOff_Y + k_w * rRoy;
+            const cpR2x = oR_X + k_w * rRfx, cpR2y = oR_Y + k_w * rRfy;
+            const wedgeL = `M${hL_X},${hL_Y} L${mOff_X},${mOff_Y} C${cpL1x},${cpL1y} ${cpL2x},${cpL2y} ${oL_X},${oL_Y} Z`;
+            const wedgeR = `M${hR_X},${hR_Y} L${mOff_X},${mOff_Y} C${cpR1x},${cpR1y} ${cpR2x},${cpR2y} ${oR_X},${oR_Y} Z`;
+            // Rotate both panes by swingAngle around their hinges
+            const cosA_dw = Math.cos(swingAngle), sinA_dw = Math.sin(swingAngle);
+            const rotPt = (pt: Coordinates, cx: number, cy: number, s: number) => {
+              const dx = pt.x - cx, dy = pt.y - cy;
+              return { x: cx + cosA_dw * dx - s * sinA_dw * dy, y: cy + s * sinA_dw * dx + cosA_dw * dy };
+            };
+            // Left hinge at startPos, right hinge at endPos
+            const hcLx = edge.startPos.x + ux * postDepth + nx * (edge.thickness / 2);
+            const hcLy = edge.startPos.y + uy * postDepth + ny * (edge.thickness / 2);
+            const hcRx = edge.endPos.x - ux * postDepth + nx * (edge.thickness / 2);
+            const hcRy = edge.endPos.y - uy * postDepth + ny * (edge.thickness / 2);
+            const segEndL = { x: segMidX - ux * mGap, y: segMidY - uy * mGap };
+            const segStartR = { x: segMidX + ux * mGap, y: segMidY + uy * mGap };
+            const rSegPathL = this._singleEdgePath({ start: rotPt(segStart, hcLx, hcLy, 1), end: rotPt(segEndL, hcLx, hcLy, 1), thickness: edge.thickness });
+            const rSegPathR = this._singleEdgePath({ start: rotPt(segStartR, hcRx, hcRy, -1), end: rotPt(segEnd, hcRx, hcRy, -1), thickness: edge.thickness });
+            return svg`
+              <g class="${dimClass}">
+                ${this._fadedWedge(`${edge.id}-l`, wedgeL, hL_X, hL_Y, halfLen_d, 'rgba(100, 181, 246, 0.06)')}
+                ${this._fadedWedge(`${edge.id}-r`, wedgeR, hR_X, hR_Y, halfLen_d, 'rgba(100, 181, 246, 0.06)')}
+                <path class="door-swing"
+                      d="M${mOff_X},${mOff_Y} C${cpL1x},${cpL1y} ${cpL2x},${cpL2y} ${oL_X},${oL_Y}"/>
+                <path class="door-swing"
+                      d="M${mOff_X},${mOff_Y} C${cpR1x},${cpR1y} ${cpR2x},${cpR2y} ${oR_X},${oR_Y}"/>
+                <path class="opening-stop" d="${postPath(edge.startPos, 1)}"/>
+                <path class="opening-stop" d="${postPath(edge.endPos, -1)}"/>
+                <path class="window-closed-segment" d="${rSegPathL}"/>
+                <path class="window-closed-segment" d="${rSegPathR}"/>
+              </g>
+            `;
+          }
+          // Single window: glass pane + swing arc + animated segment
+          const cosA_w = Math.cos(swingAngle), sinA_w = Math.sin(swingAngle);
+          const sw_w = hinge_c === "left" ? 1 : -1;
+          const rotW = (pt: Coordinates) => {
+            const dx = pt.x - hingeCx, dy = pt.y - hingeCy;
+            return { x: hingeCx + cosA_w * dx - sw_w * sinA_w * dy, y: hingeCy + sw_w * sinA_w * dx + cosA_w * dy };
+          };
+          const wSegPath = this._singleEdgePath({ start: rotW(segStart), end: rotW(segEnd), thickness: edge.thickness });
+          return svg`
+            <g class="${dimClass}">
+              ${this._fadedWedge(edge.id, wedgePath_w, hX_w, hY_w, edgeLen, 'rgba(100, 181, 246, 0.06)')}
+              <path class="door-swing" d="${arcPath_w}"/>
+              <path class="opening-stop" d="${postPath(edge.startPos, 1)}"/>
+              <path class="opening-stop" d="${postPath(edge.endPos, -1)}"/>
+              <path class="window-closed-segment" d="${wSegPath}"/>
+            </g>
+          `;
+        }
+
+        if (oType === "sliding") {
+          // Sliding: two parallel offset lines with arrow-heads
+          const offset = edge.thickness * 0.3;
+          const arrowSize = 3;
+          // Arrow at end of first line (pointing toward endPos)
+          const a1x = edge.endPos.x + nx * offset;
+          const a1y = edge.endPos.y + ny * offset;
+          // Arrow at start of second line (pointing toward startPos)
+          const a2x = edge.startPos.x - nx * offset;
+          const a2y = edge.startPos.y - ny * offset;
+          return svg`
+            <g class="${dimClass}">
+              <path class="${cls}" d="${rectPath}"/>
+              <line class="door-swing"
+                    x1="${edge.startPos.x + nx * offset}" y1="${edge.startPos.y + ny * offset}"
+                    x2="${a1x}" y2="${a1y}"/>
+              <polygon class="sliding-arrow"
+                       points="${a1x},${a1y} ${a1x - ux * arrowSize + nx * arrowSize * 0.5},${a1y - uy * arrowSize + ny * arrowSize * 0.5} ${a1x - ux * arrowSize - nx * arrowSize * 0.5},${a1y - uy * arrowSize - ny * arrowSize * 0.5}"/>
+              <line class="door-swing"
+                    x1="${edge.endPos.x - nx * offset}" y1="${edge.endPos.y - ny * offset}"
+                    x2="${a2x}" y2="${a2y}"/>
+              <polygon class="sliding-arrow"
+                       points="${a2x},${a2y} ${a2x + ux * arrowSize + nx * arrowSize * 0.5},${a2y + uy * arrowSize + ny * arrowSize * 0.5} ${a2x + ux * arrowSize - nx * arrowSize * 0.5},${a2y + uy * arrowSize - ny * arrowSize * 0.5}"/>
+              ${cls === "window" ? svg`
+                <line class="window-pane"
+                      x1="${edge.startPos.x}" y1="${edge.startPos.y}"
+                      x2="${edge.endPos.x}" y2="${edge.endPos.y}"/>
+              ` : null}
+              <line class="door-jamb" x1="${edge.startPos.x - nx * edge.thickness / 2}" y1="${edge.startPos.y - ny * edge.thickness / 2}" x2="${edge.startPos.x + nx * edge.thickness / 2}" y2="${edge.startPos.y + ny * edge.thickness / 2}"/>
+              <line class="door-jamb" x1="${edge.endPos.x - nx * edge.thickness / 2}" y1="${edge.endPos.y - ny * edge.thickness / 2}" x2="${edge.endPos.x + nx * edge.thickness / 2}" y2="${edge.endPos.y + ny * edge.thickness / 2}"/>
+            </g>
+          `;
+        }
+
+        if (oType === "tilt") {
+          // Tilt (windows): a small V opening from the center bottom
+          const midX = (edge.startPos.x + edge.endPos.x) / 2;
+          const midY = (edge.startPos.y + edge.endPos.y) / 2;
+          const tiltH = edgeLen * 0.25;
+          return svg`
+            <g class="${dimClass}">
+              <path class="${cls}" d="${rectPath}"/>
+              <line class="window-pane"
+                    x1="${edge.startPos.x}" y1="${edge.startPos.y}"
+                    x2="${edge.endPos.x}" y2="${edge.endPos.y}"/>
+              <line class="door-swing"
+                    x1="${edge.startPos.x}" y1="${edge.startPos.y}"
+                    x2="${midX + nx * tiltH}" y2="${midY + ny * tiltH}"/>
+              <line class="door-swing"
+                    x1="${edge.endPos.x}" y1="${edge.endPos.y}"
+                    x2="${midX + nx * tiltH}" y2="${midY + ny * tiltH}"/>
+              <line class="door-jamb" x1="${edge.startPos.x - nx * edge.thickness / 2}" y1="${edge.startPos.y - ny * edge.thickness / 2}" x2="${edge.startPos.x + nx * edge.thickness / 2}" y2="${edge.startPos.y + ny * edge.thickness / 2}"/>
+              <line class="door-jamb" x1="${edge.endPos.x - nx * edge.thickness / 2}" y1="${edge.endPos.y - ny * edge.thickness / 2}" x2="${edge.endPos.x + nx * edge.thickness / 2}" y2="${edge.endPos.y + ny * edge.thickness / 2}"/>
+            </g>
+          `;
+        }
+
+        // Swing type is handled above in the unified swing block.
+        return null;
+      })}
 
       <!-- Constraint conflict highlights (amber dashed) -->
       ${conflictEdgeIds.size > 0 ? edgesForChains
@@ -2078,6 +3088,22 @@ export class FpbCanvas extends LitElement {
                 d="${this._singleEdgePath({ start: blinkEdge.startPos, end: blinkEdge.endPos, thickness: blinkEdge.thickness })}"/>
         ` : null;
       }) : null}
+    `;
+  }
+
+  private _fadedWedge(
+    id: string, path: string,
+    cx: number, cy: number, r: number,
+    color: string,
+  ) {
+    return svg`
+      <defs>
+        <radialGradient id="wg-${id}" cx="${cx}" cy="${cy}" r="${r}" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stop-color="transparent"/>
+          <stop offset="100%" stop-color="${color}"/>
+        </radialGradient>
+      </defs>
+      <path d="${path}" fill="url(#wg-${id})" stroke="none"/>
     `;
   }
 
@@ -2142,12 +3168,51 @@ export class FpbCanvas extends LitElement {
     return `${Math.round(length)}cm`;
   }
 
+  /**
+   * Compute the set of edge IDs that form a room's boundary polygon.
+   * Matches polygon vertices to floor nodes, then finds edges between
+   * consecutive node pairs (walls, doors, and windows alike).
+   */
+  private _getRoomEdgeIds(roomId: string, floor: Floor): Set<string> {
+    const room = floor.rooms.find(r => r.id === roomId);
+    if (!room) return new Set();
+
+    const verts = room.polygon.vertices;
+    if (verts.length < 2) return new Set();
+
+    // Map each vertex to its nearest node ID
+    const nodeIds: string[] = [];
+    for (const v of verts) {
+      const n = findNearestNode(v, floor.nodes, 5);
+      if (n) nodeIds.push(n.id);
+    }
+    if (nodeIds.length < 2) return new Set();
+
+    // Build a quick lookup: "nodeA|nodeB" → edge id
+    const pairToEdge = new Map<string, string>();
+    for (const edge of floor.edges) {
+      pairToEdge.set(`${edge.start_node}|${edge.end_node}`, edge.id);
+      pairToEdge.set(`${edge.end_node}|${edge.start_node}`, edge.id);
+    }
+
+    const edgeIds = new Set<string>();
+    for (let i = 0; i < nodeIds.length; i++) {
+      const a = nodeIds[i];
+      const b = nodeIds[(i + 1) % nodeIds.length];
+      const eid = pairToEdge.get(`${a}|${b}`);
+      if (eid) edgeIds.add(eid);
+    }
+    return edgeIds;
+  }
+
   private _renderFloor() {
     const floor = currentFloor.value;
     if (!floor) return null;
 
     const sel = selection.value;
     const layerConfig = layers.value;
+    const frid = this._focusedRoomId;
+    const focusedEdgeIds = frid ? this._getRoomEdgeIds(frid, floor) : null;
 
     return svg`
       <!-- Background layer -->
@@ -2156,7 +3221,8 @@ export class FpbCanvas extends LitElement {
                x="0" y="0"
                width="${1000 * floor.background_scale}"
                height="${800 * floor.background_scale}"
-               opacity="${layerConfig.find(l => l.id === "background")?.opacity ?? 1}"/>
+               opacity="${layerConfig.find(l => l.id === "background")?.opacity ?? 1}"
+               class="${frid ? "room-dimmed" : ""}"/>
       ` : null}
 
       <!-- Structure layer -->
@@ -2164,7 +3230,7 @@ export class FpbCanvas extends LitElement {
         <g class="structure-layer" opacity="${layerConfig.find(l => l.id === "structure")?.opacity ?? 1}">
           <!-- Rooms -->
           ${floor.rooms.map(room => svg`
-            <path class="room ${sel.type === "room" && sel.ids.includes(room.id) ? "selected" : ""}"
+            <path class="room ${sel.type === "room" && sel.ids.includes(room.id) ? "selected" : ""} ${frid ? (room.id === frid ? "room-focused" : "room-dimmed") : ""}"
                   d="${polygonToPath(room.polygon)}"
                   fill="${room.color}"
                   stroke="var(--divider-color, #999)"
@@ -2172,7 +3238,7 @@ export class FpbCanvas extends LitElement {
           `)}
 
           <!-- Edges (rendered as chains for proper corners) -->
-          ${this._renderEdgeChains(floor, sel)}
+          ${this._renderEdgeChains(floor, sel, focusedEdgeIds)}
         </g>
       ` : null}
 
@@ -2185,7 +3251,7 @@ export class FpbCanvas extends LitElement {
             const displayName = room.ha_area_id ? (this._haAreas.find(a => a.area_id === room.ha_area_id)?.name ?? room.name) : room.name;
             const isLinked = !!room.ha_area_id;
             return svg`
-              <g class="room-label-group" transform="translate(${center.x}, ${center.y})">
+              <g class="room-label-group ${frid ? (room.id === frid ? "label-focused" : "label-dimmed") : ""}" transform="translate(${center.x}, ${center.y})">
                 <text class="room-label" x="0" y="0">
                   ${displayName}
                 </text>
@@ -2205,7 +3271,11 @@ export class FpbCanvas extends LitElement {
         <g class="devices-layer" opacity="${layerConfig.find(l => l.id === "devices")?.opacity ?? 1}">
           ${devicePlacements.value
             .filter(d => d.floor_id === floor.id)
-            .map(device => this._renderDevice(device))}
+            .map(device => svg`
+              <g class="${frid ? (device.room_id === frid ? "device-focused" : "device-dimmed") : ""}">
+                ${this._renderDevice(device)}
+              </g>
+            `)}
         </g>
       ` : null}
     `;
@@ -2510,6 +3580,90 @@ export class FpbCanvas extends LitElement {
     return null;
   }
 
+  private _renderOpeningPreview() {
+    if (!this._openingPreview) return null;
+
+    const tool = activeTool.value;
+    if (tool !== "door" && tool !== "window") return null;
+
+    const { position, startPos, endPos, thickness } = this._openingPreview;
+    const openingWidth = tool === "door" ? 80 : 100;
+
+    // Edge direction vector
+    const edx = endPos.x - startPos.x;
+    const edy = endPos.y - startPos.y;
+    const edgeLen = Math.sqrt(edx * edx + edy * edy);
+    if (edgeLen === 0) return null;
+
+    const ux = edx / edgeLen; // unit vector along edge
+    const uy = edy / edgeLen;
+    const nx = -uy; // perpendicular
+    const ny = ux;
+
+    const halfW = openingWidth / 2;
+    const halfT = thickness / 2;
+
+    // Opening rect corners
+    const cx = position.x;
+    const cy = position.y;
+    const rectPath = `M${cx - ux * halfW + nx * halfT},${cy - uy * halfW + ny * halfT}
+                      L${cx + ux * halfW + nx * halfT},${cy + uy * halfW + ny * halfT}
+                      L${cx + ux * halfW - nx * halfT},${cy + uy * halfW - ny * halfT}
+                      L${cx - ux * halfW - nx * halfT},${cy - uy * halfW - ny * halfT}
+                      Z`;
+
+    if (tool === "window") {
+      return svg`
+        <g class="opening-ghost">
+          <path class="window" d="${rectPath}"/>
+          <line class="window-pane"
+                x1="${cx}" y1="${cy}"
+                x2="${cx + nx * thickness}" y2="${cy + ny * thickness}"/>
+        </g>
+      `;
+    }
+
+    // Door: gap + filled leaf panel + dashed swing arc + wedge + jambs
+    // Hinge at the start side (left side of opening along wall direction)
+    const hingeX = cx - ux * halfW;
+    const hingeY = cy - uy * halfW;
+
+    // Free end (along wall, closed position)
+    const doorEndX = cx + ux * halfW;
+    const doorEndY = cy + uy * halfW;
+
+    // Swing arc (preview always shows door at full open angle)
+    const arcP = swingArcGeom(hingeX, hingeY, doorEndX, doorEndY, DOOR_SWING_DEG, true);
+
+    // Leaf panel (at full open position for preview)
+    const plx = arcP.ox - hingeX, ply = arcP.oy - hingeY;
+    const pll = Math.sqrt(plx * plx + ply * ply);
+    const ppnx = pll > 0 ? (-ply / pll) * 1.25 : 0;
+    const ppny = pll > 0 ? (plx / pll) * 1.25 : 0;
+    const prevLeafPath = `M${hingeX + ppnx},${hingeY + ppny} L${arcP.ox + ppnx},${arcP.oy + ppny} L${arcP.ox - ppnx},${arcP.oy - ppny} L${hingeX - ppnx},${hingeY - ppny} Z`;
+
+    // Wedge path
+    const prevWedge = `M${hingeX},${hingeY} L${doorEndX},${doorEndY} C${arcP.cp1x},${arcP.cp1y} ${arcP.cp2x},${arcP.cp2y} ${arcP.ox},${arcP.oy} Z`;
+
+    // Wall divider lines across wall thickness at opening endpoints
+    const pjSx = cx - ux * halfW, pjSy = cy - uy * halfW;
+    const pjEx = cx + ux * halfW, pjEy = cy + uy * halfW;
+
+    return svg`
+      <g class="opening-ghost">
+        <path class="door" d="${rectPath}"/>
+        <path class="swing-wedge" d="${prevWedge}"/>
+        <path class="door-leaf-panel" d="${prevLeafPath}"/>
+        <path class="door-swing"
+              d="M${doorEndX},${doorEndY} C${arcP.cp1x},${arcP.cp1y} ${arcP.cp2x},${arcP.cp2y} ${arcP.ox},${arcP.oy}"/>
+        <line class="door-jamb" x1="${pjSx - nx * halfT}" y1="${pjSy - ny * halfT}" x2="${pjSx + nx * halfT}" y2="${pjSy + ny * halfT}"/>
+        <line class="door-jamb" x1="${pjEx - nx * halfT}" y1="${pjEy - ny * halfT}" x2="${pjEx + nx * halfT}" y2="${pjEy + ny * halfT}"/>
+        <circle class="hinge-glow" cx="${hingeX}" cy="${hingeY}" r="5"/>
+        <circle class="hinge-dot" cx="${hingeX}" cy="${hingeY}" r="3"/>
+      </g>
+    `;
+  }
+
   private _getPolygonCenter(vertices: Coordinates[]): Coordinates | null {
     if (vertices.length === 0) return null;
     if (vertices.length < 3) {
@@ -2575,18 +3729,24 @@ export class FpbCanvas extends LitElement {
   private _renderEdgeEditor() {
     if (!this._edgeEditor) return null;
 
+    const edge = this._edgeEditor.edge;
+    const isDoor = edge.type === "door";
+    const isWindow = edge.type === "window";
+    const isOpening = isDoor || isWindow;
+    const title = isDoor ? "Door Properties" : isWindow ? "Window Properties" : "Wall Properties";
+
     return html`
       <div class="wall-editor"
            @click=${(e: Event) => e.stopPropagation()}
            @pointerdown=${(e: Event) => e.stopPropagation()}>
         <div class="wall-editor-header">
-          <span class="wall-editor-title">Wall Properties</span>
+          <span class="wall-editor-title">${title}</span>
           <button class="wall-editor-close" @click=${this._handleEditorCancel}><ha-icon icon="mdi:close"></ha-icon></button>
         </div>
 
-        ${this._edgeEditor.edge.link_group ? (() => {
+        ${edge.link_group ? (() => {
           const floor = currentFloor.value;
-          const group = this._edgeEditor!.edge.link_group!;
+          const group = edge.link_group!;
           const siblingCount = floor
             ? floor.edges.filter(e => e.link_group === group).length
             : 0;
@@ -2606,9 +3766,9 @@ export class FpbCanvas extends LitElement {
           `;
         })() : null}
 
-        ${this._edgeEditor.edge.collinear_group ? (() => {
+        ${edge.collinear_group ? (() => {
           const floor = currentFloor.value;
-          const cGroup = this._edgeEditor!.edge.collinear_group!;
+          const cGroup = edge.collinear_group!;
           const siblingCount = floor
             ? floor.edges.filter(e => e.collinear_group === cGroup).length
             : 0;
@@ -2616,7 +3776,7 @@ export class FpbCanvas extends LitElement {
             <div class="wall-editor-section" style="flex-direction:row; align-items:center; gap:8px;">
               <span style="display:inline-flex; align-items:center; gap:4px; font-size:12px; color:${linkGroupColor(cGroup)};">
                 <ha-icon icon="mdi:vector-line" style="--mdc-icon-size:14px;"></ha-icon>
-                Collinear (${siblingCount} walls)
+                Collinear (${siblingCount} edges)
               </span>
               <button
                 class="constraint-btn"
@@ -2628,8 +3788,164 @@ export class FpbCanvas extends LitElement {
           `;
         })() : null}
 
+        ${isOpening ? (() => {
+          const floor = currentFloor.value;
+          if (!floor) return null;
+          const nodeMap = buildNodeMap(floor.nodes);
+          const sn = nodeMap.get(edge.start_node);
+          const en = nodeMap.get(edge.end_node);
+          if (!sn || !en) return null;
+          const mx = (sn.x + en.x) / 2;
+          const my = (sn.y + en.y) / 2;
+          const edx = en.x - sn.x;
+          const edy = en.y - sn.y;
+          const elen = Math.sqrt(edx * edx + edy * edy);
+          if (elen === 0) return null;
+          const pnx = -edy / elen;
+          const pny = edx / elen;
+          const probeD = edge.thickness / 2 + 5;
+          const p1 = { x: mx + pnx * probeD, y: my + pny * probeD };
+          const p2 = { x: mx - pnx * probeD, y: my - pny * probeD };
+          const roomA = floor.rooms.find(r => r.polygon.vertices.length >= 3 && this._pointInPolygon(p1, r.polygon.vertices));
+          const roomB = floor.rooms.find(r => r.polygon.vertices.length >= 3 && this._pointInPolygon(p2, r.polygon.vertices));
+          const nameA = roomA?.name || (edge.is_exterior ? "Outside" : null);
+          const nameB = roomB?.name || (edge.is_exterior ? "Outside" : null);
+          if (!nameA && !nameB) return null;
+          return html`
+            <div class="wall-editor-section">
+              <span class="wall-editor-section-label">Opens into</span>
+              <div class="wall-editor-row" style="gap:6px; font-size:12px; align-items:center;">
+                <button
+                  class="room-side-btn active"
+                  style="background:${roomA?.color ?? "var(--secondary-background-color, #f5f5f5)"};"
+                  @click=${() => this._setDoorOpensToSide("a", edge)}
+                >${nameA ?? "—"}</button>
+                <ha-icon icon="mdi:door-open" style="--mdc-icon-size:14px; color:var(--secondary-text-color, #888);"></ha-icon>
+                <button
+                  class="room-side-btn"
+                  style="background:${roomB?.color ?? "var(--secondary-background-color, #f5f5f5)"};"
+                  @click=${() => this._setDoorOpensToSide("b", edge)}
+                >${nameB ?? "—"}</button>
+              </div>
+            </div>
+          `;
+        })() : null}
+
+        ${isOpening ? (() => {
+          // Determine available types based on edge type
+          const types: Array<{ value: 'swing' | 'sliding' | 'tilt'; label: string }> = isDoor
+            ? [{ value: "swing", label: "Swing" }, { value: "sliding", label: "Sliding" }]
+            : [{ value: "swing", label: "Swing" }, { value: "sliding", label: "Sliding" }, { value: "tilt", label: "Tilt" }];
+
+          // Determine hinge options based on parts + type
+          const showHinges = this._editingOpeningType === "swing";
+          const hingeOptions: Array<{ value: 'left' | 'right'; label: string }> =
+            this._editingOpeningParts === "double"
+              ? [{ value: "left", label: "Left & Right" }] // double swing always has both hinges
+              : [{ value: "left", label: "Left" }, { value: "right", label: "Right" }];
+
+          return html`
+            <div class="wall-editor-section">
+              <span class="wall-editor-section-label">Parts</span>
+              <div class="wall-editor-constraints">
+                <button
+                  class="constraint-btn ${this._editingOpeningParts === "single" ? "active" : ""}"
+                  @click=${() => { this._editingOpeningParts = "single"; }}
+                >Single</button>
+                <button
+                  class="constraint-btn ${this._editingOpeningParts === "double" ? "active" : ""}"
+                  @click=${() => { this._editingOpeningParts = "double"; }}
+                >Double</button>
+              </div>
+            </div>
+
+            <div class="wall-editor-section">
+              <span class="wall-editor-section-label">Type</span>
+              <div class="wall-editor-constraints">
+                ${types.map(t => html`
+                  <button
+                    class="constraint-btn ${this._editingOpeningType === t.value ? "active" : ""}"
+                    @click=${() => { this._editingOpeningType = t.value; }}
+                  >${t.label}</button>
+                `)}
+              </div>
+            </div>
+
+            ${showHinges ? html`
+              <div class="wall-editor-section">
+                <span class="wall-editor-section-label">Hinges</span>
+                <div class="wall-editor-constraints">
+                  ${hingeOptions.length === 1 ? html`
+                    <button class="constraint-btn active">${hingeOptions[0].label}</button>
+                  ` : hingeOptions.map(h => html`
+                    <button
+                      class="constraint-btn ${this._editingSwingDirection === h.value ? "active" : ""}"
+                      @click=${() => { this._editingSwingDirection = h.value; }}
+                    >${h.label}</button>
+                  `)}
+                </div>
+              </div>
+            ` : null}
+          `;
+        })() : null}
+
+        ${isOpening ? html`
+          <div class="wall-editor-section">
+            <span class="wall-editor-section-label">Sensor</span>
+            ${this._editingEntityId ? (() => {
+              const state = this.hass?.states[this._editingEntityId!];
+              const name = state?.attributes.friendly_name || this._editingEntityId;
+              const icon = (state?.attributes.icon as string) || "mdi:radiobox-marked";
+              const isOn = state?.state === "on";
+              return html`
+                <div class="wall-editor-row" style="gap:6px; align-items:center;">
+                  <ha-icon icon=${icon} style="--mdc-icon-size:18px; color:${isOn ? "var(--state-light-active-color, #ffd600)" : "var(--secondary-text-color, #999)"};"></ha-icon>
+                  <span style="flex:1; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${name}</span>
+                  <span style="font-size:11px; color:var(--secondary-text-color, #999); font-weight:500;">${state?.state ?? "?"}</span>
+                  <button
+                    class="constraint-btn"
+                    @click=${() => { this._editingEntityId = null; this._openingSensorPickerOpen = false; this._openingSensorSearch = ""; }}
+                    title="Remove sensor"
+                    style="padding:2px 6px; font-size:11px;"
+                  ><ha-icon icon="mdi:close" style="--mdc-icon-size:14px;"></ha-icon></button>
+                </div>
+              `;
+            })() : !this._openingSensorPickerOpen ? html`
+              <button
+                class="constraint-btn"
+                @click=${() => { this._openingSensorPickerOpen = true; this._openingSensorSearch = ""; this.updateComplete.then(() => { (this.shadowRoot?.querySelector('.opening-sensor-search') as HTMLInputElement)?.focus(); }); }}
+                style="width:100%;"
+              ><ha-icon icon="mdi:plus" style="--mdc-icon-size:14px;"></ha-icon> Link sensor</button>
+            ` : html`
+              <div style="display:flex; flex-direction:column; gap:6px;">
+                <input
+                  class="opening-sensor-search"
+                  type="text"
+                  placeholder="Search sensors..."
+                  .value=${this._openingSensorSearch}
+                  @input=${(e: InputEvent) => { this._openingSensorSearch = (e.target as HTMLInputElement).value; }}
+                  @keydown=${(e: KeyboardEvent) => { if (e.key === "Escape") { this._openingSensorPickerOpen = false; } }}
+                  style="width:100%; padding:6px 8px; border:1px solid var(--divider-color, #e0e0e0); border-radius:8px; font-size:12px; background:var(--primary-background-color, #fafafa); color:var(--primary-text-color, #333); box-sizing:border-box;"
+                />
+                <div style="max-height:160px; overflow-y:auto;">
+                  ${this._getOpeningSensorEntities().map(entity => html`
+                    <div
+                      class="entity-item ${entity.state === "on" ? "on" : ""}"
+                      @click=${() => { this._editingEntityId = entity.entity_id; this._openingSensorPickerOpen = false; this._openingSensorSearch = ""; }}
+                    >
+                      <ha-icon icon=${(entity.attributes.icon as string) || "mdi:radiobox-marked"}></ha-icon>
+                      <span class="name">${entity.attributes.friendly_name || entity.entity_id}</span>
+                      <span class="state">${entity.state}</span>
+                    </div>
+                  `)}
+                </div>
+              </div>
+            `}
+          </div>
+        ` : null}
+
         <div class="wall-editor-section">
-          <span class="wall-editor-section-label">Length</span>
+          <span class="wall-editor-section-label">Width</span>
           <div class="wall-editor-row">
             <input
               type="number"
@@ -2639,17 +3955,19 @@ export class FpbCanvas extends LitElement {
               autofocus
             />
             <span class="wall-editor-unit">cm</span>
-            <button
-              class="constraint-btn lock-btn ${this._editingLengthLocked ? "active" : ""}"
-              @click=${() => { this._editingLengthLocked = !this._editingLengthLocked; }}
-              title="${this._editingLengthLocked ? "Unlock length" : "Lock length"}"
-            ><ha-icon icon="${this._editingLengthLocked ? "mdi:lock" : "mdi:lock-open-variant"}"></ha-icon></button>
+            ${!isOpening ? html`
+              <button
+                class="constraint-btn lock-btn ${this._editingLengthLocked ? "active" : ""}"
+                @click=${() => { this._editingLengthLocked = !this._editingLengthLocked; }}
+                title="${this._editingLengthLocked ? "Unlock length" : "Lock length"}"
+              ><ha-icon icon="${this._editingLengthLocked ? "mdi:lock" : "mdi:lock-open-variant"}"></ha-icon></button>
+            ` : null}
           </div>
         </div>
 
-        ${this._edgeEditor.edge.angle_group ? (() => {
+        ${edge.angle_group ? (() => {
           const floor = currentFloor.value;
-          const aGroup = this._edgeEditor!.edge.angle_group!;
+          const aGroup = edge.angle_group!;
           const siblingCount = floor
             ? floor.edges.filter(e => e.angle_group === aGroup).length
             : 0;
@@ -2669,29 +3987,31 @@ export class FpbCanvas extends LitElement {
           `;
         })() : null}
 
-        <div class="wall-editor-section">
-          <span class="wall-editor-section-label">Constraints</span>
-          <div class="wall-editor-row">
-            <span class="wall-editor-label">Direction</span>
-            <div class="wall-editor-constraints">
-              <button
-                class="constraint-btn ${this._editingDirection === "free" ? "active" : ""}"
-                @click=${() => { this._editingDirection = "free"; }}
-                title="Free direction"
-              >Free</button>
-              <button
-                class="constraint-btn ${this._editingDirection === "horizontal" ? "active" : ""}"
-                @click=${() => { this._editingDirection = "horizontal"; }}
-                title="Lock horizontal"
-              ><ha-icon icon="mdi:arrow-left-right"></ha-icon> Horizontal</button>
-              <button
-                class="constraint-btn ${this._editingDirection === "vertical" ? "active" : ""}"
-                @click=${() => { this._editingDirection = "vertical"; }}
-                title="Lock vertical"
-              ><ha-icon icon="mdi:arrow-up-down"></ha-icon> Vertical</button>
+        ${!isOpening ? html`
+          <div class="wall-editor-section">
+            <span class="wall-editor-section-label">Constraints</span>
+            <div class="wall-editor-row">
+              <span class="wall-editor-label">Direction</span>
+              <div class="wall-editor-constraints">
+                <button
+                  class="constraint-btn ${this._editingDirection === "free" ? "active" : ""}"
+                  @click=${() => { this._editingDirection = "free"; }}
+                  title="Free direction"
+                >Free</button>
+                <button
+                  class="constraint-btn ${this._editingDirection === "horizontal" ? "active" : ""}"
+                  @click=${() => { this._editingDirection = "horizontal"; }}
+                  title="Lock horizontal"
+                ><ha-icon icon="mdi:arrow-left-right"></ha-icon> Horizontal</button>
+                <button
+                  class="constraint-btn ${this._editingDirection === "vertical" ? "active" : ""}"
+                  @click=${() => { this._editingDirection = "vertical"; }}
+                  title="Lock vertical"
+                ><ha-icon icon="mdi:arrow-up-down"></ha-icon> Vertical</button>
+              </div>
             </div>
           </div>
-        </div>
+        ` : null}
 
         <div class="wall-editor-actions">
           <button class="save-btn" @click=${this._handleEditorSave}><ha-icon icon="mdi:check"></ha-icon> Apply</button>
@@ -2914,6 +4234,38 @@ export class FpbCanvas extends LitElement {
     }
   }
 
+  private _getOpeningSensorEntities(): HassEntity[] {
+    if (!this.hass) return [];
+
+    const domains = ["binary_sensor", "cover"];
+    let entities = Object.values(this.hass.states).filter((e) =>
+      domains.some((d) => e.entity_id.startsWith(d + "."))
+    );
+
+    // Exclude sensors already assigned to other edges on this floor
+    const floor = currentFloor.value;
+    const currentEdgeId = this._edgeEditor?.edge.id;
+    if (floor) {
+      const usedEntityIds = new Set(
+        floor.edges
+          .filter((e) => e.entity_id && e.id !== currentEdgeId)
+          .map((e) => e.entity_id)
+      );
+      entities = entities.filter((e) => !usedEntityIds.has(e.entity_id));
+    }
+
+    if (this._openingSensorSearch) {
+      const search = this._openingSensorSearch.toLowerCase();
+      entities = entities.filter(
+        (e) =>
+          e.entity_id.toLowerCase().includes(search) ||
+          ((e.attributes.friendly_name as string) || "").toLowerCase().includes(search)
+      );
+    }
+
+    return entities.slice(0, 30);
+  }
+
   private _getFilteredEntities(): HassEntity[] {
     if (!this.hass) return [];
 
@@ -3083,6 +4435,7 @@ export class FpbCanvas extends LitElement {
         ${mode === "walls" ? this._renderAngleConstraints() : null}
         ${mode === "walls" ? this._renderNodeEndpoints() : null}
         ${mode !== "viewing" ? this._renderDrawingPreview() : null}
+        ${mode === "walls" ? this._renderOpeningPreview() : null}
         ${mode === "placement" ? this._renderDevicePreview() : null}
       </svg>
       ${this._renderEdgeEditor()}
@@ -3093,15 +4446,56 @@ export class FpbCanvas extends LitElement {
     `;
   }
 
+  /**
+   * Compute the set of edge IDs whose annotations should be visible.
+   * Returns null when nothing is selected (all hidden).
+   */
+  private _getVisibleAnnotationEdgeIds(): Set<string> | null {
+    const sel = selection.value;
+    if (sel.type !== "edge" || sel.ids.length === 0) return null;
+
+    const floor = currentFloor.value;
+    if (!floor) return null;
+
+    const visible = new Set<string>(sel.ids);
+
+    // Build lookup of group memberships for selected edges
+    const selectedEdges = floor.edges.filter(e => sel.ids.includes(e.id));
+    const linkGroups = new Set<string>();
+    const collinearGroups = new Set<string>();
+    const angleGroups = new Set<string>();
+
+    for (const e of selectedEdges) {
+      if (e.link_group) linkGroups.add(e.link_group);
+      if (e.collinear_group) collinearGroups.add(e.collinear_group);
+      if (e.angle_group) angleGroups.add(e.angle_group);
+    }
+
+    // Add all edges that share any group with the selected edges
+    for (const e of floor.edges) {
+      if (visible.has(e.id)) continue;
+      if (e.link_group && linkGroups.has(e.link_group)) visible.add(e.id);
+      if (e.collinear_group && collinearGroups.has(e.collinear_group)) visible.add(e.id);
+      if (e.angle_group && angleGroups.has(e.angle_group)) visible.add(e.id);
+    }
+
+    return visible;
+  }
+
   private _renderEdgeAnnotations() {
     const floor = currentFloor.value;
     if (!floor || floor.edges.length === 0) return null;
+
+    const visibleIds = this._getVisibleAnnotationEdgeIds();
+    if (!visibleIds) return null; // nothing selected → hide all labels
 
     const resolved = resolveFloorEdges(floor);
 
     return svg`
       <g class="wall-annotations-layer">
         ${resolved.map(re => {
+          if (!visibleIds.has(re.id)) return null;
+
           const midX = (re.startPos.x + re.endPos.x) / 2;
           const midY = (re.startPos.y + re.endPos.y) / 2;
           const length = this._calculateWallLength(re.startPos, re.endPos);
@@ -3158,6 +4552,10 @@ export class FpbCanvas extends LitElement {
     const floor = currentFloor.value;
     if (!floor || floor.edges.length === 0) return null;
 
+    // Only show angle indicators for edges related to the selection
+    const visibleIds = this._getVisibleAnnotationEdgeIds();
+    if (!visibleIds) return null;
+
     const nodeMap = buildNodeMap(floor.nodes);
     // Group edges by angle_group, then find the shared node for each group
     const groupEdges = new Map<string, Edge[]>();
@@ -3165,6 +4563,11 @@ export class FpbCanvas extends LitElement {
       if (!edge.angle_group) continue;
       if (!groupEdges.has(edge.angle_group)) groupEdges.set(edge.angle_group, []);
       groupEdges.get(edge.angle_group)!.push(edge);
+    }
+
+    // Filter: only keep groups where at least one edge is visible
+    for (const [groupId, edges] of groupEdges) {
+      if (!edges.some(e => visibleIds.has(e.id))) groupEdges.delete(groupId);
     }
 
     // For each angle group pair, find the shared node and draw the indicator there.
@@ -3707,6 +5110,11 @@ export class FpbCanvas extends LitElement {
       </g>
     `;
   }
+}
+
+// Guard against duplicate registration when both panel.js and viewer.js load
+if (!customElements.get("fpb-canvas")) {
+  customElements.define("fpb-canvas", FpbCanvas);
 }
 
 declare global {

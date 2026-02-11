@@ -68,33 +68,63 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Register services
     await services.async_register_services(hass)
 
-    # Register panel static path
+    # Register panel static paths
     panel_path = hass.config.path("custom_components/inhabit/frontend/dist/panel.js")
+    viewer_path = hass.config.path(
+        "custom_components/inhabit/frontend/dist/viewer.js"
+    )
     if HAS_STATIC_PATH_CONFIG:
         # Home Assistant 2024.7+
         await hass.http.async_register_static_paths(
-            [StaticPathConfig("/inhabit/panel.js", panel_path, cache_headers=False)]
+            [
+                StaticPathConfig(
+                    "/inhabit/panel.js", panel_path, cache_headers=False
+                ),
+                StaticPathConfig(
+                    "/inhabit/viewer.js", viewer_path, cache_headers=False
+                ),
+            ]
         )
     else:
         # Home Assistant < 2024.7 (deprecated)
         hass.http.register_static_path(
             "/inhabit/panel.js", panel_path, cache_headers=False
         )
+        hass.http.register_static_path(
+            "/inhabit/viewer.js", viewer_path, cache_headers=False
+        )
 
-    # Register panel (only if not already registered)
+    # Register panels (only if not already registered)
     panels = hass.data.get("frontend_panels", {})
+
+    if "inhabit-editor" not in panels:
+        async_register_built_in_panel(
+            hass,
+            component_name="custom",
+            sidebar_title="Floorplan Editor",
+            sidebar_icon="mdi:pencil-ruler",
+            frontend_url_path="inhabit-editor",
+            require_admin=True,
+            config={
+                "_panel_custom": {
+                    "name": "ha-floorplan-builder",
+                    "module_url": "/inhabit/panel.js",
+                }
+            },
+        )
+
     if "inhabit" not in panels:
         async_register_built_in_panel(
             hass,
             component_name="custom",
-            sidebar_title="Inhabit",
+            sidebar_title="Floorplan",
             sidebar_icon="mdi:floor-plan",
             frontend_url_path="inhabit",
             require_admin=False,
             config={
                 "_panel_custom": {
-                    "name": "ha-floorplan-builder",
-                    "module_url": "/inhabit/panel.js",
+                    "name": "ha-floorplan-viewer",
+                    "module_url": "/inhabit/viewer.js",
                 }
             },
         )

@@ -291,8 +291,10 @@ class Edge:
     angle_group: str | None = None
     link_group: str | None = None
     collinear_group: str | None = None
-    # Door-specific
-    swing_direction: str | None = None
+    # Opening properties (door & window)
+    opening_parts: str | None = None  # "single" | "double"
+    opening_type: str | None = None  # "swing" | "sliding" | "tilt"
+    swing_direction: str | None = None  # "left" | "right" (hinge side)
     entity_id: str | None = None
     # Window-specific
     height: float | None = None
@@ -315,6 +317,10 @@ class Edge:
             result["link_group"] = self.link_group
         if self.collinear_group is not None:
             result["collinear_group"] = self.collinear_group
+        if self.opening_parts is not None:
+            result["opening_parts"] = self.opening_parts
+        if self.opening_type is not None:
+            result["opening_type"] = self.opening_type
         if self.swing_direction is not None:
             result["swing_direction"] = self.swing_direction
         if self.entity_id is not None:
@@ -338,6 +344,8 @@ class Edge:
             angle_group=data.get("angle_group"),
             link_group=data.get("link_group"),
             collinear_group=data.get("collinear_group"),
+            opening_parts=data.get("opening_parts"),
+            opening_type=data.get("opening_type"),
             swing_direction=data.get("swing_direction"),
             entity_id=data.get("entity_id"),
             height=data.get("height"),

@@ -79,8 +79,10 @@ export interface Edge {
   angle_group?: string;
   link_group?: string;
   collinear_group?: string;
-  // Door-specific
-  swing_direction?: 'left' | 'right' | 'double' | 'sliding';
+  // Opening properties (door & window)
+  opening_parts?: 'single' | 'double';
+  opening_type?: 'swing' | 'sliding' | 'tilt';
+  swing_direction?: 'left' | 'right';
   entity_id?: string;
   // Window-specific
   height?: number;

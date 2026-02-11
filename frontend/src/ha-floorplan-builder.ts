@@ -4,68 +4,56 @@
 
 import { LitElement, html, css, PropertyValues } from "lit";
 import { property, state } from "lit/decorators.js";
-import { signal } from "@preact/signals-core";
 import type {
   HomeAssistant,
   FloorPlan,
   Floor,
-  ToolType,
-  CanvasMode,
-  LayerConfig,
-  ViewBox,
-  SelectionState,
   DevicePlacement,
 } from "./types";
 
 // Import sub-components
 import "./components/canvas/fpb-canvas";
 import "./components/toolbar/fpb-toolbar";
+import "./components/dialogs/fpb-import-export-dialog";
+import type { FpbImportExportDialog } from "./components/dialogs/fpb-import-export-dialog";
 import { clearHistory } from "./stores/history-store";
 import { validateConstraints } from "./utils/wall-solver";
 import type { ConstraintViolation } from "./utils/wall-solver";
 
-// Global state signals
-export const currentFloorPlan = signal<FloorPlan | null>(null);
-export const currentFloor = signal<Floor | null>(null);
-export const canvasMode = signal<CanvasMode>("walls");
-export const activeTool = signal<ToolType>("select");
-export const selection = signal<SelectionState>({ type: "none", ids: [] });
+// Re-export shared signals so existing imports from this module keep working
+export {
+  currentFloorPlan,
+  currentFloor,
+  canvasMode,
+  activeTool,
+  selection,
+  viewBox,
+  gridSize,
+  snapToGrid,
+  showGrid,
+  layers,
+  devicePlacements,
+  constraintConflicts,
+  focusedRoomId,
+  setCanvasMode,
+  setReloadFunction,
+  reloadFloorData,
+  resetSignals,
+} from "./stores/signals";
 
-export function setCanvasMode(mode: CanvasMode): void {
-  canvasMode.value = mode;
-  activeTool.value = "select";
-  selection.value = { type: "none", ids: [] };
-}
-export const viewBox = signal<ViewBox>({ x: 0, y: 0, width: 1000, height: 800 });
-export const gridSize = signal<number>(10);
-export const snapToGrid = signal<boolean>(true);
-export const showGrid = signal<boolean>(true);
+import {
+  currentFloorPlan,
+  currentFloor,
+  canvasMode,
+  gridSize,
+  devicePlacements,
+  constraintConflicts,
+  focusedRoomId,
+  setReloadFunction,
+  resetSignals,
+} from "./stores/signals";
 
-export const layers = signal<LayerConfig[]>([
-  { id: "background", name: "Background", visible: true, locked: false, opacity: 1 },
-  { id: "structure", name: "Structure", visible: true, locked: false, opacity: 1 },
-  { id: "furniture", name: "Furniture", visible: true, locked: false, opacity: 1 },
-  { id: "devices", name: "Devices", visible: true, locked: false, opacity: 1 },
-  { id: "coverage", name: "Coverage", visible: true, locked: false, opacity: 0.5 },
-  { id: "labels", name: "Labels", visible: true, locked: false, opacity: 1 },
-  { id: "automation", name: "Automation", visible: true, locked: false, opacity: 0.7 },
-]);
-
-export const devicePlacements = signal<DevicePlacement[]>([]);
-export const constraintConflicts = signal<Map<string, ConstraintViolation[]>>(new Map());
-
-// Function to reload current floor plan data (called after modifications)
-let _reloadFloorData: (() => Promise<void>) | null = null;
-
-export function setReloadFunction(fn: () => Promise<void>): void {
-  _reloadFloorData = fn;
-}
-
-export async function reloadFloorData(): Promise<void> {
-  if (_reloadFloorData) {
-    await _reloadFloorData();
-  }
-}
+import { effect } from "@preact/signals-core";
 
 export class HaFloorplanBuilder extends LitElement {
   @property({ attribute: false })
@@ -85,6 +73,14 @@ export class HaFloorplanBuilder extends LitElement {
 
   @state()
   private _floorCount = 1;
+
+  @state()
+  private _haAreas: Array<{ area_id: string; name: string; icon?: string | null }> = [];
+
+  @state()
+  private _focusedRoomId: string | null = null;
+
+  private _cleanupEffects: (() => void)[] = [];
 
   static override styles = css`
     :host {
@@ -205,12 +201,87 @@ export class HaFloorplanBuilder extends LitElement {
     .empty-state button:active {
       transform: scale(0.97);
     }
+
+    .room-chips-bar {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      overflow-x: auto;
+      scrollbar-width: none;
+      -ms-overflow-style: none;
+      background: var(--card-background-color, #fff);
+      border-bottom: 1px solid var(--divider-color, #e0e0e0);
+    }
+
+    .room-chips-bar::-webkit-scrollbar {
+      display: none;
+    }
+
+    .room-chip {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 12px;
+      border: 1px solid var(--divider-color, #e0e0e0);
+      border-radius: 18px;
+      background: var(--primary-background-color, #fafafa);
+      color: var(--primary-text-color);
+      font-size: 13px;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background 0.2s, border-color 0.2s, color 0.2s;
+    }
+
+    .room-chip:hover {
+      background: var(--secondary-background-color, #f0f0f0);
+    }
+
+    .room-chip.active {
+      background: var(--primary-color, #03a9f4);
+      color: var(--text-primary-color, #fff);
+      border-color: var(--primary-color, #03a9f4);
+    }
   `;
 
   override connectedCallback(): void {
     super.connectedCallback();
-    this._loadFloorPlans();
+    // Reset all shared signals so stale state from the viewer doesn't bleed in
+    resetSignals();
+    canvasMode.value = "walls";
+    clearHistory();
     setReloadFunction(() => this._reloadCurrentFloor());
+    this._loadFloorPlans();
+    this._loadHaAreas();
+
+    this._cleanupEffects.push(
+      effect(() => {
+        this._focusedRoomId = focusedRoomId.value;
+      }),
+      effect(() => {
+        // Track floor changes to re-render chips bar when rooms change
+        void currentFloor.value;
+        this.requestUpdate();
+      })
+    );
+  }
+
+  override disconnectedCallback(): void {
+    super.disconnectedCallback();
+    this._cleanupEffects.forEach(cleanup => cleanup());
+    this._cleanupEffects = [];
+  }
+
+  private async _loadHaAreas(): Promise<void> {
+    if (!this.hass) return;
+    try {
+      const areas = await this.hass.callWS<Array<{ area_id: string; name: string; icon?: string | null }>>({
+        type: "config/area_registry/list",
+      });
+      this._haAreas = areas;
+    } catch (err) {
+      console.error("Error loading HA areas:", err);
+    }
   }
 
   private async _reloadCurrentFloor(): Promise<void> {
@@ -431,6 +502,52 @@ export class HaFloorplanBuilder extends LitElement {
     }
   }
 
+  private async _renameFloor(floorId: string, name: string): Promise<void> {
+    if (!this.hass) return;
+
+    const fp = currentFloorPlan.value;
+    if (!fp) return;
+
+    try {
+      await this.hass.callWS({
+        type: "inhabit/floors/update",
+        floor_plan_id: fp.id,
+        floor_id: floorId,
+        name,
+      });
+
+      const updatedFloors = fp.floors.map(f =>
+        f.id === floorId ? { ...f, name } : f
+      );
+      const updatedFp = { ...fp, floors: updatedFloors };
+      this._floorPlans = this._floorPlans.map(p => p.id === fp.id ? updatedFp : p);
+      currentFloorPlan.value = updatedFp;
+
+      if (currentFloor.value?.id === floorId) {
+        currentFloor.value = { ...currentFloor.value, name };
+      }
+    } catch (err) {
+      console.error("Error renaming floor:", err);
+    }
+  }
+
+  private _openImportExport(): void {
+    const dialog = this.shadowRoot?.querySelector("fpb-import-export-dialog") as FpbImportExportDialog | null;
+    dialog?.show();
+  }
+
+  private async _handleFloorsImported(e: CustomEvent): Promise<void> {
+    const { floorPlan, switchTo } = e.detail;
+    this._floorPlans = this._floorPlans.map(p => p.id === floorPlan.id ? floorPlan : p);
+    currentFloorPlan.value = floorPlan;
+    if (switchTo) {
+      clearHistory();
+      currentFloor.value = switchTo;
+    }
+    // Reload device placements since import may have added new ones
+    await this._loadDevicePlacements(floorPlan.id);
+  }
+
   private _handleFloorSelect(floorId: string): void {
     const fp = currentFloorPlan.value;
     if (fp) {
@@ -438,10 +555,53 @@ export class HaFloorplanBuilder extends LitElement {
       if (floor) {
         if (currentFloor.value?.id !== floor.id) {
           clearHistory();
+          focusedRoomId.value = null;
         }
         currentFloor.value = floor;
       }
     }
+  }
+
+  private _handleRoomChipClick(roomId: string | null): void {
+    if (focusedRoomId.value === roomId) {
+      // Toggle off if clicking same chip
+      focusedRoomId.value = null;
+    } else {
+      focusedRoomId.value = roomId;
+    }
+  }
+
+  private _renderRoomChips() {
+    const floor = currentFloor.value;
+    if (!floor || floor.rooms.length === 0) return null;
+
+    return html`
+      <div class="room-chips-bar">
+        <button
+          class="room-chip ${this._focusedRoomId === null ? "active" : ""}"
+          @click=${() => this._handleRoomChipClick(null)}
+        >
+          <ha-icon icon="mdi:home-outline" style="--mdc-icon-size: 16px;"></ha-icon>
+          <span>All</span>
+        </button>
+        ${floor.rooms.map(room => {
+          const area = room.ha_area_id
+            ? this._haAreas.find(a => a.area_id === room.ha_area_id)
+            : null;
+          const icon = area?.icon || "mdi:floor-plan";
+          const displayName = area?.name ?? room.name;
+          return html`
+            <button
+              class="room-chip ${this._focusedRoomId === room.id ? "active" : ""}"
+              @click=${() => this._handleRoomChipClick(room.id)}
+            >
+              <ha-icon icon=${icon} style="--mdc-icon-size: 16px;"></ha-icon>
+              <span>${displayName}</span>
+            </button>
+          `;
+        })}
+      </div>
+    `;
   }
 
   override render() {
@@ -502,13 +662,22 @@ export class HaFloorplanBuilder extends LitElement {
             @add-floor=${this._addFloor}
             @delete-floor=${(e: CustomEvent) =>
               this._deleteFloor(e.detail.id)}
+            @rename-floor=${(e: CustomEvent) =>
+              this._renameFloor(e.detail.id, e.detail.name)}
+            @open-import-export=${this._openImportExport}
           ></fpb-toolbar>
+
+          ${this._renderRoomChips()}
 
           <div class="canvas-container">
             <fpb-canvas .hass=${this.hass}></fpb-canvas>
           </div>
         </div>
       </div>
+      <fpb-import-export-dialog
+        .hass=${this.hass}
+        @floors-imported=${this._handleFloorsImported}
+      ></fpb-import-export-dialog>
     `;
   }
 }
