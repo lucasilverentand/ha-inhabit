@@ -14,6 +14,7 @@ from .floor_plan import (
     Window,
 )
 from .virtual_sensor import OccupancyStateData, VirtualSensorConfig
+from .zone import Zone
 
 __all__ = [
     "BoundingBox",
@@ -32,4 +33,5 @@ __all__ = [
     "VisualRule",
     "Wall",
     "Window",
+    "Zone",
 ]

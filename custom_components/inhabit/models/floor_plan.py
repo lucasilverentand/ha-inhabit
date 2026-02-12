@@ -414,6 +414,7 @@ class Floor:
     rooms: list[Room] = field(default_factory=list)
     nodes: list[Node] = field(default_factory=list)
     edges: list[Edge] = field(default_factory=list)
+    zones: list[Any] = field(default_factory=list)  # list[Zone], Any avoids circular import
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
@@ -427,6 +428,7 @@ class Floor:
             "rooms": [r.to_dict() for r in self.rooms],
             "nodes": [n.to_dict() for n in self.nodes],
             "edges": [e.to_dict() for e in self.edges],
+            "zones": [z.to_dict() for z in self.zones],
         }
 
     @classmethod
@@ -451,6 +453,8 @@ class Floor:
             nodes = []
             edges = []
 
+        from .zone import Zone
+
         return cls(
             id=data.get("id", _generate_id()),
             name=data.get("name", ""),
@@ -463,6 +467,7 @@ class Floor:
             rooms=[Room.from_dict(r) for r in data.get("rooms", [])],
             nodes=nodes,
             edges=edges,
+            zones=[Zone.from_dict(z) for z in data.get("zones", [])],
         )
 
     def get_room(self, room_id: str) -> Room | None:
@@ -484,6 +489,13 @@ class Floor:
         for edge in self.edges:
             if edge.id == edge_id:
                 return edge
+        return None
+
+    def get_zone(self, zone_id: str) -> Any | None:
+        """Get zone by ID."""
+        for zone in self.zones:
+            if zone.id == zone_id:
+                return zone
         return None
 
 

@@ -14,6 +14,7 @@ from ..models.automation_rule import VisualRule
 from ..models.device_placement import DevicePlacement, DevicePlacementCollection
 from ..models.floor_plan import Door, Edge, Floor, FloorPlan, Node, Room, Wall, Window
 from ..models.virtual_sensor import VirtualSensorConfig
+from ..models.zone import Zone
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -242,6 +243,77 @@ class FloorPlanStore:
         result = floor_plan.get_room(room_id)
         if result:
             return result[1]
+        return None
+
+    # ==================== Zones ====================
+
+    def add_zone(
+        self, floor_plan_id: str, floor_id: str, zone: Zone
+    ) -> Zone | None:
+        """Add a zone to a floor."""
+        floor_plan = self.get_floor_plan(floor_plan_id)
+        if not floor_plan:
+            return None
+
+        floor = floor_plan.get_floor(floor_id)
+        if not floor:
+            return None
+
+        zone.floor_id = floor_id
+        floor.zones.append(zone)
+        self.update_floor_plan(floor_plan)
+
+        if zone.occupancy_sensor_enabled:
+            self.create_sensor_config(
+                VirtualSensorConfig(
+                    room_id=zone.id,
+                    floor_plan_id=floor_plan_id,
+                    motion_timeout=zone.motion_timeout,
+                    checking_timeout=zone.checking_timeout,
+                )
+            )
+
+        return zone
+
+    def update_zone(self, floor_plan_id: str, zone: Zone) -> Zone | None:
+        """Update a zone."""
+        floor_plan = self.get_floor_plan(floor_plan_id)
+        if not floor_plan:
+            return None
+
+        for floor in floor_plan.floors:
+            for i, existing in enumerate(floor.zones):
+                if existing.id == zone.id:
+                    floor.zones[i] = zone
+                    self.update_floor_plan(floor_plan)
+                    return zone
+        return None
+
+    def delete_zone(self, floor_plan_id: str, zone_id: str) -> bool:
+        """Delete a zone."""
+        floor_plan = self.get_floor_plan(floor_plan_id)
+        if not floor_plan:
+            return False
+
+        for floor in floor_plan.floors:
+            for i, zone in enumerate(floor.zones):
+                if zone.id == zone_id:
+                    floor.zones.pop(i)
+                    self.update_floor_plan(floor_plan)
+                    self.delete_sensor_config(zone_id)
+                    return True
+        return False
+
+    def get_zone(self, floor_plan_id: str, zone_id: str) -> Zone | None:
+        """Get a zone by ID."""
+        floor_plan = self.get_floor_plan(floor_plan_id)
+        if not floor_plan:
+            return None
+
+        for floor in floor_plan.floors:
+            zone = floor.get_zone(zone_id)
+            if zone:
+                return zone
         return None
 
     # ==================== Edges ====================

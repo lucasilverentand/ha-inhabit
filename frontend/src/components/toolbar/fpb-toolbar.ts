@@ -27,6 +27,10 @@ const WALLS_MENU_ITEMS: AddMenuItem[] = [
   { id: "window", icon: "mdi:window-closed-variant", label: "Window" },
 ];
 
+const ZONES_MENU_ITEMS: AddMenuItem[] = [
+  { id: "zone", icon: "mdi:vector-polygon", label: "Zone" },
+];
+
 const PLACEMENT_MENU_ITEMS: AddMenuItem[] = [
   { id: "device", icon: "mdi:devices", label: "Device" },
 ];
@@ -544,6 +548,7 @@ export class FpbToolbar extends LitElement {
     const floors = fp?.floors || [];
 
     const menuItems = mode === "walls" ? WALLS_MENU_ITEMS
+      : mode === "furniture" ? ZONES_MENU_ITEMS
       : mode === "placement" ? PLACEMENT_MENU_ITEMS
       : [];
 
@@ -626,6 +631,13 @@ export class FpbToolbar extends LitElement {
           title="Walls mode"
         >
           <ha-icon icon="mdi:wall"></ha-icon>
+        </button>
+        <button
+          class="mode-button ${mode === "furniture" ? "active" : ""}"
+          @click=${() => setCanvasMode("furniture")}
+          title="Zones mode"
+        >
+          <ha-icon icon="mdi:vector-square"></ha-icon>
         </button>
         <button
           class="mode-button ${mode === "placement" ? "active" : ""}"

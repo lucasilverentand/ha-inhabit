@@ -23,6 +23,7 @@ from ..models.floor_plan import (
     _generate_id,
 )
 from ..models.virtual_sensor import SensorBinding, VirtualSensorConfig
+from ..models.zone import Zone
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -42,6 +43,9 @@ def async_register_websocket_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_rooms_add)
     websocket_api.async_register_command(hass, ws_rooms_update)
     websocket_api.async_register_command(hass, ws_rooms_delete)
+    websocket_api.async_register_command(hass, ws_zones_add)
+    websocket_api.async_register_command(hass, ws_zones_update)
+    websocket_api.async_register_command(hass, ws_zones_delete)
     websocket_api.async_register_command(hass, ws_edges_add)
     websocket_api.async_register_command(hass, ws_edges_update)
     websocket_api.async_register_command(hass, ws_edges_delete)
@@ -374,6 +378,15 @@ def _remap_floor_ids(floor: Floor) -> dict[str, str]:
             id_map.get(cid, cid) for cid in room.connected_rooms
         ]
 
+    # Zone IDs
+    for zone in floor.zones:
+        old_id = zone.id
+        zone.id = _generate_id()
+        id_map[old_id] = zone.id
+        zone.floor_id = floor.id
+        if zone.room_id:
+            zone.room_id = id_map.get(zone.room_id, zone.room_id)
+
     return id_map
 
 
@@ -559,6 +572,144 @@ def ws_rooms_delete(
         connection.send_result(msg["id"], {"success": True})
     else:
         connection.send_error(msg["id"], "not_found", "Room not found")
+
+
+# ==================== Zones ====================
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{WS_PREFIX}/zones/add",
+        vol.Required("floor_plan_id"): str,
+        vol.Required("floor_id"): str,
+        vol.Required("name"): str,
+        vol.Required("polygon"): dict,
+        vol.Optional("color", default="#e0e0e0"): str,
+        vol.Optional("rotation", default=0.0): vol.Coerce(float),
+        vol.Optional("room_id"): vol.Any(str, None),
+        vol.Optional("ha_area_id"): vol.Any(str, None),
+        vol.Optional("occupancy_sensor_enabled", default=False): bool,
+        vol.Optional("motion_timeout", default=120): int,
+        vol.Optional("checking_timeout", default=30): int,
+    }
+)
+@callback
+def ws_zones_add(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Add a zone to a floor."""
+    store = hass.data[DOMAIN]["store"]
+    zone = Zone(
+        name=msg["name"],
+        polygon=Polygon.from_dict(msg["polygon"]),
+        color=msg["color"],
+        rotation=msg["rotation"],
+        room_id=msg.get("room_id"),
+        ha_area_id=msg.get("ha_area_id"),
+        occupancy_sensor_enabled=msg["occupancy_sensor_enabled"],
+        motion_timeout=msg["motion_timeout"],
+        checking_timeout=msg["checking_timeout"],
+    )
+    result = store.add_zone(msg["floor_plan_id"], msg["floor_id"], zone)
+    if result:
+        if zone.occupancy_sensor_enabled:
+            sensor_engine = hass.data[DOMAIN]["sensor_engine"]
+            hass.async_create_task(
+                sensor_engine.async_add_room(
+                    VirtualSensorConfig(
+                        room_id=zone.id,
+                        floor_plan_id=msg["floor_plan_id"],
+                        motion_timeout=zone.motion_timeout,
+                        checking_timeout=zone.checking_timeout,
+                    )
+                )
+            )
+        connection.send_result(msg["id"], result.to_dict())
+    else:
+        connection.send_error(msg["id"], "not_found", "Floor not found")
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{WS_PREFIX}/zones/update",
+        vol.Required("floor_plan_id"): str,
+        vol.Required("zone_id"): str,
+        vol.Optional("name"): str,
+        vol.Optional("polygon"): dict,
+        vol.Optional("color"): str,
+        vol.Optional("rotation"): vol.Coerce(float),
+        vol.Optional("room_id"): vol.Any(str, None),
+        vol.Optional("ha_area_id"): vol.Any(str, None),
+        vol.Optional("occupancy_sensor_enabled"): bool,
+        vol.Optional("motion_timeout"): int,
+        vol.Optional("checking_timeout"): int,
+    }
+)
+@callback
+def ws_zones_update(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Update a zone."""
+    store = hass.data[DOMAIN]["store"]
+    zone = store.get_zone(msg["floor_plan_id"], msg["zone_id"])
+    if not zone:
+        connection.send_error(msg["id"], "not_found", "Zone not found")
+        return
+
+    if "name" in msg:
+        zone.name = msg["name"]
+    if "polygon" in msg:
+        zone.polygon = Polygon.from_dict(msg["polygon"])
+    if "color" in msg:
+        zone.color = msg["color"]
+    if "rotation" in msg:
+        zone.rotation = msg["rotation"]
+    if "room_id" in msg:
+        zone.room_id = msg["room_id"]
+    if "ha_area_id" in msg:
+        zone.ha_area_id = msg["ha_area_id"] or None
+    if "occupancy_sensor_enabled" in msg:
+        zone.occupancy_sensor_enabled = msg["occupancy_sensor_enabled"]
+    if "motion_timeout" in msg:
+        zone.motion_timeout = msg["motion_timeout"]
+    if "checking_timeout" in msg:
+        zone.checking_timeout = msg["checking_timeout"]
+
+    result = store.update_zone(msg["floor_plan_id"], zone)
+    if result:
+        connection.send_result(msg["id"], result.to_dict())
+    else:
+        connection.send_error(msg["id"], "update_failed", "Failed to update zone")
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{WS_PREFIX}/zones/delete",
+        vol.Required("floor_plan_id"): str,
+        vol.Required("zone_id"): str,
+    }
+)
+@callback
+def ws_zones_delete(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Delete a zone."""
+    store = hass.data[DOMAIN]["store"]
+
+    # Remove from sensor engine
+    sensor_engine = hass.data[DOMAIN]["sensor_engine"]
+    hass.async_create_task(sensor_engine.async_remove_room(msg["zone_id"]))
+
+    if store.delete_zone(msg["floor_plan_id"], msg["zone_id"]):
+        connection.send_result(msg["id"], {"success": True})
+    else:
+        connection.send_error(msg["id"], "not_found", "Zone not found")
 
 
 # ==================== Edges & Nodes ====================

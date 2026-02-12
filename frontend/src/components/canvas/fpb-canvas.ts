@@ -5,7 +5,7 @@
 import { LitElement, html, css, svg } from "lit";
 import { property, state, query } from "lit/decorators.js";
 import { effect } from "@preact/signals-core";
-import type { HomeAssistant, Coordinates, ViewBox, Edge, Node, Room, WallDirection, CanvasMode, Floor, SelectionState, HassEntity, DevicePlacement } from "../../types";
+import type { HomeAssistant, Coordinates, ViewBox, Edge, Node, Room, WallDirection, CanvasMode, Floor, SelectionState, HassEntity, DevicePlacement, Zone } from "../../types";
 import {
   currentFloor,
   currentFloorPlan,
@@ -27,6 +27,7 @@ import { buildNodeGraph, solveNodeMove, solveEdgeLengthChange, solveConstraintSn
 import { resolveFloorEdges, buildNodeMap, findNearestNode, edgesAtNode } from "../../utils/node-graph";
 import { detectRoomsFromEdges } from "../../utils/room-detection";
 import { pushAction, undo, redo } from "../../stores/history-store";
+
 
 /** Door swing angle: how far a door opens (degrees from closed/wall position). */
 const DOOR_SWING_DEG = 85;
@@ -173,6 +174,24 @@ export class FpbCanvas extends LitElement {
     thickness: number;
     t: number; // projection parameter along edge (0-1)
   } | null = null;
+
+  // ---- Zone/Furniture drawing state ----
+  @state()
+
+  @state()
+  private _zonePolyPoints: Coordinates[] = [];
+
+  @state()
+  private _pendingZonePolygon: Coordinates[] | null = null;
+
+  @state()
+  private _zoneEditor: { zone: import("../../types").Zone; editName: string; editColor: string; editAreaId: string | null } | null = null;
+
+  @state()
+  private _draggingZone: { zone: import("../../types").Zone; startPoint: import("../../types").Coordinates; originalVertices: import("../../types").Coordinates[]; hasMoved: boolean; pointerId: number } | null = null;
+
+  @state()
+  private _draggingZoneVertex: { zone: import("../../types").Zone; vertexIndex: number; originalCoords: import("../../types").Coordinates; pointerId: number } | null = null;
 
   @state()
   private _canvasMode: CanvasMode = "walls";
@@ -874,6 +893,106 @@ export class FpbCanvas extends LitElement {
     .device-focused {
       transition: opacity 0.3s ease;
     }
+
+    /* --- Zone / Furniture styles --- */
+    .zone-shape {
+      cursor: pointer;
+      transition: fill-opacity 0.2s ease;
+    }
+
+    .zone-shape:hover {
+      fill-opacity: 0.55;
+    }
+
+    .zone-shape.selected {
+      stroke: var(--primary-color, #03a9f4);
+      stroke-width: 3;
+      stroke-dasharray: none;
+    }
+
+    .zone-area-shape {
+      fill: none;
+      stroke-dasharray: 6,4;
+      cursor: pointer;
+    }
+
+    .zone-area-shape:hover {
+      stroke-width: 3;
+    }
+
+    .zone-area-shape.selected {
+      stroke: var(--primary-color, #03a9f4);
+      stroke-width: 3;
+      stroke-dasharray: none;
+    }
+
+    .zone-label {
+      font-size: 11px;
+      font-weight: 500;
+      fill: #333;
+      text-anchor: middle;
+      dominant-baseline: middle;
+      stroke: white;
+      stroke-width: 2.5px;
+      paint-order: stroke fill;
+      pointer-events: none;
+    }
+
+    .furniture-preview {
+      pointer-events: none;
+    }
+
+    .furniture-rect-preview {
+      fill: rgba(160, 196, 253, 0.3);
+      stroke: var(--primary-color, #2196f3);
+      stroke-width: 2;
+      stroke-dasharray: 5,5;
+    }
+
+    .furniture-poly-preview {
+      fill: rgba(160, 196, 253, 0.2);
+      stroke: var(--primary-color, #2196f3);
+      stroke-width: 2;
+      stroke-dasharray: 5,5;
+    }
+
+    .furniture-picker {
+      position: absolute;
+      background: var(--card-background-color, white);
+      border-radius: 14px;
+      padding: 12px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.12), 0 2px 8px rgba(0,0,0,0.08);
+      z-index: 100;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      max-width: 260px;
+    }
+
+    .furniture-picker-item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      padding: 8px 10px;
+      border: 1.5px solid var(--divider-color, #e0e0e0);
+      border-radius: 10px;
+      background: transparent;
+      color: var(--primary-text-color, #555);
+      cursor: pointer;
+      font-size: 11px;
+      transition: all 0.15s;
+      min-width: 56px;
+    }
+
+    .furniture-picker-item:hover {
+      border-color: var(--primary-color, #2196f3);
+      background: rgba(33, 150, 243, 0.06);
+    }
+
+    .furniture-picker-item ha-icon {
+      --mdc-icon-size: 24px;
+    }
   `;
 
   override connectedCallback(): void {
@@ -955,7 +1074,7 @@ export class FpbCanvas extends LitElement {
   private _handlePointerDown(e: PointerEvent): void {
     const point = this._screenToSvg({ x: e.clientX, y: e.clientY });
     const tool = activeTool.value;
-    const snappedPoint = this._getSnappedPoint(point, tool === "device" || tool === "wall");
+    const snappedPoint = this._getSnappedPoint(point, tool === "device" || tool === "wall" || tool === "zone");
     const mode = this._canvasMode;
 
     // Close entity picker if clicking outside (but not when in device mode placing a new one)
@@ -984,11 +1103,12 @@ export class FpbCanvas extends LitElement {
     // Left click behavior depends on tool
     if (e.button === 0) {
       if (tool === "select") {
-        // Close edge editor first (will be reopened if clicking on an edge)
+        // Close editors first (will be reopened if clicking on something)
         const hadEditor = !!this._edgeEditor || !!this._multiEdgeEditor;
         this._edgeEditor = null;
         this._multiEdgeEditor = null;
         this._roomEditor = null;
+        this._zoneEditor = null;
 
         // Check if clicking on something selectable
         const clickedSomething = this._handleSelectClick(point, e.shiftKey);
@@ -1001,6 +1121,20 @@ export class FpbCanvas extends LitElement {
           this._isPanning = true;
           this._panStart = { x: e.clientX, y: e.clientY };
           this._svg?.setPointerCapture(e.pointerId);
+        } else if (selection.value.type === "zone" && selection.value.ids.length === 1) {
+          // Set up zone drag
+          const floor = currentFloor.value;
+          const zone = floor?.zones?.find((z: Zone) => z.id === selection.value.ids[0]);
+          if (zone?.polygon?.vertices) {
+            this._draggingZone = {
+              zone,
+              startPoint: point,
+              originalVertices: zone.polygon.vertices.map((v: Coordinates) => ({ x: v.x, y: v.y })),
+              hasMoved: false,
+              pointerId: e.pointerId,
+            };
+            this._svg?.setPointerCapture(e.pointerId);
+          }
         }
       } else if (tool === "wall") {
         this._edgeEditor = null;
@@ -1022,6 +1156,13 @@ export class FpbCanvas extends LitElement {
           this._roomEditor = null;
           this._placeOpening(tool);
         }
+      } else if (tool === "zone") {
+        this._edgeEditor = null;
+        this._multiEdgeEditor = null;
+        this._roomEditor = null;
+        this._zoneEditor = null;
+        // Use _cursorPos which includes axis-constraint snapping
+        this._handleZonePolyClick(this._cursorPos);
       } else {
         // Other tools - pan on empty space
         this._edgeEditor = null;
@@ -1139,7 +1280,7 @@ export class FpbCanvas extends LitElement {
     const point = this._screenToSvg({ x: e.clientX, y: e.clientY });
     const tool = activeTool.value;
     // Enable wall segment snapping for device and wall tools
-    let snapped = this._getSnappedPoint(point, tool === "device" || tool === "wall");
+    let snapped = this._getSnappedPoint(point, tool === "device" || tool === "wall" || tool === "zone");
 
     // Shift constrains to horizontal/vertical when drawing a wall
     if (e.shiftKey && tool === "wall" && this._wallStartPoint) {
@@ -1152,7 +1293,80 @@ export class FpbCanvas extends LitElement {
       }
     }
 
+    // Zone tool: prefer horizontal/vertical lines from the last placed point
+    if (tool === "zone" && this._zonePolyPoints.length > 0) {
+      const last = this._zonePolyPoints[this._zonePolyPoints.length - 1];
+      const dx = Math.abs(snapped.x - last.x);
+      const dy = Math.abs(snapped.y - last.y);
+      const threshold = 15;
+      if (dy < threshold && dx > threshold) {
+        snapped = { x: snapped.x, y: last.y };
+      } else if (dx < threshold && dy > threshold) {
+        snapped = { x: last.x, y: snapped.y };
+      }
+    }
+
     this._cursorPos = snapped;
+
+    // Handle zone dragging
+    if (this._draggingZone) {
+      const dx = point.x - this._draggingZone.startPoint.x;
+      const dy = point.y - this._draggingZone.startPoint.y;
+      if (!this._draggingZone.hasMoved && (Math.abs(dx) > 3 || Math.abs(dy) > 3)) {
+        this._draggingZone.hasMoved = true;
+      }
+      if (this._draggingZone.hasMoved) {
+        // Update the zone polygon vertices in-place for preview
+        const zone = this._draggingZone.zone;
+        if (zone.polygon?.vertices) {
+          // Snap the first vertex to grid, then apply same offset to all others
+          const rawFirst = {
+            x: this._draggingZone.originalVertices[0].x + dx,
+            y: this._draggingZone.originalVertices[0].y + dy,
+          };
+          const snappedFirst = snapToGrid.value ? snapPoint(rawFirst, gridSize.value) : rawFirst;
+          const snapDx = snappedFirst.x - rawFirst.x;
+          const snapDy = snappedFirst.y - rawFirst.y;
+
+          for (let i = 0; i < zone.polygon.vertices.length; i++) {
+            zone.polygon.vertices[i] = {
+              x: this._draggingZone.originalVertices[i].x + dx + snapDx,
+              y: this._draggingZone.originalVertices[i].y + dy + snapDy,
+            };
+          }
+        }
+        this.requestUpdate();
+      }
+      return;
+    }
+
+    // Handle zone vertex dragging
+    if (this._draggingZoneVertex) {
+      let snappedVert = this._getSnappedPoint(point, true);
+      const zone = this._draggingZoneVertex.zone;
+      if (zone.polygon?.vertices) {
+        const verts = zone.polygon.vertices;
+        const idx = this._draggingZoneVertex.vertexIndex;
+        const len = verts.length;
+        const prev = verts[(idx - 1 + len) % len];
+        const next = verts[(idx + 1) % len];
+        const threshold = 15;
+
+        // Snap to horizontal/vertical alignment with neighbors
+        for (const neighbor of [prev, next]) {
+          if (Math.abs(snappedVert.x - neighbor.x) < threshold) {
+            snappedVert = { x: neighbor.x, y: snappedVert.y };
+          }
+          if (Math.abs(snappedVert.y - neighbor.y) < threshold) {
+            snappedVert = { x: snappedVert.x, y: neighbor.y };
+          }
+        }
+
+        verts[idx] = { x: snappedVert.x, y: snappedVert.y };
+      }
+      this.requestUpdate();
+      return;
+    }
 
     // Handle node dragging
     if (this._draggingNode) {
@@ -1188,6 +1402,11 @@ export class FpbCanvas extends LitElement {
     // Check for hovering over nodes (only in walls mode when not drawing)
     if (!this._wallStartPoint && tool === "select" && this._canvasMode === "walls") {
       this._checkNodeHover(point);
+    }
+
+    // Zone polygon drawing preview needs re-render to follow snapped cursor
+    if (tool === "zone" && this._zonePolyPoints.length > 0) {
+      this.requestUpdate();
     }
 
     // Opening tool: snap ghost preview to nearest wall edge
@@ -1261,6 +1480,31 @@ export class FpbCanvas extends LitElement {
   }
 
   private _handlePointerUp(e: PointerEvent): void {
+    if (this._draggingZone) {
+      if (this._draggingZone.hasMoved) {
+        this._finishZoneDrag();
+      } else {
+        // It was a click, not a drag — open the zone editor
+        const zone = this._draggingZone.zone;
+        this._zoneEditor = {
+          zone,
+          editName: zone.name,
+          editColor: zone.color,
+          editAreaId: zone.ha_area_id ?? null,
+        };
+      }
+      this._svg?.releasePointerCapture(e.pointerId);
+      this._draggingZone = null;
+      return;
+    }
+
+    if (this._draggingZoneVertex) {
+      this._finishZoneVertexDrag();
+      this._svg?.releasePointerCapture(e.pointerId);
+      this._draggingZoneVertex = null;
+      return;
+    }
+
     if (this._draggingNode) {
       if (this._draggingNode.hasMoved) {
         // It was a drag - move the node
@@ -1476,13 +1720,21 @@ export class FpbCanvas extends LitElement {
       this._wallChainStart = null;
       this._hoveredNode = null;
       this._draggingNode = null;
+      this._draggingZone = null;
+      this._draggingZoneVertex = null;
       this._pendingDevice = null;
       this._edgeEditor = null;
       this._multiEdgeEditor = null;
       this._nodeEditor = null;
       this._roomEditor = null;
+      this._zoneEditor = null;
+      this._zonePolyPoints = [];
+      this._pendingZonePolygon = null;
       selection.value = { type: "none", ids: [] };
       activeTool.value = "select";
+    } else if ((e.key === "Backspace" || e.key === "Delete") && this._zoneEditor) {
+      e.preventDefault();
+      this._handleZoneDelete();
     } else if ((e.key === "Backspace" || e.key === "Delete") && this._multiEdgeEditor) {
       e.preventDefault();
       this._handleMultiEdgeDelete();
@@ -1809,12 +2061,43 @@ export class FpbCanvas extends LitElement {
 
   private _getSnappedPointForNode(point: Coordinates): Coordinates {
     const floor = currentFloor.value;
+    const snapDistance = 15;
 
-    // First check for snapping to other nodes
     if (floor) {
-      const nearest = findNearestNode(point, floor.nodes, 15);
+      // First check for snapping to other nodes (highest priority)
+      const draggedId = this._draggingNode?.node.id;
+      const nearest = findNearestNode(
+        point,
+        draggedId ? floor.nodes.filter(n => n.id !== draggedId) : floor.nodes,
+        snapDistance,
+      );
       if (nearest) {
         return { x: nearest.x, y: nearest.y };
+      }
+
+      // Snap to nearby edge segments (exclude edges connected to dragged node)
+      if (draggedId) {
+        const connectedEdgeIds = new Set(
+          edgesAtNode(draggedId, floor.edges).map(e => `${e.start_node}-${e.end_node}`),
+        );
+        const resolved = resolveFloorEdges(floor);
+        let closestPoint: Coordinates | null = null;
+        let closestDist = snapDistance;
+
+        for (const re of resolved) {
+          const edgeKey = `${re.start_node}-${re.end_node}`;
+          if (connectedEdgeIds.has(edgeKey)) continue;
+          const snapped = this._getClosestPointOnSegment(point, re.startPos, re.endPos);
+          const dist = Math.sqrt((point.x - snapped.x) ** 2 + (point.y - snapped.y) ** 2);
+          if (dist < closestDist) {
+            closestDist = dist;
+            closestPoint = snapped;
+          }
+        }
+
+        if (closestPoint) {
+          return closestPoint;
+        }
       }
     }
 
@@ -1918,6 +2201,18 @@ export class FpbCanvas extends LitElement {
       if (dist < 15) {
         selection.value = { type: "device", ids: [device.id] };
         return true;
+      }
+    }
+
+    // Check zones (furniture/area)
+    if (floor.zones) {
+      const sortedZones = [...floor.zones];
+      for (const zone of sortedZones) {
+        if (zone.polygon?.vertices && this._pointInPolygon(point, zone.polygon.vertices)) {
+          selection.value = { type: "zone", ids: [zone.id] };
+          // Don't open editor here — _handlePointerDown sets up drag, editor opens on pointer-up if not moved
+          return true;
+        }
       }
     }
 
@@ -3242,6 +3537,13 @@ export class FpbCanvas extends LitElement {
         </g>
       ` : null}
 
+      <!-- Furniture layer -->
+      ${layerConfig.find(l => l.id === "furniture")?.visible ? svg`
+        <g class="furniture-layer-container" opacity="${layerConfig.find(l => l.id === "furniture")?.opacity ?? 1}">
+          ${this._renderFurnitureLayer()}
+        </g>
+      ` : null}
+
       <!-- Labels layer -->
       ${layerConfig.find(l => l.id === "labels")?.visible ? svg`
         <g class="labels-layer" opacity="${layerConfig.find(l => l.id === "labels")?.opacity ?? 1}">
@@ -3295,6 +3597,30 @@ export class FpbCanvas extends LitElement {
             ${device.label || state?.attributes.friendly_name || device.entity_id}
           </text>
         ` : null}
+      </g>
+    `;
+  }
+
+  private _renderNodeGuideDots() {
+    const floor = currentFloor.value;
+    if (!floor || floor.nodes.length === 0) return null;
+
+    // Only show nodes referenced by edges
+    const referencedNodes = new Set<string>();
+    for (const edge of floor.edges) {
+      referencedNodes.add(edge.start_node);
+      referencedNodes.add(edge.end_node);
+    }
+
+    const dots = floor.nodes.filter(n => referencedNodes.has(n.id));
+    if (dots.length === 0) return null;
+
+    return svg`
+      <g class="node-guide-dots">
+        ${dots.map(n => svg`
+          <circle cx="${n.x}" cy="${n.y}" r="4"
+            fill="rgba(255,255,255,0.7)" stroke="rgba(0,0,0,0.3)" stroke-width="1" />
+        `)}
       </g>
     `;
   }
@@ -3538,6 +3864,396 @@ export class FpbCanvas extends LitElement {
     };
 
     this._svg?.setPointerCapture(e.pointerId);
+  }
+
+  // ==================== Zone / Furniture Methods ====================
+
+
+  private _handleZonePolyClick(point: Coordinates): void {
+    const points = this._zonePolyPoints;
+
+    // Check if clicking near the first point to close the polygon
+    if (points.length >= 3) {
+      const first = points[0];
+      const dist = Math.sqrt((point.x - first.x) ** 2 + (point.y - first.y) ** 2);
+      if (dist < 15) {
+        this._pendingZonePolygon = [...points];
+        this._zonePolyPoints = [];
+        this._saveZone("Zone");
+        return;
+      }
+    }
+
+    this._zonePolyPoints = [...points, point];
+  }
+
+  private async _saveZone(name: string): Promise<void> {
+    if (!this.hass || !this._pendingZonePolygon) return;
+
+    const floor = currentFloor.value;
+    const floorPlan = currentFloorPlan.value;
+    if (!floor || !floorPlan) return;
+
+    try {
+      await this.hass.callWS({
+        type: "inhabit/zones/add",
+        floor_plan_id: floorPlan.id,
+        floor_id: floor.id,
+        name,
+        polygon: { vertices: this._pendingZonePolygon.map(v => ({ x: v.x, y: v.y })) },
+        color: "#a1c4fd",
+      });
+
+      await reloadFloorData();
+    } catch (err) {
+      console.error("Error saving zone:", err);
+    }
+
+    this._pendingZonePolygon = null;
+  }
+
+  private _renderFurnitureLayer() {
+    const floor = currentFloor.value;
+    if (!floor || !floor.zones || floor.zones.length === 0) return null;
+
+    const sel = selection.value;
+    const frid = this._focusedRoomId;
+    const sortedZones = floor.zones;
+
+    return svg`
+      <g class="furniture-layer">
+        ${sortedZones.map((zone: Zone) => {
+          if (!zone.polygon?.vertices?.length) return null;
+          const path = polygonToPath(zone.polygon);
+          const isSelected = sel.type === "zone" && sel.ids.includes(zone.id);
+          const center = this._getPolygonCenter(zone.polygon.vertices);
+          const dimClass = frid ? (zone.room_id === frid ? "" : "room-dimmed") : "";
+
+          return svg`
+            <g class="${dimClass}">
+              <path class="zone-shape ${isSelected ? "selected" : ""}"
+                    d="${path}"
+                    fill="${zone.color || "#a1c4fd"}"
+                    fill-opacity="0.35"
+                    stroke="${zone.color || "#a1c4fd"}"
+                    stroke-width="1.5"/>
+              ${center ? svg`
+                <text class="zone-label" x="${center.x}" y="${center.y}">${zone.name}</text>
+              ` : null}
+              ${isSelected && !this._draggingZone ? this._renderZoneVertexHandles(zone) : null}
+            </g>
+          `;
+        })}
+      </g>
+    `;
+  }
+
+  private _renderZoneVertexHandles(zone: Zone) {
+    const verts = zone.polygon?.vertices;
+    if (!verts?.length) return null;
+
+    return svg`
+      ${verts.map((v: Coordinates, i: number) => svg`
+        <circle
+          class="zone-vertex-handle"
+          cx="${v.x}" cy="${v.y}" r="6"
+          fill="white" stroke="${zone.color || '#2196f3'}" stroke-width="1.5"
+          style="cursor: grab"
+          @pointerdown=${(e: PointerEvent) => {
+            e.stopPropagation();
+            e.preventDefault();
+            this._draggingZoneVertex = {
+              zone,
+              vertexIndex: i,
+              originalCoords: { x: v.x, y: v.y },
+              pointerId: e.pointerId,
+            };
+            this._svg?.setPointerCapture(e.pointerId);
+          }}
+        />
+      `)}
+    `;
+  }
+
+  private _renderFurnitureDrawingPreview() {
+    const tool = activeTool.value;
+
+    // Polygon preview
+    if (tool === "zone" && this._zonePolyPoints.length > 0) {
+      const points = this._zonePolyPoints;
+      const cursor = this._cursorPos;
+
+      let pathD = `M ${points[0].x} ${points[0].y}`;
+      for (let i = 1; i < points.length; i++) {
+        pathD += ` L ${points[i].x} ${points[i].y}`;
+      }
+      pathD += ` L ${cursor.x} ${cursor.y}`;
+
+      // Show closing hint when near first point
+      let closingHint = null;
+      if (points.length >= 3) {
+        const first = points[0];
+        const dist = Math.sqrt((cursor.x - first.x) ** 2 + (cursor.y - first.y) ** 2);
+        if (dist < 15) {
+          closingHint = svg`<circle cx="${first.x}" cy="${first.y}" r="8" fill="rgba(76, 175, 80, 0.3)" stroke="#4caf50" stroke-width="2"/>`;
+        }
+      }
+
+      return svg`
+        <g class="furniture-preview">
+          <path class="furniture-poly-preview" d="${pathD}"/>
+          ${points.map(p => svg`
+            <circle cx="${p.x}" cy="${p.y}" r="4" fill="var(--primary-color, #2196f3)" stroke="white" stroke-width="1.5"/>
+          `)}
+          ${closingHint}
+        </g>
+      `;
+    }
+
+    return null;
+  }
+
+
+  private _renderZoneEditor() {
+    if (!this._zoneEditor) return null;
+
+    const ZONE_COLORS = [
+      "#a1c4fd", "#c5e1a5", "#ffe0b2", "#d1c4e9",
+      "#ffccbc", "#b0bec5", "#e0e0e0", "#f8bbd0",
+    ];
+
+    return html`
+      <div class="wall-editor"
+           @click=${(e: Event) => e.stopPropagation()}
+           @pointerdown=${(e: Event) => e.stopPropagation()}>
+        <div class="wall-editor-header">
+          <span class="wall-editor-title">Zone</span>
+          <button class="wall-editor-close" @click=${() => { this._zoneEditor = null; selection.value = { type: "none", ids: [] }; }}><ha-icon icon="mdi:close"></ha-icon></button>
+        </div>
+
+        <div class="wall-editor-section">
+          <span class="wall-editor-section-label">Area</span>
+          <select class="wall-editor-select"
+            .value=${this._zoneEditor.editAreaId ?? ""}
+            @change=${(e: Event) => {
+              if (!this._zoneEditor) return;
+              const val = (e.target as HTMLSelectElement).value;
+              const area = this._haAreas.find(a => a.area_id === val);
+              this._zoneEditor = {
+                ...this._zoneEditor,
+                editAreaId: val || null,
+                editName: area ? area.name : this._zoneEditor.editName,
+              };
+            }}
+          >
+            <option value="">None</option>
+            ${this._haAreas.map(a => html`
+              <option value=${a.area_id} ?selected=${this._zoneEditor?.editAreaId === a.area_id}>${a.name}</option>
+            `)}
+          </select>
+        </div>
+
+        <div class="wall-editor-section">
+          <span class="wall-editor-section-label">Name</span>
+          <input
+            type="text"
+            .value=${this._zoneEditor.editName}
+            @input=${(e: InputEvent) => {
+              if (this._zoneEditor) {
+                this._zoneEditor = { ...this._zoneEditor, editName: (e.target as HTMLInputElement).value };
+              }
+            }}
+            @keydown=${(e: KeyboardEvent) => {
+              if (e.key === "Enter") this._handleZoneEditorSave();
+              else if (e.key === "Escape") { this._zoneEditor = null; selection.value = { type: "none", ids: [] }; }
+            }}
+          />
+        </div>
+
+        ${this._zoneEditor.zone.polygon?.vertices?.length ? html`
+          <div class="wall-editor-section">
+            <span class="wall-editor-section-label">Size</span>
+            <div style="display:flex; gap:8px; align-items:center;">
+              <label style="font-size:11px;">W</label>
+              <input type="number" style="width:60px;" .value=${String(this._getZoneBBoxWidth())}
+                @change=${(e: InputEvent) => this._handleZoneSizeChange("width", parseFloat((e.target as HTMLInputElement).value))}
+              />
+              <label style="font-size:11px;">H</label>
+              <input type="number" style="width:60px;" .value=${String(this._getZoneBBoxHeight())}
+                @change=${(e: InputEvent) => this._handleZoneSizeChange("height", parseFloat((e.target as HTMLInputElement).value))}
+              />
+            </div>
+          </div>
+        ` : null}
+
+        <div class="wall-editor-section">
+          <span class="wall-editor-section-label">Color</span>
+          <div class="wall-editor-colors">
+            ${ZONE_COLORS.map(c => html`
+              <button
+                class="color-swatch ${this._zoneEditor?.editColor === c ? "active" : ""}"
+                style="background:${c};"
+                @click=${() => {
+                  if (this._zoneEditor) {
+                    this._zoneEditor = { ...this._zoneEditor, editColor: c };
+                  }
+                }}
+              ></button>
+            `)}
+          </div>
+        </div>
+
+        <div class="wall-editor-actions">
+          <button class="save-btn" @click=${this._handleZoneEditorSave}><ha-icon icon="mdi:check"></ha-icon> Save</button>
+          <button class="delete-btn" @click=${this._handleZoneDelete}><ha-icon icon="mdi:delete-outline"></ha-icon> Delete</button>
+        </div>
+      </div>
+    `;
+  }
+
+  private _getZoneBBoxWidth(): number {
+    if (!this._zoneEditor?.zone.polygon?.vertices?.length) return 0;
+    const xs = this._zoneEditor.zone.polygon.vertices.map(v => v.x);
+    return Math.round(Math.max(...xs) - Math.min(...xs));
+  }
+
+  private _getZoneBBoxHeight(): number {
+    if (!this._zoneEditor?.zone.polygon?.vertices?.length) return 0;
+    const ys = this._zoneEditor.zone.polygon.vertices.map(v => v.y);
+    return Math.round(Math.max(...ys) - Math.min(...ys));
+  }
+
+  private _handleZoneSizeChange(dim: "width" | "height", newVal: number): void {
+    if (!this._zoneEditor || !this.hass || newVal <= 0) return;
+    const zone = this._zoneEditor.zone;
+    const verts = zone.polygon?.vertices;
+    if (!verts?.length) return;
+
+    const xs = verts.map(v => v.x);
+    const ys = verts.map(v => v.y);
+    const minX = Math.min(...xs), maxX = Math.max(...xs);
+    const minY = Math.min(...ys), maxY = Math.max(...ys);
+    const cx = (minX + maxX) / 2;
+    const cy = (minY + maxY) / 2;
+    const curW = maxX - minX;
+    const curH = maxY - minY;
+    if (curW === 0 || curH === 0) return;
+
+    const scaleX = dim === "width" ? newVal / curW : 1;
+    const scaleY = dim === "height" ? newVal / curH : 1;
+
+    const newVerts = verts.map(v => ({
+      x: cx + (v.x - cx) * scaleX,
+      y: cy + (v.y - cy) * scaleY,
+    }));
+
+    // Update in-place for preview and then save
+    for (let i = 0; i < verts.length; i++) {
+      verts[i] = newVerts[i];
+    }
+    this.requestUpdate();
+
+    // Auto-save the polygon change
+    const floorPlan = currentFloorPlan.value;
+    if (floorPlan) {
+      this.hass.callWS({
+        type: "inhabit/zones/update",
+        floor_plan_id: floorPlan.id,
+        zone_id: zone.id,
+        polygon: { vertices: newVerts.map(v => ({ x: v.x, y: v.y })) },
+      }).then(() => reloadFloorData()).catch(err => console.error("Error resizing zone:", err));
+    }
+  }
+
+  private async _handleZoneEditorSave(): Promise<void> {
+    if (!this._zoneEditor || !this.hass) return;
+    const floorPlan = currentFloorPlan.value;
+    if (!floorPlan) return;
+
+    try {
+      await this.hass.callWS({
+        type: "inhabit/zones/update",
+        floor_plan_id: floorPlan.id,
+        zone_id: this._zoneEditor.zone.id,
+        name: this._zoneEditor.editName,
+        color: this._zoneEditor.editColor,
+        ha_area_id: this._zoneEditor.editAreaId ?? "",
+      });
+      await reloadFloorData();
+    } catch (err) {
+      console.error("Error updating zone:", err);
+    }
+    this._zoneEditor = null;
+    selection.value = { type: "none", ids: [] };
+  }
+
+  private async _handleZoneDelete(): Promise<void> {
+    if (!this._zoneEditor || !this.hass) return;
+    const floorPlan = currentFloorPlan.value;
+    if (!floorPlan) return;
+
+    try {
+      await this.hass.callWS({
+        type: "inhabit/zones/delete",
+        floor_plan_id: floorPlan.id,
+        zone_id: this._zoneEditor.zone.id,
+      });
+      await reloadFloorData();
+    } catch (err) {
+      console.error("Error deleting zone:", err);
+    }
+    this._zoneEditor = null;
+    selection.value = { type: "none", ids: [] };
+  }
+
+  private async _finishZoneDrag(): Promise<void> {
+    if (!this._draggingZone || !this.hass) return;
+    const floorPlan = currentFloorPlan.value;
+    if (!floorPlan) return;
+    const zone = this._draggingZone.zone;
+    if (!zone.polygon?.vertices) return;
+
+    try {
+      await this.hass.callWS({
+        type: "inhabit/zones/update",
+        floor_plan_id: floorPlan.id,
+        zone_id: zone.id,
+        polygon: { vertices: zone.polygon.vertices.map((v: Coordinates) => ({ x: v.x, y: v.y })) },
+      });
+      await reloadFloorData();
+    } catch (err) {
+      console.error("Error moving zone:", err);
+      // Restore original vertices
+      if (zone.polygon?.vertices && this._draggingZone.originalVertices) {
+        for (let i = 0; i < zone.polygon.vertices.length; i++) {
+          zone.polygon.vertices[i] = this._draggingZone.originalVertices[i];
+        }
+      }
+    }
+  }
+
+  private async _finishZoneVertexDrag(): Promise<void> {
+    if (!this._draggingZoneVertex || !this.hass) return;
+    const floorPlan = currentFloorPlan.value;
+    if (!floorPlan) return;
+    const zone = this._draggingZoneVertex.zone;
+    if (!zone.polygon?.vertices) return;
+
+    try {
+      await this.hass.callWS({
+        type: "inhabit/zones/update",
+        floor_plan_id: floorPlan.id,
+        zone_id: zone.id,
+        polygon: { vertices: zone.polygon.vertices.map((v: Coordinates) => ({ x: v.x, y: v.y })) },
+      });
+      await reloadFloorData();
+    } catch (err) {
+      console.error("Error moving zone vertex:", err);
+      // Restore original vertex
+      if (zone.polygon?.vertices && this._draggingZoneVertex) {
+        zone.polygon.vertices[this._draggingZoneVertex.vertexIndex] = this._draggingZoneVertex.originalCoords;
+      }
+    }
   }
 
   private _renderDrawingPreview() {
@@ -4434,7 +5150,9 @@ export class FpbCanvas extends LitElement {
         ${mode === "walls" ? this._renderEdgeAnnotations() : null}
         ${mode === "walls" ? this._renderAngleConstraints() : null}
         ${mode === "walls" ? this._renderNodeEndpoints() : null}
+        ${mode === "furniture" && activeTool.value === "zone" ? this._renderNodeGuideDots() : null}
         ${mode !== "viewing" ? this._renderDrawingPreview() : null}
+        ${mode === "furniture" ? this._renderFurnitureDrawingPreview() : null}
         ${mode === "walls" ? this._renderOpeningPreview() : null}
         ${mode === "placement" ? this._renderDevicePreview() : null}
       </svg>
@@ -4442,6 +5160,7 @@ export class FpbCanvas extends LitElement {
       ${this._renderNodeEditor()}
       ${this._renderMultiEdgeEditor()}
       ${this._renderRoomEditor()}
+      ${this._renderZoneEditor()}
       ${mode === "placement" ? this._renderEntityPicker() : null}
     `;
   }

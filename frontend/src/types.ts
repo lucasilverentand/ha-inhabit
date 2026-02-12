@@ -101,6 +101,20 @@ export interface Room {
   ha_area_id?: string;
 }
 
+export interface Zone {
+  id: string;
+  name: string;
+  floor_id: string;
+  room_id?: string;
+  polygon: Polygon;
+  color: string;
+  rotation: number;
+  ha_area_id?: string;
+  occupancy_sensor_enabled: boolean;
+  motion_timeout: number;
+  checking_timeout: number;
+}
+
 export interface Floor {
   id: string;
   name: string;
@@ -111,6 +125,7 @@ export interface Floor {
   rooms: Room[];
   nodes: Node[];
   edges: Edge[];
+  zones: Zone[];
 }
 
 export interface FloorPlan {
@@ -221,7 +236,7 @@ export interface VisualRule {
 }
 
 // Canvas mode types
-export type CanvasMode = "viewing" | "walls" | "placement";
+export type CanvasMode = "viewing" | "walls" | "furniture" | "placement";
 
 // Tool types
 export type ToolType =
@@ -229,7 +244,8 @@ export type ToolType =
   | "wall"
   | "door"
   | "window"
-  | "device";
+  | "device"
+  | "zone";
 
 export type ToolState = "ready" | "drawing" | "dragging";
 
@@ -267,6 +283,6 @@ export interface CanvasEvent {
 
 // Selection types
 export interface SelectionState {
-  type: "none" | "room" | "edge" | "device" | "shape";
+  type: "none" | "room" | "edge" | "device" | "shape" | "zone";
   ids: string[];
 }
