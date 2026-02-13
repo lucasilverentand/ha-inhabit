@@ -3835,20 +3835,38 @@ export class FpbCanvas extends LitElement {
   }
 
   // MDI lightbulb path (24x24 viewBox)
+  private static readonly _mdiPaths: Record<string, string> = {
+    "mdi:lightbulb": "M12,2A7,7 0 0,0 5,9C5,11.38 6.19,13.47 8,14.74V17A1,1 0 0,0 9,18H15A1,1 0 0,0 16,17V14.74C17.81,13.47 19,11.38 19,9A7,7 0 0,0 12,2M9,21A1,1 0 0,0 10,22H14A1,1 0 0,0 15,21V20H9V21Z",
+    "mdi:toggle-switch": "M17,7H7A5,5 0 0,0 2,12A5,5 0 0,0 7,17H17A5,5 0 0,0 22,12A5,5 0 0,0 17,7M17,15A3,3 0 0,1 14,12A3,3 0 0,1 17,9A3,3 0 0,1 20,12A3,3 0 0,1 17,15Z",
+    "mdi:eye": "M12,9A3,3 0 0,0 9,12A3,3 0 0,0 12,15A3,3 0 0,0 15,12A3,3 0 0,0 12,9M12,17A5,5 0 0,1 7,12A5,5 0 0,1 12,7A5,5 0 0,1 17,12A5,5 0 0,1 12,17M12,4.5C7,4.5 2.73,7.61 1,12C2.73,16.39 7,19.5 12,19.5C17,19.5 21.27,16.39 23,12C21.27,7.61 17,4.5 12,4.5Z",
+    "mdi:radiobox-marked": "M12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,7A5,5 0 0,0 7,12A5,5 0 0,0 12,17A5,5 0 0,0 17,12A5,5 0 0,0 12,7Z",
+    "mdi:thermostat": "M16.95,16.95L14.83,14.83C15.55,14.1 16,13.1 16,12C16,11.26 15.76,10.57 15.35,10H17.5C17.82,10.6 18,11.28 18,12C18,13.61 17.28,15.05 16.17,16.05L16.95,16.95M12,4A2,2 0 0,0 10,6V10.17C8.84,10.58 8,11.69 8,13A4,4 0 0,0 12,17A4,4 0 0,0 16,13C16,11.69 15.16,10.58 14,10.17V6A2,2 0 0,0 12,4M12,2A4,4 0 0,1 16,6V8.17C17.24,9.11 18,10.46 18,12A6,6 0 0,1 12,18A6,6 0 0,1 6,12C6,10.46 6.76,9.11 8,8.17V6A4,4 0 0,1 12,2Z",
+    "mdi:fan": "M12,11A1,1 0 0,0 11,12A1,1 0 0,0 12,13A1,1 0 0,0 13,12A1,1 0 0,0 12,11M12.5,2C17,2 17.11,5.57 14.75,6.75C13.76,7.24 13.32,8.29 13.13,9.22C13.61,9.42 14.03,9.73 14.35,10.13C18.05,8.13 22.03,8.92 22.03,12.5C22.03,17 18.46,17.1 17.28,14.73C16.78,13.74 15.72,13.3 14.79,13.11C14.59,13.59 14.28,14 13.88,14.34C15.87,18.03 15.08,22 11.5,22C7,22 6.91,18.42 9.27,17.24C10.25,16.75 10.69,15.71 10.89,14.79C10.4,14.59 9.97,14.27 9.65,13.87C5.96,15.85 2,15.07 2,11.5C2,7 5.56,6.89 6.74,9.26C7.24,10.25 8.29,10.68 9.22,10.87C9.41,10.39 9.73,9.97 10.14,9.65C8.15,5.96 8.94,2 12.5,2Z",
+    "mdi:window-shutter": "M3,4H21V8H19V20H17V8H7V20H5V8H3V4M8,10H16V12H8V10M8,14H16V16H8V14Z",
+    "mdi:camera": "M4,4H7L9,2H15L17,4H20A2,2 0 0,1 22,6V18A2,2 0 0,1 20,20H4A2,2 0 0,1 2,18V6A2,2 0 0,1 4,4M12,7A5,5 0 0,0 7,12A5,5 0 0,0 12,17A5,5 0 0,0 17,12A5,5 0 0,0 12,7M12,9A3,3 0 0,1 15,12A3,3 0 0,1 12,15A3,3 0 0,1 9,12A3,3 0 0,1 12,9Z",
+    "mdi:cast": "M1,10V12A9,9 0 0,1 10,21H12C12,14.92 7.07,10 1,10M1,14V16A5,5 0 0,1 6,21H8A7,7 0 0,0 1,14M1,18V21H4A3,3 0 0,0 1,18M21,3H3C1.89,3 1,3.89 1,5V8H3V5H21V19H14V21H21A2,2 0 0,0 23,19V5C23,3.89 22.1,3 21,3Z",
+    "mdi:devices": "M3,6H21V18H3V6M21,4H3A2,2 0 0,0 1,6V18A2,2 0 0,0 3,20H21A2,2 0 0,0 23,18V6A2,2 0 0,0 21,4Z",
+    "mdi:motion-sensor": "M10,0.2C9,0.2 8.2,1 8.2,2C8.2,3 9,3.8 10,3.8C11,3.8 11.8,3 11.8,2C11.8,1 11,0.2 10,0.2M15.67,1A7.33,7.33 0 0,0 23,8.33H21.67A6,6 0 0,0 15.67,2.33V1M15.67,3.67A4.66,4.66 0 0,0 20.33,8.33H19A3.33,3.33 0 0,0 15.67,5V3.67M15.67,6.33A2,2 0 0,0 17.67,8.33H16.33C16.33,7.97 16.03,7.67 15.67,7.67V6.33M13,12V7H9L6.5,13.5H9.17L7.67,19.5L14.5,12H13Z",
+    "mdi:door": "M8,2L20,2V22H8L8,2M14,13A1,1 0 0,0 15,12A1,1 0 0,0 14,11A1,1 0 0,0 13,12A1,1 0 0,0 14,13Z",
+    "mdi:account-eye": "M12,4A4,4 0 0,1 16,8A4,4 0 0,1 12,12A4,4 0 0,1 8,8A4,4 0 0,1 12,4M12,14C16.42,14 20,15.79 20,18V20H4V18C4,15.79 7.58,14 12,14Z",
+  };
+
+  private _getIconPath(icon: string): string {
+    return FpbCanvas._mdiPaths[icon] ?? FpbCanvas._mdiPaths["mdi:devices"];
+  }
+
   private _renderDeviceIcon(x: number, y: number, isOn: boolean, selType: string, selId: string, label: string, bgOnColor: string, iconColor: string, icon: string) {
     const sel = selection.value;
     const r = 14;
-    const iconSize = 18;
+    const iconScale = r / 16;
+    const path = this._getIconPath(icon);
     return svg`
       <g class="device-marker ${isOn ? "on" : "off"} ${sel.type === selType && sel.ids.includes(selId) ? "selected" : ""}"
          transform="translate(${x}, ${y})">
         <circle r="${r}" fill="${isOn ? bgOnColor : "#e0e0e0"}" stroke="#333" stroke-width="2"/>
-        <foreignObject x="${-r}" y="${-r}" width="${r * 2}" height="${r * 2}">
-          <ha-icon
-            icon="${icon}"
-            style="--mdc-icon-size: ${iconSize}px; display: flex; align-items: center; justify-content: center; width: ${r * 2}px; height: ${r * 2}px; color: ${iconColor};"
-          ></ha-icon>
-        </foreignObject>
+        <g transform="scale(${iconScale})">
+          <path d="${path}" fill="${iconColor}" transform="translate(-12,-12)"/>
+        </g>
         <text y="${r + 12}" text-anchor="middle" font-size="10" fill="#333">${label}</text>
       </g>
     `;
