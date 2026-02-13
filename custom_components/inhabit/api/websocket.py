@@ -1949,13 +1949,24 @@ def ws_sensor_config_get(
     connection: websocket_api.ActiveConnection,
     msg: dict[str, Any],
 ) -> None:
-    """Get sensor configuration for a room."""
+    """Get sensor configuration for a room (auto-creates if not found)."""
     store = hass.data[DOMAIN]["store"]
     config = store.get_sensor_config(msg["room_id"])
-    if config:
-        connection.send_result(msg["id"], config.to_dict())
-    else:
-        connection.send_error(msg["id"], "not_found", "Sensor config not found")
+    if not config:
+        # Auto-create a default (disabled) config for this room/zone
+        floor_plan_id = store.find_floor_plan_id_for_room(msg["room_id"])
+        if not floor_plan_id:
+            connection.send_error(
+                msg["id"], "not_found", "Room or zone not found in any floor plan"
+            )
+            return
+        config = VirtualSensorConfig(
+            room_id=msg["room_id"],
+            floor_plan_id=floor_plan_id,
+            enabled=False,
+        )
+        store.create_sensor_config(config)
+    connection.send_result(msg["id"], config.to_dict())
 
 
 @websocket_api.websocket_command(
@@ -1981,12 +1992,22 @@ def ws_sensor_config_update(
     connection: websocket_api.ActiveConnection,
     msg: dict[str, Any],
 ) -> None:
-    """Update sensor configuration for a room."""
+    """Update sensor configuration for a room (creates if not found)."""
     store = hass.data[DOMAIN]["store"]
     config = store.get_sensor_config(msg["room_id"])
     if not config:
-        connection.send_error(msg["id"], "not_found", "Sensor config not found")
-        return
+        # Auto-create a default config for this room/zone
+        floor_plan_id = store.find_floor_plan_id_for_room(msg["room_id"])
+        if not floor_plan_id:
+            connection.send_error(
+                msg["id"], "not_found", "Room or zone not found in any floor plan"
+            )
+            return
+        config = VirtualSensorConfig(
+            room_id=msg["room_id"],
+            floor_plan_id=floor_plan_id,
+        )
+        store.create_sensor_config(config)
 
     if "enabled" in msg:
         config.enabled = msg["enabled"]

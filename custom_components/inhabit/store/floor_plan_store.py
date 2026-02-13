@@ -384,6 +384,18 @@ class FloorPlanStore:
 
     # ==================== Sensor Configs ====================
 
+    def find_floor_plan_id_for_room(self, room_id: str) -> str | None:
+        """Find the floor plan ID that contains a given room or zone."""
+        for fp in self.get_floor_plans():
+            for floor in fp.floors:
+                for room in floor.rooms:
+                    if room.id == room_id:
+                        return fp.id
+                for zone in floor.zones:
+                    if zone.id == room_id:
+                        return fp.id
+        return None
+
     def get_sensor_config(self, room_id: str) -> VirtualSensorConfig | None:
         """Get sensor configuration for a room."""
         data = self._data.get("sensor_configs", {}).get(room_id)
