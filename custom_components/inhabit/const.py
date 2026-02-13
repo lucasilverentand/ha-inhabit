@@ -33,15 +33,7 @@ class DeviceCategory:
 
     LIGHT: Final = "light"
     SWITCH: Final = "switch"
-    SENSOR: Final = "sensor"
-    BINARY_SENSOR: Final = "binary_sensor"
-    CLIMATE: Final = "climate"
-    FAN: Final = "fan"
-    COVER: Final = "cover"
-    CAMERA: Final = "camera"
-    MEDIA_PLAYER: Final = "media_player"
-    VACUUM: Final = "vacuum"
-    LOCK: Final = "lock"
+    MMWAVE: Final = "mmwave"
 
 
 # Sensor types for occupancy detection

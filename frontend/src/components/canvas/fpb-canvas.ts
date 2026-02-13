@@ -5,7 +5,7 @@
 import { LitElement, html, css, svg } from "lit";
 import { property, state, query } from "lit/decorators.js";
 import { effect } from "@preact/signals-core";
-import type { HomeAssistant, Coordinates, ViewBox, Edge, Node, Room, WallDirection, CanvasMode, Floor, SelectionState, HassEntity, DevicePlacement, Zone } from "../../types";
+import type { HomeAssistant, Coordinates, ViewBox, Edge, Node, Room, WallDirection, CanvasMode, Floor, SelectionState, HassEntity, LightPlacement, SwitchPlacement, Zone } from "../../types";
 import {
   currentFloor,
   currentFloorPlan,
@@ -16,11 +16,13 @@ import {
   activeTool,
   canvasMode,
   selection,
-  devicePlacements,
+  lightPlacements,
+  switchPlacements,
   reloadFloorData,
   constraintConflicts,
   focusedRoomId,
   occupancyPanelTarget,
+  devicePanelTarget,
   mmwavePlacements,
 } from "../../stores/signals";
 import { polygonToPath, viewBoxToString, groupEdgesIntoChains, wallChainPath } from "../../utils/svg";
@@ -195,6 +197,25 @@ export class FpbCanvas extends LitElement {
   @state()
   private _draggingZoneVertex: { zone: import("../../types").Zone; vertexIndex: number; originalCoords: import("../../types").Coordinates; pointerId: number } | null = null;
 
+  // ---- Placement dragging state ----
+  @state()
+  private _draggingPlacement: {
+    type: "light" | "switch" | "mmwave";
+    id: string;
+    startPoint: Coordinates;
+    originalPosition: Coordinates;
+    hasMoved: boolean;
+    pointerId: number;
+  } | null = null;
+
+  // ---- mmWave rotation handle drag state ----
+  @state()
+  private _rotatingMmwave: {
+    id: string;
+    originalAngle: number;
+    pointerId: number;
+  } | null = null;
+
   @state()
   private _canvasMode: CanvasMode = "walls";
 
@@ -243,11 +264,18 @@ export class FpbCanvas extends LitElement {
     }
 
     .room {
-      cursor: pointer;
       transition: fill 0.2s ease;
+      pointer-events: none;
     }
 
-    .room:hover {
+    svg.mode-walls .room,
+    svg.mode-occupancy .room {
+      pointer-events: auto;
+      cursor: pointer;
+    }
+
+    svg.mode-walls .room:hover,
+    svg.mode-occupancy .room:hover {
       fill-opacity: 0.8;
     }
 
@@ -397,6 +425,11 @@ export class FpbCanvas extends LitElement {
     }
 
     .device-marker {
+      pointer-events: none;
+    }
+
+    svg.mode-placement .device-marker {
+      pointer-events: auto;
       cursor: pointer;
     }
 
@@ -404,8 +437,33 @@ export class FpbCanvas extends LitElement {
       transition: r 0.2s ease;
     }
 
-    .device-marker:hover circle {
+    svg.mode-placement .device-marker:hover circle {
       r: 14;
+    }
+
+    .rotation-handle {
+      cursor: grab;
+    }
+
+    .rotation-handle:active {
+      cursor: grabbing;
+    }
+
+    .rotation-handle-dot {
+      fill: var(--primary-color, #03a9f4);
+      stroke: #fff;
+      stroke-width: 1.5;
+      transition: r 0.15s ease;
+    }
+
+    .rotation-handle:hover .rotation-handle-dot {
+      r: 6;
+    }
+
+    .rotation-handle-line {
+      stroke: var(--primary-color, #03a9f4);
+      stroke-width: 1.5;
+      stroke-dasharray: 3 2;
     }
 
     .device-marker.on circle {
@@ -898,11 +956,18 @@ export class FpbCanvas extends LitElement {
 
     /* --- Zone / Furniture styles --- */
     .zone-shape {
-      cursor: pointer;
       transition: fill-opacity 0.2s ease;
+      pointer-events: none;
     }
 
-    .zone-shape:hover {
+    svg.mode-furniture .zone-shape,
+    svg.mode-occupancy .zone-shape {
+      pointer-events: auto;
+      cursor: pointer;
+    }
+
+    svg.mode-furniture .zone-shape:hover,
+    svg.mode-occupancy .zone-shape:hover {
       fill-opacity: 0.55;
     }
 
@@ -915,10 +980,17 @@ export class FpbCanvas extends LitElement {
     .zone-area-shape {
       fill: none;
       stroke-dasharray: 6,4;
+      pointer-events: none;
+    }
+
+    svg.mode-furniture .zone-area-shape,
+    svg.mode-occupancy .zone-area-shape {
+      pointer-events: auto;
       cursor: pointer;
     }
 
-    .zone-area-shape:hover {
+    svg.mode-furniture .zone-area-shape:hover,
+    svg.mode-occupancy .zone-area-shape:hover {
       stroke-width: 3;
     }
 
@@ -1076,11 +1148,11 @@ export class FpbCanvas extends LitElement {
   private _handlePointerDown(e: PointerEvent): void {
     const point = this._screenToSvg({ x: e.clientX, y: e.clientY });
     const tool = activeTool.value;
-    const snappedPoint = this._getSnappedPoint(point, tool === "device" || tool === "wall" || tool === "zone");
+    const snappedPoint = this._getSnappedPoint(point, tool === "light" || tool === "switch" || tool === "mmwave" || tool === "wall" || tool === "zone");
     const mode = this._canvasMode;
 
     // Close entity picker if clicking outside (but not when in device mode placing a new one)
-    if (this._pendingDevice && activeTool.value !== "device") {
+    if (this._pendingDevice && activeTool.value !== "light" && activeTool.value !== "switch") {
       this._pendingDevice = null;
     }
 
@@ -1137,6 +1209,32 @@ export class FpbCanvas extends LitElement {
             };
             this._svg?.setPointerCapture(e.pointerId);
           }
+        } else if (
+          (selection.value.type === "light" || selection.value.type === "switch" || selection.value.type === "mmwave") &&
+          selection.value.ids.length === 1
+        ) {
+          // Set up placement drag
+          const selType = selection.value.type;
+          const selId = selection.value.ids[0];
+          let pos: Coordinates | null = null;
+          if (selType === "light") {
+            pos = lightPlacements.value.find(p => p.id === selId)?.position ?? null;
+          } else if (selType === "switch") {
+            pos = switchPlacements.value.find(p => p.id === selId)?.position ?? null;
+          } else {
+            pos = mmwavePlacements.value.find(p => p.id === selId)?.position ?? null;
+          }
+          if (pos) {
+            this._draggingPlacement = {
+              type: selType,
+              id: selId,
+              startPoint: point,
+              originalPosition: { ...pos },
+              hasMoved: false,
+              pointerId: e.pointerId,
+            };
+            this._svg?.setPointerCapture(e.pointerId);
+          }
         }
       } else if (tool === "wall") {
         this._edgeEditor = null;
@@ -1147,10 +1245,14 @@ export class FpbCanvas extends LitElement {
           ? this._cursorPos
           : snappedPoint;
         this._handleWallClick(wallPoint, e.shiftKey);
-      } else if (tool === "device") {
+      } else if (tool === "light" || tool === "switch") {
         this._edgeEditor = null;
         this._multiEdgeEditor = null;
         this._handleDeviceClick(snappedPoint);
+      } else if (tool === "mmwave") {
+        this._edgeEditor = null;
+        this._multiEdgeEditor = null;
+        this._placeMmwave(snappedPoint);
       } else if (tool === "door" || tool === "window") {
         if (this._openingPreview) {
           this._edgeEditor = null;
@@ -1282,7 +1384,7 @@ export class FpbCanvas extends LitElement {
     const point = this._screenToSvg({ x: e.clientX, y: e.clientY });
     const tool = activeTool.value;
     // Enable wall segment snapping for device and wall tools
-    let snapped = this._getSnappedPoint(point, tool === "device" || tool === "wall" || tool === "zone");
+    let snapped = this._getSnappedPoint(point, tool === "light" || tool === "switch" || tool === "mmwave" || tool === "wall" || tool === "zone");
 
     // Shift constrains to horizontal/vertical when drawing a wall
     if (e.shiftKey && tool === "wall" && this._wallStartPoint) {
@@ -1339,6 +1441,44 @@ export class FpbCanvas extends LitElement {
         }
         this.requestUpdate();
       }
+      return;
+    }
+
+    // Handle placement dragging (light/switch/mmwave)
+    if (this._draggingPlacement) {
+      const dx = point.x - this._draggingPlacement.startPoint.x;
+      const dy = point.y - this._draggingPlacement.startPoint.y;
+      if (!this._draggingPlacement.hasMoved && (Math.abs(dx) > 3 || Math.abs(dy) > 3)) {
+        this._draggingPlacement.hasMoved = true;
+      }
+      if (this._draggingPlacement.hasMoved) {
+        const raw = {
+          x: this._draggingPlacement.originalPosition.x + dx,
+          y: this._draggingPlacement.originalPosition.y + dy,
+        };
+        const newPos = snapToGrid.value ? snapPoint(raw, gridSize.value) : raw;
+        const dp = this._draggingPlacement;
+        if (dp.type === "light") {
+          lightPlacements.value = lightPlacements.value.map(p =>
+            p.id === dp.id ? { ...p, position: newPos } : p
+          );
+        } else if (dp.type === "switch") {
+          switchPlacements.value = switchPlacements.value.map(p =>
+            p.id === dp.id ? { ...p, position: newPos } : p
+          );
+        } else {
+          mmwavePlacements.value = mmwavePlacements.value.map(p =>
+            p.id === dp.id ? { ...p, position: newPos } : p
+          );
+        }
+        this.requestUpdate();
+      }
+      return;
+    }
+
+    // Handle mmWave rotation drag
+    if (this._rotatingMmwave) {
+      this._handleMmwaveRotationMove(point);
       return;
     }
 
@@ -1482,6 +1622,21 @@ export class FpbCanvas extends LitElement {
   }
 
   private _handlePointerUp(e: PointerEvent): void {
+    if (this._rotatingMmwave) {
+      this._finishMmwaveRotation();
+      this._svg?.releasePointerCapture(e.pointerId);
+      return;
+    }
+
+    if (this._draggingPlacement) {
+      if (this._draggingPlacement.hasMoved) {
+        this._finishPlacementDrag();
+      }
+      this._svg?.releasePointerCapture(e.pointerId);
+      this._draggingPlacement = null;
+      return;
+    }
+
     if (this._draggingZone) {
       if (this._draggingZone.hasMoved) {
         this._finishZoneDrag();
@@ -1731,6 +1886,15 @@ export class FpbCanvas extends LitElement {
       this._draggingNode = null;
       this._draggingZone = null;
       this._draggingZoneVertex = null;
+      this._draggingPlacement = null;
+      if (this._rotatingMmwave) {
+        // Revert angle on cancel
+        const rm = this._rotatingMmwave;
+        mmwavePlacements.value = mmwavePlacements.value.map(p =>
+          p.id === rm.id ? { ...p, angle: rm.originalAngle } : p
+        );
+        this._rotatingMmwave = null;
+      }
       this._pendingDevice = null;
       this._edgeEditor = null;
       this._multiEdgeEditor = null;
@@ -1740,6 +1904,7 @@ export class FpbCanvas extends LitElement {
       this._zonePolyPoints = [];
       this._pendingZonePolygon = null;
       selection.value = { type: "none", ids: [] };
+      devicePanelTarget.value = null;
       activeTool.value = "select";
     } else if ((e.key === "Backspace" || e.key === "Delete") && this._zoneEditor) {
       e.preventDefault();
@@ -1750,6 +1915,12 @@ export class FpbCanvas extends LitElement {
     } else if ((e.key === "Backspace" || e.key === "Delete") && this._edgeEditor) {
       e.preventDefault();
       this._handleEdgeDelete();
+    } else if ((e.key === "Backspace" || e.key === "Delete") && (selection.value.type === "light" || selection.value.type === "switch" || selection.value.type === "mmwave")) {
+      e.preventDefault();
+      this._deleteSelectedPlacement();
+    } else if (e.key === "r" && selection.value.type === "mmwave") {
+      e.preventDefault();
+      this._rotateMmwave(e.shiftKey ? -15 : 15);
     } else if (e.key === "z" && (e.ctrlKey || e.metaKey) && !e.shiftKey) {
       e.preventDefault();
       undo();
@@ -2203,16 +2374,29 @@ export class FpbCanvas extends LitElement {
       }
     }
 
-    // Check devices — placement mode only
+    // Check lights, switches, mmwave — placement mode only
     if (mode === "placement") {
-      const devices = devicePlacements.value.filter((d) => d.floor_id === floor.id);
-      for (const device of devices) {
-        const dist = Math.sqrt(
-          Math.pow(point.x - device.position.x, 2) +
-          Math.pow(point.y - device.position.y, 2)
-        );
+      for (const light of lightPlacements.value.filter(d => d.floor_id === floor.id)) {
+        const dist = Math.hypot(point.x - light.position.x, point.y - light.position.y);
         if (dist < 15) {
-          selection.value = { type: "device", ids: [device.id] };
+          selection.value = { type: "light", ids: [light.id] };
+          devicePanelTarget.value = { id: light.id, type: "light" };
+          return true;
+        }
+      }
+      for (const sw of switchPlacements.value.filter(d => d.floor_id === floor.id)) {
+        const dist = Math.hypot(point.x - sw.position.x, point.y - sw.position.y);
+        if (dist < 15) {
+          selection.value = { type: "switch", ids: [sw.id] };
+          devicePanelTarget.value = { id: sw.id, type: "switch" };
+          return true;
+        }
+      }
+      for (const mw of mmwavePlacements.value.filter(p => p.floor_id === floor.id)) {
+        const dist = Math.hypot(point.x - mw.position.x, point.y - mw.position.y);
+        if (dist < 15) {
+          selection.value = { type: "mmwave", ids: [mw.id] };
+          devicePanelTarget.value = { id: mw.id, type: "mmwave" };
           return true;
         }
       }
@@ -2266,6 +2450,7 @@ export class FpbCanvas extends LitElement {
     }
 
     selection.value = { type: "none", ids: [] };
+    devicePanelTarget.value = null;
     return false;
   }
 
@@ -2556,10 +2741,22 @@ export class FpbCanvas extends LitElement {
         ys.push(v.y);
       }
     }
-    for (const device of devicePlacements.value) {
-      if (device.floor_id === floor.id) {
-        xs.push(device.position.x);
-        ys.push(device.position.y);
+    for (const light of lightPlacements.value) {
+      if (light.floor_id === floor.id) {
+        xs.push(light.position.x);
+        ys.push(light.position.y);
+      }
+    }
+    for (const sw of switchPlacements.value) {
+      if (sw.floor_id === floor.id) {
+        xs.push(sw.position.x);
+        ys.push(sw.position.y);
+      }
+    }
+    for (const mw of mmwavePlacements.value) {
+      if (mw.floor_id === floor.id) {
+        xs.push(mw.position.x);
+        ys.push(mw.position.y);
       }
     }
 
@@ -2651,10 +2848,22 @@ export class FpbCanvas extends LitElement {
       }
     }
 
-    for (const device of devicePlacements.value) {
-      if (device.floor_id === floor.id) {
-        xs.push(device.position.x);
-        ys.push(device.position.y);
+    for (const light of lightPlacements.value) {
+      if (light.floor_id === floor.id) {
+        xs.push(light.position.x);
+        ys.push(light.position.y);
+      }
+    }
+    for (const sw of switchPlacements.value) {
+      if (sw.floor_id === floor.id) {
+        xs.push(sw.position.x);
+        ys.push(sw.position.y);
+      }
+    }
+    for (const mw of mmwavePlacements.value) {
+      if (mw.floor_id === floor.id) {
+        xs.push(mw.position.x);
+        ys.push(mw.position.y);
       }
     }
 
@@ -3600,14 +3809,21 @@ export class FpbCanvas extends LitElement {
         </g>
       ` : null}
 
-      <!-- Devices layer -->
+      <!-- Lights layer -->
       ${layerConfig.find(l => l.id === "devices")?.visible ? svg`
         <g class="devices-layer" opacity="${layerConfig.find(l => l.id === "devices")?.opacity ?? 1}">
-          ${devicePlacements.value
+          ${lightPlacements.value
             .filter(d => d.floor_id === floor.id)
-            .map(device => svg`
-              <g class="${frid ? (device.room_id === frid ? "device-focused" : "device-dimmed") : ""}">
-                ${this._renderDevice(device)}
+            .map(light => svg`
+              <g class="${frid ? (light.room_id === frid ? "device-focused" : "device-dimmed") : ""}">
+                ${this._renderLight(light)}
+              </g>
+            `)}
+          ${switchPlacements.value
+            .filter(d => d.floor_id === floor.id)
+            .map(sw => svg`
+              <g class="${frid ? (sw.room_id === frid ? "device-focused" : "device-dimmed") : ""}">
+                ${this._renderSwitch(sw)}
               </g>
             `)}
         </g>
@@ -3618,22 +3834,40 @@ export class FpbCanvas extends LitElement {
     `;
   }
 
-  private _renderDevice(device: DevicePlacement) {
-    const state = this.hass?.states[device.entity_id];
-    const isOn = state?.state === "on";
+  // MDI lightbulb path (24x24 viewBox)
+  private _renderDeviceIcon(x: number, y: number, isOn: boolean, selType: string, selId: string, label: string, bgOnColor: string, iconColor: string, icon: string) {
     const sel = selection.value;
-
+    const r = 14;
+    const iconSize = 18;
     return svg`
-      <g class="device-marker ${isOn ? "on" : "off"} ${sel.type === "device" && sel.ids.includes(device.id) ? "selected" : ""}"
-         transform="translate(${device.position.x}, ${device.position.y}) rotate(${device.rotation})">
-        <circle r="12" fill="${isOn ? "#ffd600" : "#bdbdbd"}" stroke="#333" stroke-width="2"/>
-        ${device.show_label ? svg`
-          <text y="24" text-anchor="middle" font-size="10" fill="#333">
-            ${device.label || state?.attributes.friendly_name || device.entity_id}
-          </text>
-        ` : null}
+      <g class="device-marker ${isOn ? "on" : "off"} ${sel.type === selType && sel.ids.includes(selId) ? "selected" : ""}"
+         transform="translate(${x}, ${y})">
+        <circle r="${r}" fill="${isOn ? bgOnColor : "#e0e0e0"}" stroke="#333" stroke-width="2"/>
+        <foreignObject x="${-r}" y="${-r}" width="${r * 2}" height="${r * 2}">
+          <ha-icon
+            icon="${icon}"
+            style="--mdc-icon-size: ${iconSize}px; display: flex; align-items: center; justify-content: center; width: ${r * 2}px; height: ${r * 2}px; color: ${iconColor};"
+          ></ha-icon>
+        </foreignObject>
+        <text y="${r + 12}" text-anchor="middle" font-size="10" fill="#333">${label}</text>
       </g>
     `;
+  }
+
+  private _renderLight(light: LightPlacement) {
+    const state = this.hass?.states[light.entity_id];
+    const isOn = state?.state === "on";
+    const label = (light.label || state?.attributes.friendly_name || light.entity_id) as string;
+    const icon = state ? this._getEntityIcon(state) : "mdi:lightbulb";
+    return this._renderDeviceIcon(light.position.x, light.position.y, isOn, "light", light.id, label, "#ffd600", isOn ? "#333" : "#616161", icon);
+  }
+
+  private _renderSwitch(sw: SwitchPlacement) {
+    const state = this.hass?.states[sw.entity_id];
+    const isOn = state?.state === "on";
+    const label = (sw.label || state?.attributes.friendly_name || sw.entity_id) as string;
+    const icon = state ? this._getEntityIcon(state) : "mdi:toggle-switch";
+    return this._renderDeviceIcon(sw.position.x, sw.position.y, isOn, "switch", sw.id, label, "#4caf50", isOn ? "#fff" : "#616161", icon);
   }
 
   private _renderMmwaveLayer(floor: Floor) {
@@ -3645,35 +3879,53 @@ export class FpbCanvas extends LitElement {
     return svg`
       <g class="mmwave-layer">
         ${placements.map(p => {
-          const isSelected = sel.type === "device" && sel.ids.includes(p.id);
-          const facingAngle = p.wall_normal_angle + p.angle;
+          const isSelected = sel.type === "mmwave" && sel.ids.includes(p.id);
           const halfFov = p.field_of_view / 2;
           const range = p.detection_range;
+          const px = p.position.x;
+          const py = p.position.y;
 
           // Compute FOV cone arc endpoints
-          const startAngle = (facingAngle - halfFov) * Math.PI / 180;
-          const endAngle = (facingAngle + halfFov) * Math.PI / 180;
-          const ax = p.mount_x + range * Math.cos(startAngle);
-          const ay = p.mount_y + range * Math.sin(startAngle);
-          const bx = p.mount_x + range * Math.cos(endAngle);
-          const by = p.mount_y + range * Math.sin(endAngle);
+          const startAngle = (p.angle - halfFov) * Math.PI / 180;
+          const endAngle = (p.angle + halfFov) * Math.PI / 180;
+          const ax = px + range * Math.cos(startAngle);
+          const ay = py + range * Math.sin(startAngle);
+          const bx = px + range * Math.cos(endAngle);
+          const by = py + range * Math.sin(endAngle);
           const largeArc = p.field_of_view > 180 ? 1 : 0;
+
+          // Rotation handle position (30px out from center along facing angle)
+          const handleDist = 30;
+          const angleRad = p.angle * Math.PI / 180;
+          const hx = px + handleDist * Math.cos(angleRad);
+          const hy = py + handleDist * Math.sin(angleRad);
 
           return svg`
             <g class="mmwave-placement ${isSelected ? "selected" : ""}">
               <!-- FOV cone -->
               <path
-                d="M ${p.mount_x} ${p.mount_y} L ${ax} ${ay} A ${range} ${range} 0 ${largeArc} 1 ${bx} ${by} Z"
+                d="M ${px} ${py} L ${ax} ${ay} A ${range} ${range} 0 ${largeArc} 1 ${bx} ${by} Z"
                 fill="rgba(33, 150, 243, 0.1)"
                 stroke="rgba(33, 150, 243, 0.4)"
                 stroke-width="1"
                 stroke-dasharray="4 2"
               />
               <!-- Sensor icon -->
-              <circle cx="${p.mount_x}" cy="${p.mount_y}" r="8"
+              <circle cx="${px}" cy="${py}" r="8"
                 fill="#2196f3" stroke="#fff" stroke-width="2"/>
-              <text x="${p.mount_x}" y="${p.mount_y + 3}" text-anchor="middle"
+              <text x="${px}" y="${py + 3}" text-anchor="middle"
                 font-size="8" fill="#fff" font-weight="bold">R</text>
+              ${isSelected ? svg`
+                <!-- Rotation handle -->
+                <g class="rotation-handle"
+                   data-mmwave-id="${p.id}"
+                   @pointerdown=${(e: PointerEvent) => this._startMmwaveRotation(e, p)}>
+                  <line class="rotation-handle-line"
+                    x1="${px}" y1="${py}" x2="${hx}" y2="${hy}" />
+                  <circle class="rotation-handle-dot"
+                    cx="${hx}" cy="${hy}" r="4.5" />
+                </g>
+              ` : null}
             </g>
           `;
         })}
@@ -5065,9 +5317,12 @@ export class FpbCanvas extends LitElement {
   private _getFilteredEntities(): HassEntity[] {
     if (!this.hass) return [];
 
-    const placableDomains = ["light", "switch", "sensor", "binary_sensor", "climate", "fan", "cover", "camera", "media_player"];
+    const tool = activeTool.value;
+    const domain = tool === "light" ? "light" : tool === "switch" ? "switch" : null;
+    if (!domain) return [];
+
     let entities = Object.values(this.hass.states).filter((e) =>
-      placableDomains.some((d) => e.entity_id.startsWith(d + "."))
+      e.entity_id.startsWith(domain + ".")
     );
 
     if (this._entitySearch) {
@@ -5084,18 +5339,9 @@ export class FpbCanvas extends LitElement {
 
   private _getEntityIcon(entity: HassEntity): string {
     const domain = entity.entity_id.split(".")[0];
-    const iconMap: Record<string, string> = {
-      light: "mdi:lightbulb",
-      switch: "mdi:toggle-switch",
-      sensor: "mdi:eye",
-      binary_sensor: "mdi:radiobox-marked",
-      climate: "mdi:thermostat",
-      fan: "mdi:fan",
-      cover: "mdi:window-shutter",
-      camera: "mdi:camera",
-      media_player: "mdi:cast",
-    };
-    return (entity.attributes.icon as string) || iconMap[domain] || "mdi:devices";
+    if (domain === "light") return (entity.attributes.icon as string) || "mdi:lightbulb";
+    if (domain === "switch") return (entity.attributes.icon as string) || "mdi:toggle-switch";
+    return (entity.attributes.icon as string) || "mdi:devices";
   }
 
   private async _placeDevice(entityId: string): Promise<void> {
@@ -5105,63 +5351,297 @@ export class FpbCanvas extends LitElement {
     const floorPlan = currentFloorPlan.value;
     if (!floor || !floorPlan) return;
 
+    const tool = activeTool.value;
+    const isLight = tool === "light";
+    const wsType = isLight ? "inhabit/lights/place" : "inhabit/switches/place";
+    const removeType = isLight ? "inhabit/lights/remove" : "inhabit/switches/remove";
+
     const hass = this.hass;
     const fpId = floorPlan.id;
     const fId = floor.id;
     const position = { ...this._pendingDevice.position };
-    const contributesToOccupancy = entityId.startsWith("binary_sensor.") || entityId.startsWith("sensor.");
-    const deviceRef = { id: "" };
+    const placementRef = { id: "" };
 
     try {
       const result = await hass.callWS<{ id: string }>({
-        type: "inhabit/devices/place",
+        type: wsType,
         floor_plan_id: fpId,
         floor_id: fId,
         entity_id: entityId,
         position,
-        rotation: 0,
-        scale: 1,
-        show_state: true,
-        show_label: true,
-        contributes_to_occupancy: contributesToOccupancy,
       });
-      deviceRef.id = result.id;
+      placementRef.id = result.id;
       await reloadFloorData();
 
       pushAction({
-        type: "device_place",
-        description: "Place device",
+        type: isLight ? "light_place" : "switch_place",
+        description: isLight ? "Place light" : "Place switch",
         undo: async () => {
           await hass.callWS({
-            type: "inhabit/devices/remove",
-            floor_plan_id: fpId,
-            device_id: deviceRef.id,
+            type: removeType,
+            [isLight ? "light_id" : "switch_id"]: placementRef.id,
           });
           await reloadFloorData();
         },
         redo: async () => {
           const r = await hass.callWS<{ id: string }>({
-            type: "inhabit/devices/place",
+            type: wsType,
             floor_plan_id: fpId,
             floor_id: fId,
             entity_id: entityId,
             position,
-            rotation: 0,
-            scale: 1,
-            show_state: true,
-            show_label: true,
-            contributes_to_occupancy: contributesToOccupancy,
           });
-          deviceRef.id = r.id;
+          placementRef.id = r.id;
           await reloadFloorData();
         },
       });
     } catch (err) {
-      console.error("Error placing device:", err);
-      alert(`Failed to place device: ${err}`);
+      console.error(`Error placing ${isLight ? "light" : "switch"}:`, err);
+      alert(`Failed to place ${isLight ? "light" : "switch"}: ${err}`);
     }
 
     this._pendingDevice = null;
+  }
+
+  private async _placeMmwave(point: Coordinates): Promise<void> {
+    if (!this.hass) return;
+
+    const floor = currentFloor.value;
+    const floorPlan = currentFloorPlan.value;
+    if (!floor || !floorPlan) return;
+
+    const hass = this.hass;
+    const fpId = floorPlan.id;
+    const fId = floor.id;
+    const position = { ...point };
+    const placementRef = { id: "" };
+
+    try {
+      const result = await hass.callWS<{ id: string }>({
+        type: "inhabit/mmwave/place",
+        floor_plan_id: fpId,
+        floor_id: fId,
+        position,
+        angle: 0,
+        field_of_view: 120,
+        detection_range: 500,
+      });
+      placementRef.id = result.id;
+      await reloadFloorData();
+
+      pushAction({
+        type: "mmwave_place",
+        description: "Place mmWave sensor",
+        undo: async () => {
+          await hass.callWS({
+            type: "inhabit/mmwave/delete",
+            placement_id: placementRef.id,
+          });
+          await reloadFloorData();
+        },
+        redo: async () => {
+          const r = await hass.callWS<{ id: string }>({
+            type: "inhabit/mmwave/place",
+            floor_plan_id: fpId,
+            floor_id: fId,
+            position,
+            angle: 0,
+            field_of_view: 120,
+            detection_range: 500,
+          });
+          placementRef.id = r.id;
+          await reloadFloorData();
+        },
+      });
+    } catch (err) {
+      console.error("Error placing mmWave sensor:", err);
+      alert(`Failed to place mmWave sensor: ${err}`);
+    }
+  }
+
+  private async _finishPlacementDrag(): Promise<void> {
+    if (!this.hass || !this._draggingPlacement) return;
+
+    const dp = this._draggingPlacement;
+    const hass = this.hass;
+    const floorPlan = currentFloorPlan.value;
+    if (!floorPlan) return;
+
+    // Get the new position from the signal
+    let newPos: Coordinates | undefined;
+    if (dp.type === "light") {
+      newPos = lightPlacements.value.find(p => p.id === dp.id)?.position;
+    } else if (dp.type === "switch") {
+      newPos = switchPlacements.value.find(p => p.id === dp.id)?.position;
+    } else {
+      newPos = mmwavePlacements.value.find(p => p.id === dp.id)?.position;
+    }
+    if (!newPos) return;
+    const finalPos = { ...newPos };
+    const origPos = { ...dp.originalPosition };
+
+    try {
+      if (dp.type === "light") {
+        await hass.callWS({
+          type: "inhabit/lights/update",
+          light_id: dp.id,
+          position: finalPos,
+        });
+      } else if (dp.type === "switch") {
+        await hass.callWS({
+          type: "inhabit/switches/update",
+          switch_id: dp.id,
+          position: finalPos,
+        });
+      } else {
+        await hass.callWS({
+          type: "inhabit/mmwave/update",
+          placement_id: dp.id,
+          position: finalPos,
+        });
+      }
+
+      const placementType = dp.type;
+      const placementId = dp.id;
+
+      pushAction({
+        type: `${placementType}_move`,
+        description: `Move ${placementType}`,
+        undo: async () => {
+          if (placementType === "light") {
+            await hass.callWS({ type: "inhabit/lights/update", light_id: placementId, position: origPos });
+          } else if (placementType === "switch") {
+            await hass.callWS({ type: "inhabit/switches/update", switch_id: placementId, position: origPos });
+          } else {
+            await hass.callWS({ type: "inhabit/mmwave/update", placement_id: placementId, position: origPos });
+          }
+          await reloadFloorData();
+        },
+        redo: async () => {
+          if (placementType === "light") {
+            await hass.callWS({ type: "inhabit/lights/update", light_id: placementId, position: finalPos });
+          } else if (placementType === "switch") {
+            await hass.callWS({ type: "inhabit/switches/update", switch_id: placementId, position: finalPos });
+          } else {
+            await hass.callWS({ type: "inhabit/mmwave/update", placement_id: placementId, position: finalPos });
+          }
+          await reloadFloorData();
+        },
+      });
+    } catch (err) {
+      console.error(`Error moving ${dp.type}:`, err);
+      // Revert on failure
+      await reloadFloorData();
+    }
+  }
+
+  private async _deleteSelectedPlacement(): Promise<void> {
+    if (!this.hass) return;
+    const sel = selection.value;
+    if (sel.ids.length !== 1) return;
+
+    const hass = this.hass;
+    const floorPlan = currentFloorPlan.value;
+    if (!floorPlan) return;
+
+    const id = sel.ids[0];
+
+    try {
+      if (sel.type === "light") {
+        await hass.callWS({ type: "inhabit/lights/remove", light_id: id });
+        lightPlacements.value = lightPlacements.value.filter(p => p.id !== id);
+      } else if (sel.type === "switch") {
+        await hass.callWS({ type: "inhabit/switches/remove", switch_id: id });
+        switchPlacements.value = switchPlacements.value.filter(p => p.id !== id);
+      } else if (sel.type === "mmwave") {
+        await hass.callWS({ type: "inhabit/mmwave/delete", placement_id: id });
+        mmwavePlacements.value = mmwavePlacements.value.filter(p => p.id !== id);
+      } else {
+        return;
+      }
+      selection.value = { type: "none", ids: [] };
+    } catch (err) {
+      console.error("Error deleting placement:", err);
+    }
+  }
+
+  private async _rotateMmwave(delta: number): Promise<void> {
+    if (!this.hass) return;
+    const sel = selection.value;
+    if (sel.type !== "mmwave" || sel.ids.length !== 1) return;
+
+    const id = sel.ids[0];
+    const placement = mmwavePlacements.value.find(p => p.id === id);
+    if (!placement) return;
+
+    const newAngle = (placement.angle + delta + 360) % 360;
+
+    try {
+      await this.hass.callWS({
+        type: "inhabit/mmwave/update",
+        placement_id: id,
+        angle: newAngle,
+      });
+      mmwavePlacements.value = mmwavePlacements.value.map(p =>
+        p.id === id ? { ...p, angle: newAngle } : p
+      );
+    } catch (err) {
+      console.error("Error rotating mmWave:", err);
+    }
+  }
+
+  private _startMmwaveRotation(e: PointerEvent, placement: import("../../types").MmwavePlacement): void {
+    e.stopPropagation();
+    e.preventDefault();
+    this._rotatingMmwave = {
+      id: placement.id,
+      originalAngle: placement.angle,
+      pointerId: e.pointerId,
+    };
+    this._svg?.setPointerCapture(e.pointerId);
+  }
+
+  private _handleMmwaveRotationMove(point: Coordinates): void {
+    if (!this._rotatingMmwave) return;
+    const placement = mmwavePlacements.value.find(p => p.id === this._rotatingMmwave!.id);
+    if (!placement) return;
+
+    const dx = point.x - placement.position.x;
+    const dy = point.y - placement.position.y;
+    let angle = Math.atan2(dy, dx) * 180 / Math.PI;
+    angle = ((angle % 360) + 360) % 360;
+
+    // Snap to 15° increments when not holding shift (checked in pointer move)
+    angle = Math.round(angle / 15) * 15;
+
+    mmwavePlacements.value = mmwavePlacements.value.map(p =>
+      p.id === this._rotatingMmwave!.id ? { ...p, angle } : p
+    );
+  }
+
+  private async _finishMmwaveRotation(): Promise<void> {
+    if (!this._rotatingMmwave || !this.hass) return;
+    const rm = this._rotatingMmwave;
+    const placement = mmwavePlacements.value.find(p => p.id === rm.id);
+    if (!placement) { this._rotatingMmwave = null; return; }
+
+    const newAngle = placement.angle;
+    if (newAngle === rm.originalAngle) { this._rotatingMmwave = null; return; }
+
+    try {
+      await this.hass.callWS({
+        type: "inhabit/mmwave/update",
+        placement_id: rm.id,
+        angle: newAngle,
+      });
+    } catch (err) {
+      console.error("Error committing mmWave rotation:", err);
+      // Revert on failure
+      mmwavePlacements.value = mmwavePlacements.value.map(p =>
+        p.id === rm.id ? { ...p, angle: rm.originalAngle } : p
+      );
+    }
+    this._rotatingMmwave = null;
   }
 
   private _cancelDevicePlacement(): void {
@@ -5211,6 +5691,7 @@ export class FpbCanvas extends LitElement {
       this._isPanning ? "panning" : "",
       activeTool.value === "select" ? "select-tool" : "",
       mode === "viewing" ? "view-mode" : "",
+      `mode-${mode}`,
     ].filter(Boolean).join(" ");
 
     return html`
@@ -5885,18 +6366,19 @@ export class FpbCanvas extends LitElement {
 
   private _renderDevicePreview() {
     const tool = activeTool.value;
-    if (tool !== "device" || this._pendingDevice) return null;
+    if ((tool !== "light" && tool !== "switch" && tool !== "mmwave") || this._pendingDevice) return null;
 
-    // Show a preview cursor at the snapped position
+    const color = tool === "light" ? "#ffd600" : tool === "switch" ? "#4caf50" : "#2196f3";
+
     return svg`
       <g class="device-preview">
         <circle
           cx="${this._cursorPos.x}"
           cy="${this._cursorPos.y}"
-          r="12"
-          fill="var(--primary-color, #2196f3)"
+          r="${tool === "mmwave" ? 8 : 12}"
+          fill="${color}"
           fill-opacity="0.3"
-          stroke="var(--primary-color, #2196f3)"
+          stroke="${color}"
           stroke-width="2"
           stroke-dasharray="4,2"
         />
@@ -5904,7 +6386,7 @@ export class FpbCanvas extends LitElement {
           cx="${this._cursorPos.x}"
           cy="${this._cursorPos.y}"
           r="3"
-          fill="var(--primary-color, #2196f3)"
+          fill="${color}"
         />
       </g>
     `;

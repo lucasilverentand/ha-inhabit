@@ -17,7 +17,8 @@ import type {
   LayerConfig,
   ViewBox,
   SelectionState,
-  DevicePlacement,
+  LightPlacement,
+  SwitchPlacement,
   MmwavePlacement,
 } from "../types";
 import type { ConstraintViolation } from "../utils/wall-solver";
@@ -33,10 +34,12 @@ interface InhabitSignals {
   snapToGrid: Signal<boolean>;
   showGrid: Signal<boolean>;
   layers: Signal<LayerConfig[]>;
-  devicePlacements: Signal<DevicePlacement[]>;
+  lightPlacements: Signal<LightPlacement[]>;
+  switchPlacements: Signal<SwitchPlacement[]>;
   constraintConflicts: Signal<Map<string, ConstraintViolation[]>>;
   focusedRoomId: Signal<string | null>;
   occupancyPanelTarget: Signal<{ id: string; name: string; type: "room" | "zone" } | null>;
+  devicePanelTarget: Signal<{ id: string; type: "light" | "switch" | "mmwave" } | null>;
   mmwavePlacements: Signal<MmwavePlacement[]>;
   _reloadFloorData: (() => Promise<void>) | null;
 }
@@ -67,10 +70,12 @@ function createSignals(): InhabitSignals {
       { id: "labels", name: "Labels", visible: true, locked: false, opacity: 1 },
       { id: "automation", name: "Automation", visible: true, locked: false, opacity: 0.7 },
     ]),
-    devicePlacements: signal<DevicePlacement[]>([]),
+    lightPlacements: signal<LightPlacement[]>([]),
+    switchPlacements: signal<SwitchPlacement[]>([]),
     constraintConflicts: signal<Map<string, ConstraintViolation[]>>(new Map()),
     focusedRoomId: signal<string | null>(null),
     occupancyPanelTarget: signal<{ id: string; name: string; type: "room" | "zone" } | null>(null),
+    devicePanelTarget: signal<{ id: string; type: "light" | "switch" | "mmwave" } | null>(null),
     mmwavePlacements: signal<MmwavePlacement[]>([]),
     _reloadFloorData: null,
   };
@@ -94,10 +99,12 @@ export const gridSize = s.gridSize;
 export const snapToGrid = s.snapToGrid;
 export const showGrid = s.showGrid;
 export const layers = s.layers;
-export const devicePlacements = s.devicePlacements;
+export const lightPlacements = s.lightPlacements;
+export const switchPlacements = s.switchPlacements;
 export const constraintConflicts = s.constraintConflicts;
 export const focusedRoomId = s.focusedRoomId;
 export const occupancyPanelTarget = s.occupancyPanelTarget;
+export const devicePanelTarget = s.devicePanelTarget;
 export const mmwavePlacements = s.mmwavePlacements;
 
 export function setCanvasMode(mode: CanvasMode): void {
@@ -106,6 +113,9 @@ export function setCanvasMode(mode: CanvasMode): void {
   selection.value = { type: "none", ids: [] };
   if (mode !== "occupancy") {
     occupancyPanelTarget.value = null;
+  }
+  if (mode !== "placement") {
+    devicePanelTarget.value = null;
   }
 }
 
@@ -142,10 +152,12 @@ export function resetSignals(): void {
     { id: "labels", name: "Labels", visible: true, locked: false, opacity: 1 },
     { id: "automation", name: "Automation", visible: true, locked: false, opacity: 0.7 },
   ];
-  devicePlacements.value = [];
+  lightPlacements.value = [];
+  switchPlacements.value = [];
   constraintConflicts.value = new Map();
   focusedRoomId.value = null;
   occupancyPanelTarget.value = null;
+  devicePanelTarget.value = null;
   mmwavePlacements.value = [];
   s._reloadFloorData = null;
 }

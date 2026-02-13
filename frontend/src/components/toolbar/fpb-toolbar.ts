@@ -32,7 +32,9 @@ const ZONES_MENU_ITEMS: AddMenuItem[] = [
 ];
 
 const PLACEMENT_MENU_ITEMS: AddMenuItem[] = [
-  { id: "device", icon: "mdi:devices", label: "Device" },
+  { id: "light", icon: "mdi:lightbulb", label: "Light" },
+  { id: "switch", icon: "mdi:toggle-switch", label: "Switch" },
+  { id: "mmwave", icon: "mdi:access-point", label: "mmWave" },
 ];
 
 export class FpbToolbar extends LitElement {

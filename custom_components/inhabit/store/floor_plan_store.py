@@ -11,7 +11,7 @@ from homeassistant.helpers.storage import Store
 
 from ..const import STORAGE_KEY, STORAGE_VERSION
 from ..models.automation_rule import VisualRule
-from ..models.device_placement import DevicePlacement, DevicePlacementCollection
+from ..models.device_placement import LightPlacement, SwitchPlacement
 from ..models.floor_plan import Door, Edge, Floor, FloorPlan, Node, Room, Wall, Window
 from ..models.mmwave_sensor import MmwavePlacement
 from ..models.virtual_sensor import VirtualSensorConfig
@@ -29,7 +29,8 @@ class FloorPlanStore:
         self._store: Store[dict[str, Any]] = Store(hass, STORAGE_VERSION, STORAGE_KEY)
         self._data: dict[str, Any] = {
             "floor_plans": {},
-            "device_placements": {},
+            "light_placements": {},
+            "switch_placements": {},
             "sensor_configs": {},
             "visual_rules": {},
             "mmwave_placements": {},
@@ -109,8 +110,11 @@ class FloorPlanStore:
         del self._data["floor_plans"][floor_plan_id]
 
         # Clean up associated data
-        if floor_plan_id in self._data.get("device_placements", {}):
-            del self._data["device_placements"][floor_plan_id]
+        for key in ("light_placements", "switch_placements"):
+            placements = self._data.get(key, {})
+            to_del = [k for k, v in placements.items() if v.get("floor_plan_id") == floor_plan_id]
+            for k in to_del:
+                del placements[k]
 
         # Clean up sensor configs for rooms in this floor plan
         sensor_configs = self._data.get("sensor_configs", {})
@@ -334,53 +338,105 @@ class FloorPlanStore:
         self.update_floor_plan(floor_plan)
         return edge
 
-    # ==================== Device Placements ====================
+    # ==================== Light Placements ====================
 
-    def get_device_placements(self, floor_plan_id: str) -> DevicePlacementCollection:
-        """Get all device placements for a floor plan."""
-        data = self._data.get("device_placements", {}).get(floor_plan_id)
-        if data:
-            return DevicePlacementCollection.from_dict(data)
-        return DevicePlacementCollection(floor_plan_id=floor_plan_id)
+    def get_light_placements(self, floor_plan_id: str) -> list[LightPlacement]:
+        """Get all light placements for a floor plan."""
+        placements = []
+        for data in self._data.get("light_placements", {}).values():
+            if data.get("floor_plan_id") == floor_plan_id:
+                placements.append(LightPlacement.from_dict(data))
+        return placements
 
-    def place_device(
-        self, floor_plan_id: str, device: DevicePlacement
-    ) -> DevicePlacement:
-        """Place a device on a floor plan."""
-        if "device_placements" not in self._data:
-            self._data["device_placements"] = {}
-
-        if floor_plan_id not in self._data["device_placements"]:
-            self._data["device_placements"][floor_plan_id] = {
-                "floor_plan_id": floor_plan_id,
-                "devices": [],
-            }
-
-        collection = self.get_device_placements(floor_plan_id)
-        collection.add_device(device)
-        self._data["device_placements"][floor_plan_id] = collection.to_dict()
+    def place_light(
+        self, floor_plan_id: str, light: LightPlacement
+    ) -> LightPlacement:
+        """Place a light on a floor plan."""
+        if "light_placements" not in self._data:
+            self._data["light_placements"] = {}
+        data = light.to_dict()
+        data["floor_plan_id"] = floor_plan_id
+        self._data["light_placements"][light.id] = data
         self.async_delay_save()
-        return device
+        return light
 
-    def update_device_placement(
-        self, floor_plan_id: str, device: DevicePlacement
-    ) -> DevicePlacement | None:
-        """Update a device placement."""
-        collection = self.get_device_placements(floor_plan_id)
-        if collection.update_device(device):
-            self._data["device_placements"][floor_plan_id] = collection.to_dict()
-            self.async_delay_save()
-            return device
-        return None
+    def update_light_placement(
+        self, light: LightPlacement
+    ) -> LightPlacement | None:
+        """Update a light placement."""
+        if light.id not in self._data.get("light_placements", {}):
+            return None
+        fp_id = self._data["light_placements"][light.id].get("floor_plan_id", "")
+        data = light.to_dict()
+        data["floor_plan_id"] = fp_id
+        self._data["light_placements"][light.id] = data
+        self.async_delay_save()
+        return light
 
-    def remove_device_placement(self, floor_plan_id: str, device_id: str) -> bool:
-        """Remove a device placement."""
-        collection = self.get_device_placements(floor_plan_id)
-        if collection.remove_device(device_id):
-            self._data["device_placements"][floor_plan_id] = collection.to_dict()
+    def remove_light_placement(self, light_id: str) -> bool:
+        """Remove a light placement."""
+        if light_id in self._data.get("light_placements", {}):
+            del self._data["light_placements"][light_id]
             self.async_delay_save()
             return True
         return False
+
+    def get_light_placement(self, light_id: str) -> LightPlacement | None:
+        """Get a single light placement by ID."""
+        data = self._data.get("light_placements", {}).get(light_id)
+        if data:
+            return LightPlacement.from_dict(data)
+        return None
+
+    # ==================== Switch Placements ====================
+
+    def get_switch_placements(self, floor_plan_id: str) -> list[SwitchPlacement]:
+        """Get all switch placements for a floor plan."""
+        placements = []
+        for data in self._data.get("switch_placements", {}).values():
+            if data.get("floor_plan_id") == floor_plan_id:
+                placements.append(SwitchPlacement.from_dict(data))
+        return placements
+
+    def place_switch(
+        self, floor_plan_id: str, switch: SwitchPlacement
+    ) -> SwitchPlacement:
+        """Place a switch on a floor plan."""
+        if "switch_placements" not in self._data:
+            self._data["switch_placements"] = {}
+        data = switch.to_dict()
+        data["floor_plan_id"] = floor_plan_id
+        self._data["switch_placements"][switch.id] = data
+        self.async_delay_save()
+        return switch
+
+    def update_switch_placement(
+        self, switch: SwitchPlacement
+    ) -> SwitchPlacement | None:
+        """Update a switch placement."""
+        if switch.id not in self._data.get("switch_placements", {}):
+            return None
+        fp_id = self._data["switch_placements"][switch.id].get("floor_plan_id", "")
+        data = switch.to_dict()
+        data["floor_plan_id"] = fp_id
+        self._data["switch_placements"][switch.id] = data
+        self.async_delay_save()
+        return switch
+
+    def remove_switch_placement(self, switch_id: str) -> bool:
+        """Remove a switch placement."""
+        if switch_id in self._data.get("switch_placements", {}):
+            del self._data["switch_placements"][switch_id]
+            self.async_delay_save()
+            return True
+        return False
+
+    def get_switch_placement(self, switch_id: str) -> SwitchPlacement | None:
+        """Get a single switch placement by ID."""
+        data = self._data.get("switch_placements", {}).get(switch_id)
+        if data:
+            return SwitchPlacement.from_dict(data)
+        return None
 
     # ==================== Sensor Configs ====================
 
@@ -503,9 +559,6 @@ class FloorPlanStore:
         if "mmwave_placements" not in self._data:
             self._data["mmwave_placements"] = {}
 
-        # Compute mount position from edge geometry
-        self._compute_mmwave_mount(placement)
-
         self._data["mmwave_placements"][placement.id] = placement.to_dict()
         self.async_delay_save()
         return placement
@@ -517,7 +570,6 @@ class FloorPlanStore:
         if placement.id not in self._data.get("mmwave_placements", {}):
             return None
 
-        self._compute_mmwave_mount(placement)
         self._data["mmwave_placements"][placement.id] = placement.to_dict()
         self.async_delay_save()
         return placement
@@ -529,25 +581,6 @@ class FloorPlanStore:
             self.async_delay_save()
             return True
         return False
-
-    def _compute_mmwave_mount(self, placement: MmwavePlacement) -> None:
-        """Compute mount position from edge geometry."""
-        floor_plan = self.get_floor_plan(placement.floor_plan_id)
-        if not floor_plan:
-            return
-        floor = floor_plan.get_floor(placement.floor_id)
-        if not floor:
-            return
-        edge = floor.get_edge(placement.edge_id)
-        if not edge:
-            return
-        start_node = floor.get_node(edge.start_node)
-        end_node = floor.get_node(edge.end_node)
-        if not start_node or not end_node:
-            return
-        placement.compute_mount_position(
-            start_node.x, start_node.y, end_node.x, end_node.y
-        )
 
     # ==================== Utilities ====================
 

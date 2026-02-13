@@ -101,60 +101,6 @@ export class FpbMmwavePanel extends LitElement {
       accent-color: var(--primary-color);
     }
 
-    .target-mapping {
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-      padding: 10px;
-      background: var(--primary-background-color, #fafafa);
-      border-radius: 8px;
-    }
-
-    .target-mapping-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-    }
-
-    .target-mapping-header span {
-      font-weight: 500;
-      font-size: 13px;
-    }
-
-    .target-mapping input {
-      width: 100%;
-      padding: 6px 10px;
-      border: 1px solid var(--divider-color, #e0e0e0);
-      border-radius: 8px;
-      font-size: 13px;
-      background: var(--card-background-color);
-      color: var(--primary-text-color);
-    }
-
-    .target-mapping label {
-      font-size: 12px;
-      color: var(--secondary-text-color);
-    }
-
-    .remove-btn {
-      background: none;
-      border: none;
-      cursor: pointer;
-      padding: 2px;
-      color: var(--error-color, #f44336);
-      font-size: 14px;
-    }
-
-    .add-btn {
-      padding: 8px 16px;
-      background: var(--primary-color);
-      color: var(--text-primary-color);
-      border: none;
-      border-radius: 8px;
-      cursor: pointer;
-      font-size: 13px;
-    }
-
     .delete-btn {
       padding: 8px 16px;
       background: var(--error-color, #f44336);
@@ -204,39 +150,6 @@ export class FpbMmwavePanel extends LitElement {
     }
   }
 
-  private async _addTargetMapping(): Promise<void> {
-    if (!this._placement) return;
-    const nextIndex = this._placement.target_mappings.length > 0
-      ? Math.max(...this._placement.target_mappings.map(m => m.target_index)) + 1
-      : 0;
-
-    const updated = [
-      ...this._placement.target_mappings,
-      { target_index: nextIndex, x_entity_id: "", y_entity_id: "" },
-    ];
-    await this._update({ target_mappings: updated });
-  }
-
-  private async _removeTargetMapping(index: number): Promise<void> {
-    if (!this._placement) return;
-    const updated = this._placement.target_mappings.filter(
-      m => m.target_index !== index
-    );
-    await this._update({ target_mappings: updated });
-  }
-
-  private async _updateTargetMapping(
-    targetIndex: number,
-    field: "x_entity_id" | "y_entity_id",
-    value: string,
-  ): Promise<void> {
-    if (!this._placement) return;
-    const updated = this._placement.target_mappings.map(m =>
-      m.target_index === targetIndex ? { ...m, [field]: value } : m
-    );
-    await this._update({ target_mappings: updated });
-  }
-
   private async _deletePlacement(): Promise<void> {
     if (!this.hass || !this._placement) return;
     try {
@@ -269,8 +182,8 @@ export class FpbMmwavePanel extends LitElement {
             <div class="section-title">Sensor Settings</div>
 
             <div class="slider-row">
-              <label>Angle Offset <span>${this._placement.angle.toFixed(0)}deg</span></label>
-              <input type="range" min="-90" max="90" step="1"
+              <label>Facing Angle <span>${this._placement.angle.toFixed(0)}deg</span></label>
+              <input type="range" min="0" max="360" step="1"
                 .value=${String(this._placement.angle)}
                 @change=${(e: Event) => this._update({ angle: Number((e.target as HTMLInputElement).value) })}
               />
@@ -291,28 +204,6 @@ export class FpbMmwavePanel extends LitElement {
                 @change=${(e: Event) => this._update({ detection_range: Number((e.target as HTMLInputElement).value) })}
               />
             </div>
-          </div>
-
-          <!-- Target Mappings -->
-          <div class="section">
-            <div class="section-title">Target Mappings</div>
-            ${this._placement.target_mappings.map(m => html`
-              <div class="target-mapping">
-                <div class="target-mapping-header">
-                  <span>Target ${m.target_index}</span>
-                  <button class="remove-btn" @click=${() => this._removeTargetMapping(m.target_index)}>x</button>
-                </div>
-                <label>X Entity</label>
-                <input type="text" .value=${m.x_entity_id} placeholder="sensor.mmwave_target_x"
-                  @change=${(e: Event) => this._updateTargetMapping(m.target_index, "x_entity_id", (e.target as HTMLInputElement).value)}
-                />
-                <label>Y Entity</label>
-                <input type="text" .value=${m.y_entity_id} placeholder="sensor.mmwave_target_y"
-                  @change=${(e: Event) => this._updateTargetMapping(m.target_index, "y_entity_id", (e.target as HTMLInputElement).value)}
-                />
-              </div>
-            `)}
-            <button class="add-btn" @click=${this._addTargetMapping}>+ Add Target</button>
           </div>
 
           <!-- Delete -->

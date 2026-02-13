@@ -139,27 +139,22 @@ export interface FloorPlan {
 }
 
 // Device placement types
-export interface SensorCoverage {
-  type: "cone" | "circle" | "polygon";
-  angle: number;
-  range: number;
-  direction: number;
-  polygon?: Polygon;
-}
-
-export interface DevicePlacement {
+export interface LightPlacement {
   id: string;
   entity_id: string;
   floor_id: string;
   room_id?: string;
   position: Coordinates;
-  rotation: number;
-  scale: number;
   label?: string;
-  show_state: boolean;
-  show_label: boolean;
-  coverage?: SensorCoverage;
-  contributes_to_occupancy: boolean;
+}
+
+export interface SwitchPlacement {
+  id: string;
+  entity_id: string;
+  floor_id: string;
+  room_id?: string;
+  position: Coordinates;
+  label?: string;
 }
 
 // Virtual sensor types
@@ -198,33 +193,17 @@ export interface OccupancyStateData {
 }
 
 // mmWave sensor types
-export interface MmwaveTargetMapping {
-  target_index: number;
-  x_entity_id: string;
-  y_entity_id: string;
-}
-
 export interface MmwavePlacement {
   id: string;
   floor_plan_id: string;
   floor_id: string;
-  edge_id: string;
-  position_on_edge: number;
+  room_id?: string;
+  entity_id?: string;
+  position: Coordinates;
   angle: number;
   field_of_view: number;
   detection_range: number;
-  target_mappings: MmwaveTargetMapping[];
-  mount_x: number;
-  mount_y: number;
-  wall_normal_angle: number;
-}
-
-export interface MmwaveTargetPosition {
-  placement_id: string;
-  target_index: number;
-  world_x: number;
-  world_y: number;
-  region_id?: string;
+  label?: string;
 }
 
 // Visual rule types
@@ -276,7 +255,9 @@ export type ToolType =
   | "wall"
   | "door"
   | "window"
-  | "device"
+  | "light"
+  | "switch"
+  | "mmwave"
   | "zone";
 
 export type ToolState = "ready" | "drawing" | "dragging";
@@ -315,6 +296,6 @@ export interface CanvasEvent {
 
 // Selection types
 export interface SelectionState {
-  type: "none" | "room" | "edge" | "device" | "shape" | "zone";
+  type: "none" | "room" | "edge" | "light" | "switch" | "mmwave" | "shape" | "zone";
   ids: string[];
 }

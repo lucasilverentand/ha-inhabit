@@ -8,7 +8,8 @@ import type {
   HomeAssistant,
   FloorPlan,
   Floor,
-  DevicePlacement,
+  LightPlacement,
+  SwitchPlacement,
   MmwavePlacement,
 } from "./types";
 
@@ -18,6 +19,7 @@ import "./components/toolbar/fpb-toolbar";
 import "./components/dialogs/fpb-import-export-dialog";
 import "./components/panels/fpb-occupancy-panel";
 import "./components/panels/fpb-mmwave-panel";
+import "./components/panels/fpb-device-panel";
 import type { FpbImportExportDialog } from "./components/dialogs/fpb-import-export-dialog";
 import { clearHistory } from "./stores/history-store";
 import { validateConstraints } from "./utils/wall-solver";
@@ -35,10 +37,12 @@ export {
   snapToGrid,
   showGrid,
   layers,
-  devicePlacements,
+  lightPlacements,
+  switchPlacements,
   constraintConflicts,
   focusedRoomId,
   occupancyPanelTarget,
+  devicePanelTarget,
   mmwavePlacements,
   setCanvasMode,
   setReloadFunction,
@@ -51,10 +55,12 @@ import {
   currentFloor,
   canvasMode,
   gridSize,
-  devicePlacements,
+  lightPlacements,
+  switchPlacements,
   constraintConflicts,
   focusedRoomId,
   occupancyPanelTarget,
+  devicePanelTarget,
   mmwavePlacements,
   setReloadFunction,
   resetSignals,
@@ -89,6 +95,9 @@ export class HaFloorplanBuilder extends LitElement {
 
   @state()
   private _occupancyPanelTarget: { id: string; name: string; type: "room" | "zone" } | null = null;
+
+  @state()
+  private _devicePanelTarget: { id: string; type: "light" | "switch" | "mmwave" } | null = null;
 
   private _cleanupEffects: (() => void)[] = [];
 
@@ -253,21 +262,17 @@ export class HaFloorplanBuilder extends LitElement {
       border-color: var(--primary-color, #03a9f4);
     }
 
-    .canvas-with-panel {
-      display: flex;
-      flex: 1;
-      overflow: hidden;
-    }
-
-    .canvas-with-panel .canvas-container {
-      flex: 1;
-    }
-
-    fpb-occupancy-panel {
-      width: 320px;
-      flex-shrink: 0;
-      border-left: 1px solid var(--divider-color, #e0e0e0);
+    .floating-panel {
+      position: absolute;
+      bottom: 16px;
+      right: 16px;
+      width: 300px;
+      max-height: calc(100% - 32px);
       overflow-y: auto;
+      border-radius: 16px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.12), 0 2px 8px rgba(0,0,0,0.08);
+      z-index: 100;
+      scrollbar-width: thin;
     }
   `;
 
@@ -287,6 +292,9 @@ export class HaFloorplanBuilder extends LitElement {
       }),
       effect(() => {
         this._occupancyPanelTarget = occupancyPanelTarget.value;
+      }),
+      effect(() => {
+        this._devicePanelTarget = devicePanelTarget.value;
       }),
       effect(() => {
         // Track floor changes to re-render chips bar when rooms change
@@ -425,9 +433,13 @@ export class HaFloorplanBuilder extends LitElement {
     if (!this.hass) return;
 
     try {
-      const [devices, mmwave] = await Promise.all([
-        this.hass.callWS<DevicePlacement[]>({
-          type: "inhabit/devices/list",
+      const [lights, switches, mmwave] = await Promise.all([
+        this.hass.callWS<LightPlacement[]>({
+          type: "inhabit/lights/list",
+          floor_plan_id: floorPlanId,
+        }),
+        this.hass.callWS<SwitchPlacement[]>({
+          type: "inhabit/switches/list",
           floor_plan_id: floorPlanId,
         }),
         this.hass.callWS<MmwavePlacement[]>({
@@ -435,7 +447,8 @@ export class HaFloorplanBuilder extends LitElement {
           floor_plan_id: floorPlanId,
         }),
       ]);
-      devicePlacements.value = devices;
+      lightPlacements.value = lights;
+      switchPlacements.value = switches;
       mmwavePlacements.value = mmwave;
     } catch (err) {
       console.error("Error loading device placements:", err);
@@ -706,24 +719,27 @@ export class HaFloorplanBuilder extends LitElement {
 
           ${this._renderRoomChips()}
 
-          ${this._occupancyPanelTarget ? html`
-            <div class="canvas-with-panel">
-              <div class="canvas-container">
-                <fpb-canvas .hass=${this.hass}></fpb-canvas>
-              </div>
+          <div class="canvas-container">
+            <fpb-canvas .hass=${this.hass}></fpb-canvas>
+            ${this._occupancyPanelTarget ? html`
               <fpb-occupancy-panel
+                class="floating-panel"
                 .hass=${this.hass}
                 .targetId=${this._occupancyPanelTarget.id}
                 .targetName=${this._occupancyPanelTarget.name}
                 .targetType=${this._occupancyPanelTarget.type}
                 @close-panel=${() => { occupancyPanelTarget.value = null; }}
               ></fpb-occupancy-panel>
-            </div>
-          ` : html`
-            <div class="canvas-container">
-              <fpb-canvas .hass=${this.hass}></fpb-canvas>
-            </div>
-          `}
+            ` : null}
+            ${this._devicePanelTarget ? html`
+              <fpb-device-panel
+                class="floating-panel"
+                .hass=${this.hass}
+                .placementId=${this._devicePanelTarget.id}
+                .deviceType=${this._devicePanelTarget.type}
+              ></fpb-device-panel>
+            ` : null}
+          </div>
         </div>
       </div>
       <fpb-import-export-dialog

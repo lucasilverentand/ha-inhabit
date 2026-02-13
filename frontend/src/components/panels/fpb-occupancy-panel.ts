@@ -42,25 +42,28 @@ export class FpbOccupancyPanel extends LitElement {
       background: var(--card-background-color, #fff);
       color: var(--primary-text-color);
       font-size: 14px;
+      border-radius: 16px;
+      overflow: hidden;
     }
 
     .panel-header {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 12px 16px;
-      border-bottom: 1px solid var(--divider-color, #e0e0e0);
+      padding: 16px 20px 12px;
+      border-bottom: 1px solid var(--divider-color, #e8e8e8);
       gap: 8px;
     }
 
     .panel-header h3 {
       margin: 0;
-      font-size: 16px;
-      font-weight: 500;
+      font-size: 15px;
+      font-weight: 600;
       flex: 1;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+      letter-spacing: -0.01em;
     }
 
     .close-btn {
@@ -68,19 +71,23 @@ export class FpbOccupancyPanel extends LitElement {
       border: none;
       cursor: pointer;
       padding: 4px;
-      color: var(--secondary-text-color);
-      border-radius: 50%;
+      border-radius: 8px;
+      color: var(--secondary-text-color, #999);
+      line-height: 1;
+      --mdc-icon-size: 20px;
+      transition: color 0.15s, background 0.15s;
     }
 
     .close-btn:hover {
-      background: var(--secondary-background-color, #f0f0f0);
+      color: var(--primary-text-color, #333);
+      background: var(--secondary-background-color, #f5f5f5);
     }
 
     .panel-body {
-      padding: 16px;
+      padding: 16px 20px 20px;
       display: flex;
       flex-direction: column;
-      gap: 20px;
+      gap: 16px;
     }
 
     .section {

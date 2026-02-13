@@ -23,7 +23,6 @@ from .api import http as http_api
 from .api import services
 from .api import websocket as ws_api
 from .const import DOMAIN
-from .engine.mmwave_target_processor import MmwaveTargetProcessor
 from .engine.virtual_sensor_engine import VirtualSensorEngine
 from .store import FloorPlanStore, ImageStore
 
@@ -52,15 +51,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Initialize virtual sensor engine
     sensor_engine = VirtualSensorEngine(hass, floor_plan_store)
 
-    # Initialize mmWave target processor
-    mmwave_processor = MmwaveTargetProcessor(hass, floor_plan_store)
-
     # Store references
     hass.data[DOMAIN] = {
         "store": floor_plan_store,
         "image_store": image_store,
         "sensor_engine": sensor_engine,
-        "mmwave_processor": mmwave_processor,
         "entry": entry,
     }
 
@@ -140,9 +135,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Start the sensor engine
     await sensor_engine.async_start()
 
-    # Start the mmWave target processor
-    await mmwave_processor.async_start()
-
     _LOGGER.info("Inhabit Floor Plan Builder setup complete")
     return True
 
@@ -154,10 +146,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Stop sensor engine
     sensor_engine: VirtualSensorEngine = hass.data[DOMAIN]["sensor_engine"]
     await sensor_engine.async_stop()
-
-    # Stop mmWave processor
-    mmwave_processor: MmwaveTargetProcessor = hass.data[DOMAIN]["mmwave_processor"]
-    await mmwave_processor.async_stop()
 
     # Unload platforms
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS_LIST)

@@ -11,7 +11,9 @@ import { property, state } from "lit/decorators.js";
 import type {
   HomeAssistant,
   FloorPlan,
-  DevicePlacement,
+  LightPlacement,
+  SwitchPlacement,
+  MmwavePlacement,
 } from "./types";
 
 // Import the canvas component (it already supports viewing mode)
@@ -26,7 +28,9 @@ import {
   selection,
   gridSize,
   showGrid,
-  devicePlacements,
+  lightPlacements,
+  switchPlacements,
+  mmwavePlacements,
   focusedRoomId,
   setReloadFunction,
   resetSignals,
@@ -306,11 +310,23 @@ export class HaFloorplanViewer extends LitElement {
     if (!this.hass) return;
 
     try {
-      const result = await this.hass.callWS<DevicePlacement[]>({
-        type: "inhabit/devices/list",
-        floor_plan_id: floorPlanId,
-      });
-      devicePlacements.value = result;
+      const [lights, switches, mmwave] = await Promise.all([
+        this.hass.callWS<LightPlacement[]>({
+          type: "inhabit/lights/list",
+          floor_plan_id: floorPlanId,
+        }),
+        this.hass.callWS<SwitchPlacement[]>({
+          type: "inhabit/switches/list",
+          floor_plan_id: floorPlanId,
+        }),
+        this.hass.callWS<MmwavePlacement[]>({
+          type: "inhabit/mmwave/list",
+          floor_plan_id: floorPlanId,
+        }),
+      ]);
+      lightPlacements.value = lights;
+      switchPlacements.value = switches;
+      mmwavePlacements.value = mmwave;
     } catch (err) {
       console.error("Error loading device placements:", err);
     }

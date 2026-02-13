@@ -12,7 +12,7 @@ from homeassistant.helpers.dispatcher import async_dispatcher_connect
 
 from ..const import DOMAIN, WS_PREFIX
 from ..models.automation_rule import VisualRule
-from ..models.device_placement import DevicePlacement
+from ..models.device_placement import LightPlacement, SwitchPlacement
 from ..models.floor_plan import (
     Coordinates,
     Edge,
@@ -23,7 +23,7 @@ from ..models.floor_plan import (
     Room,
     _generate_id,
 )
-from ..models.mmwave_sensor import MmwavePlacement, MmwaveTargetMapping
+from ..models.mmwave_sensor import MmwavePlacement
 from ..models.virtual_sensor import SensorBinding, VirtualSensorConfig
 from ..models.zone import Zone
 
@@ -62,10 +62,14 @@ def async_register_websocket_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_nodes_merge)
     websocket_api.async_register_command(hass, ws_nodes_dissolve)
     websocket_api.async_register_command(hass, ws_edges_split_at_point)
-    websocket_api.async_register_command(hass, ws_devices_place)
-    websocket_api.async_register_command(hass, ws_devices_update)
-    websocket_api.async_register_command(hass, ws_devices_remove)
-    websocket_api.async_register_command(hass, ws_devices_list)
+    websocket_api.async_register_command(hass, ws_lights_place)
+    websocket_api.async_register_command(hass, ws_lights_update)
+    websocket_api.async_register_command(hass, ws_lights_remove)
+    websocket_api.async_register_command(hass, ws_lights_list)
+    websocket_api.async_register_command(hass, ws_switches_place)
+    websocket_api.async_register_command(hass, ws_switches_update)
+    websocket_api.async_register_command(hass, ws_switches_remove)
+    websocket_api.async_register_command(hass, ws_switches_list)
     websocket_api.async_register_command(hass, ws_sensor_config_get)
     websocket_api.async_register_command(hass, ws_sensor_config_update)
     websocket_api.async_register_command(hass, ws_rules_list)
@@ -77,8 +81,6 @@ def async_register_websocket_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_mmwave_update)
     websocket_api.async_register_command(hass, ws_mmwave_delete)
     websocket_api.async_register_command(hass, ws_mmwave_list)
-    websocket_api.async_register_command(hass, ws_mmwave_subscribe_targets)
-
     _LOGGER.debug("Registered WebSocket commands")
 
 
@@ -325,9 +327,9 @@ def ws_floors_export(
         connection.send_error(msg["id"], "not_found", "Floor not found")
         return
 
-    # Gather device placements on this floor
-    collection = store.get_device_placements(msg["floor_plan_id"])
-    devices = [d.to_dict() for d in collection.devices if d.floor_id == floor.id]
+    # Gather light and switch placements on this floor
+    lights = [d.to_dict() for d in store.get_light_placements(msg["floor_plan_id"]) if d.floor_id == floor.id]
+    switches = [d.to_dict() for d in store.get_switch_placements(msg["floor_plan_id"]) if d.floor_id == floor.id]
 
     # Gather sensor configs for rooms on this floor
     room_ids = {r.id for r in floor.rooms}
@@ -343,7 +345,8 @@ def ws_floors_export(
             "inhabit_version": "1.0",
             "export_type": "floor",
             "floor": floor.to_dict(),
-            "devices": devices,
+            "lights": lights,
+            "switches": switches,
             "sensor_configs": sensor_configs,
         },
     )
@@ -433,13 +436,21 @@ def ws_floors_import(
         connection.send_error(msg["id"], "import_failed", "Failed to import floor")
         return
 
-    # Import device placements
-    for dev_data in data.get("devices", []):
-        device = DevicePlacement.from_dict(dev_data)
-        device.id = _generate_id()
-        device.floor_id = floor.id
-        device.room_id = id_map.get(device.room_id, device.room_id) if device.room_id else None
-        store.place_device(floor_plan_id, device)
+    # Import light placements
+    for dev_data in data.get("lights", []):
+        light = LightPlacement.from_dict(dev_data)
+        light.id = _generate_id()
+        light.floor_id = floor.id
+        light.room_id = id_map.get(light.room_id, light.room_id) if light.room_id else None
+        store.place_light(floor_plan_id, light)
+
+    # Import switch placements
+    for dev_data in data.get("switches", []):
+        switch = SwitchPlacement.from_dict(dev_data)
+        switch.id = _generate_id()
+        switch.floor_id = floor.id
+        switch.room_id = id_map.get(switch.room_id, switch.room_id) if switch.room_id else None
+        store.place_switch(floor_plan_id, switch)
 
     # Import sensor configs
     for cfg_data in data.get("sensor_configs", []):
@@ -1804,134 +1815,224 @@ def ws_edges_split_at_point(
         connection.send_error(msg["id"], "split_failed", "Failed to split edge")
 
 
-# ==================== Device Placements ====================
+# ==================== Light Placements ====================
 
 
 @websocket_api.websocket_command(
     {
-        vol.Required("type"): f"{WS_PREFIX}/devices/place",
+        vol.Required("type"): f"{WS_PREFIX}/lights/place",
         vol.Required("floor_plan_id"): str,
         vol.Required("floor_id"): str,
         vol.Required("entity_id"): str,
         vol.Required("position"): dict,
         vol.Optional("room_id"): vol.Any(str, None),
-        vol.Optional("rotation", default=0.0): vol.Coerce(float),
-        vol.Optional("scale", default=1.0): vol.Coerce(float),
-        vol.Optional("show_state", default=True): bool,
-        vol.Optional("show_label", default=False): bool,
-        vol.Optional("contributes_to_occupancy", default=False): bool,
+        vol.Optional("label"): vol.Any(str, None),
     }
 )
 @callback
-def ws_devices_place(
+def ws_lights_place(
     hass: HomeAssistant,
     connection: websocket_api.ActiveConnection,
     msg: dict[str, Any],
 ) -> None:
-    """Place a device on a floor plan."""
+    """Place a light on a floor plan."""
     store = hass.data[DOMAIN]["store"]
-    device = DevicePlacement(
+    light = LightPlacement(
         entity_id=msg["entity_id"],
         floor_id=msg["floor_id"],
         room_id=msg.get("room_id"),
         position=Coordinates.from_dict(msg["position"]),
-        rotation=msg["rotation"],
-        scale=msg["scale"],
-        show_state=msg["show_state"],
-        show_label=msg["show_label"],
-        contributes_to_occupancy=msg["contributes_to_occupancy"],
+        label=msg.get("label"),
     )
-    result = store.place_device(msg["floor_plan_id"], device)
+    result = store.place_light(msg["floor_plan_id"], light)
     connection.send_result(msg["id"], result.to_dict())
 
 
 @websocket_api.websocket_command(
     {
-        vol.Required("type"): f"{WS_PREFIX}/devices/update",
-        vol.Required("floor_plan_id"): str,
-        vol.Required("device_id"): str,
+        vol.Required("type"): f"{WS_PREFIX}/lights/update",
+        vol.Required("light_id"): str,
+        vol.Optional("entity_id"): str,
         vol.Optional("position"): dict,
         vol.Optional("room_id"): vol.Any(str, None),
-        vol.Optional("rotation"): vol.Coerce(float),
-        vol.Optional("scale"): vol.Coerce(float),
-        vol.Optional("show_state"): bool,
-        vol.Optional("show_label"): bool,
-        vol.Optional("contributes_to_occupancy"): bool,
+        vol.Optional("label"): vol.Any(str, None),
     }
 )
 @callback
-def ws_devices_update(
+def ws_lights_update(
     hass: HomeAssistant,
     connection: websocket_api.ActiveConnection,
     msg: dict[str, Any],
 ) -> None:
-    """Update a device placement."""
+    """Update a light placement."""
     store = hass.data[DOMAIN]["store"]
-    collection = store.get_device_placements(msg["floor_plan_id"])
-    device = collection.get_device(msg["device_id"])
-    if not device:
-        connection.send_error(msg["id"], "not_found", "Device not found")
+    light = store.get_light_placement(msg["light_id"])
+    if not light:
+        connection.send_error(msg["id"], "not_found", "Light not found")
         return
 
+    if "entity_id" in msg:
+        light.entity_id = msg["entity_id"]
     if "position" in msg:
-        device.position = Coordinates.from_dict(msg["position"])
+        light.position = Coordinates.from_dict(msg["position"])
     if "room_id" in msg:
-        device.room_id = msg["room_id"]
-    if "rotation" in msg:
-        device.rotation = msg["rotation"]
-    if "scale" in msg:
-        device.scale = msg["scale"]
-    if "show_state" in msg:
-        device.show_state = msg["show_state"]
-    if "show_label" in msg:
-        device.show_label = msg["show_label"]
-    if "contributes_to_occupancy" in msg:
-        device.contributes_to_occupancy = msg["contributes_to_occupancy"]
+        light.room_id = msg["room_id"]
+    if "label" in msg:
+        light.label = msg["label"]
 
-    result = store.update_device_placement(msg["floor_plan_id"], device)
+    result = store.update_light_placement(light)
     if result:
         connection.send_result(msg["id"], result.to_dict())
     else:
-        connection.send_error(msg["id"], "update_failed", "Failed to update device")
+        connection.send_error(msg["id"], "update_failed", "Failed to update light")
 
 
 @websocket_api.websocket_command(
     {
-        vol.Required("type"): f"{WS_PREFIX}/devices/remove",
-        vol.Required("floor_plan_id"): str,
-        vol.Required("device_id"): str,
+        vol.Required("type"): f"{WS_PREFIX}/lights/remove",
+        vol.Required("light_id"): str,
     }
 )
 @callback
-def ws_devices_remove(
+def ws_lights_remove(
     hass: HomeAssistant,
     connection: websocket_api.ActiveConnection,
     msg: dict[str, Any],
 ) -> None:
-    """Remove a device placement."""
+    """Remove a light placement."""
     store = hass.data[DOMAIN]["store"]
-    if store.remove_device_placement(msg["floor_plan_id"], msg["device_id"]):
+    if store.remove_light_placement(msg["light_id"]):
         connection.send_result(msg["id"], {"success": True})
     else:
-        connection.send_error(msg["id"], "not_found", "Device not found")
+        connection.send_error(msg["id"], "not_found", "Light not found")
 
 
 @websocket_api.websocket_command(
     {
-        vol.Required("type"): f"{WS_PREFIX}/devices/list",
+        vol.Required("type"): f"{WS_PREFIX}/lights/list",
         vol.Required("floor_plan_id"): str,
     }
 )
 @callback
-def ws_devices_list(
+def ws_lights_list(
     hass: HomeAssistant,
     connection: websocket_api.ActiveConnection,
     msg: dict[str, Any],
 ) -> None:
-    """List all device placements for a floor plan."""
+    """List all light placements for a floor plan."""
     store = hass.data[DOMAIN]["store"]
-    collection = store.get_device_placements(msg["floor_plan_id"])
-    connection.send_result(msg["id"], [d.to_dict() for d in collection.devices])
+    placements = store.get_light_placements(msg["floor_plan_id"])
+    connection.send_result(msg["id"], [p.to_dict() for p in placements])
+
+
+# ==================== Switch Placements ====================
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{WS_PREFIX}/switches/place",
+        vol.Required("floor_plan_id"): str,
+        vol.Required("floor_id"): str,
+        vol.Required("entity_id"): str,
+        vol.Required("position"): dict,
+        vol.Optional("room_id"): vol.Any(str, None),
+        vol.Optional("label"): vol.Any(str, None),
+    }
+)
+@callback
+def ws_switches_place(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Place a switch on a floor plan."""
+    store = hass.data[DOMAIN]["store"]
+    switch = SwitchPlacement(
+        entity_id=msg["entity_id"],
+        floor_id=msg["floor_id"],
+        room_id=msg.get("room_id"),
+        position=Coordinates.from_dict(msg["position"]),
+        label=msg.get("label"),
+    )
+    result = store.place_switch(msg["floor_plan_id"], switch)
+    connection.send_result(msg["id"], result.to_dict())
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{WS_PREFIX}/switches/update",
+        vol.Required("switch_id"): str,
+        vol.Optional("entity_id"): str,
+        vol.Optional("position"): dict,
+        vol.Optional("room_id"): vol.Any(str, None),
+        vol.Optional("label"): vol.Any(str, None),
+    }
+)
+@callback
+def ws_switches_update(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Update a switch placement."""
+    store = hass.data[DOMAIN]["store"]
+    switch = store.get_switch_placement(msg["switch_id"])
+    if not switch:
+        connection.send_error(msg["id"], "not_found", "Switch not found")
+        return
+
+    if "entity_id" in msg:
+        switch.entity_id = msg["entity_id"]
+    if "position" in msg:
+        switch.position = Coordinates.from_dict(msg["position"])
+    if "room_id" in msg:
+        switch.room_id = msg["room_id"]
+    if "label" in msg:
+        switch.label = msg["label"]
+
+    result = store.update_switch_placement(switch)
+    if result:
+        connection.send_result(msg["id"], result.to_dict())
+    else:
+        connection.send_error(msg["id"], "update_failed", "Failed to update switch")
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{WS_PREFIX}/switches/remove",
+        vol.Required("switch_id"): str,
+    }
+)
+@callback
+def ws_switches_remove(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Remove a switch placement."""
+    store = hass.data[DOMAIN]["store"]
+    if store.remove_switch_placement(msg["switch_id"]):
+        connection.send_result(msg["id"], {"success": True})
+    else:
+        connection.send_error(msg["id"], "not_found", "Switch not found")
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{WS_PREFIX}/switches/list",
+        vol.Required("floor_plan_id"): str,
+    }
+)
+@callback
+def ws_switches_list(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """List all switch placements for a floor plan."""
+    store = hass.data[DOMAIN]["store"]
+    placements = store.get_switch_placements(msg["floor_plan_id"])
+    connection.send_result(msg["id"], [p.to_dict() for p in placements])
 
 
 # ==================== Sensor Configuration ====================
@@ -2224,12 +2325,13 @@ def ws_occupancy_states(
         vol.Required("type"): f"{WS_PREFIX}/mmwave/place",
         vol.Required("floor_plan_id"): str,
         vol.Required("floor_id"): str,
-        vol.Required("edge_id"): str,
-        vol.Optional("position_on_edge", default=0.5): vol.Coerce(float),
+        vol.Required("position"): dict,
+        vol.Optional("room_id"): vol.Any(str, None),
+        vol.Optional("entity_id"): vol.Any(str, None),
         vol.Optional("angle", default=0.0): vol.Coerce(float),
         vol.Optional("field_of_view", default=120.0): vol.Coerce(float),
         vol.Optional("detection_range", default=500.0): vol.Coerce(float),
-        vol.Optional("target_mappings", default=[]): list,
+        vol.Optional("label"): vol.Any(str, None),
     }
 )
 @callback
@@ -2238,27 +2340,20 @@ def ws_mmwave_place(
     connection: websocket_api.ActiveConnection,
     msg: dict[str, Any],
 ) -> None:
-    """Place an mmWave sensor on an edge."""
+    """Place an mmWave sensor freely on the canvas."""
     store = hass.data[DOMAIN]["store"]
     placement = MmwavePlacement(
         floor_plan_id=msg["floor_plan_id"],
         floor_id=msg["floor_id"],
-        edge_id=msg["edge_id"],
-        position_on_edge=msg["position_on_edge"],
+        room_id=msg.get("room_id"),
+        entity_id=msg.get("entity_id"),
+        position=Coordinates.from_dict(msg["position"]),
         angle=msg["angle"],
         field_of_view=msg["field_of_view"],
         detection_range=msg["detection_range"],
-        target_mappings=[
-            MmwaveTargetMapping.from_dict(m) for m in msg["target_mappings"]
-        ],
+        label=msg.get("label"),
     )
     result = store.create_mmwave_placement(placement)
-
-    # Notify the mmWave processor if running
-    processor = hass.data[DOMAIN].get("mmwave_processor")
-    if processor:
-        hass.async_create_task(processor.async_add_placement(result))
-
     connection.send_result(msg["id"], result.to_dict())
 
 
@@ -2266,11 +2361,11 @@ def ws_mmwave_place(
     {
         vol.Required("type"): f"{WS_PREFIX}/mmwave/update",
         vol.Required("placement_id"): str,
-        vol.Optional("position_on_edge"): vol.Coerce(float),
+        vol.Optional("position"): dict,
         vol.Optional("angle"): vol.Coerce(float),
         vol.Optional("field_of_view"): vol.Coerce(float),
         vol.Optional("detection_range"): vol.Coerce(float),
-        vol.Optional("target_mappings"): list,
+        vol.Optional("label"): vol.Any(str, None),
     }
 )
 @callback
@@ -2286,24 +2381,19 @@ def ws_mmwave_update(
         connection.send_error(msg["id"], "not_found", "mmWave placement not found")
         return
 
-    if "position_on_edge" in msg:
-        placement.position_on_edge = msg["position_on_edge"]
+    if "position" in msg:
+        placement.position = Coordinates.from_dict(msg["position"])
     if "angle" in msg:
         placement.angle = msg["angle"]
     if "field_of_view" in msg:
         placement.field_of_view = msg["field_of_view"]
     if "detection_range" in msg:
         placement.detection_range = msg["detection_range"]
-    if "target_mappings" in msg:
-        placement.target_mappings = [
-            MmwaveTargetMapping.from_dict(m) for m in msg["target_mappings"]
-        ]
+    if "label" in msg:
+        placement.label = msg["label"]
 
     result = store.update_mmwave_placement(placement)
     if result:
-        processor = hass.data[DOMAIN].get("mmwave_processor")
-        if processor:
-            hass.async_create_task(processor.async_update_placement(result))
         connection.send_result(msg["id"], result.to_dict())
     else:
         connection.send_error(
@@ -2325,13 +2415,6 @@ def ws_mmwave_delete(
 ) -> None:
     """Delete an mmWave placement."""
     store = hass.data[DOMAIN]["store"]
-
-    processor = hass.data[DOMAIN].get("mmwave_processor")
-    if processor:
-        hass.async_create_task(
-            processor.async_remove_placement(msg["placement_id"])
-        )
-
     if store.delete_mmwave_placement(msg["placement_id"]):
         connection.send_result(msg["id"], {"success": True})
     else:
@@ -2354,58 +2437,3 @@ def ws_mmwave_list(
     store = hass.data[DOMAIN]["store"]
     placements = store.get_mmwave_placements(msg["floor_plan_id"])
     connection.send_result(msg["id"], [p.to_dict() for p in placements])
-
-
-@websocket_api.websocket_command(
-    {
-        vol.Required("type"): f"{WS_PREFIX}/mmwave/subscribe_targets",
-    }
-)
-@websocket_api.async_response
-async def ws_mmwave_subscribe_targets(
-    hass: HomeAssistant,
-    connection: websocket_api.ActiveConnection,
-    msg: dict[str, Any],
-) -> None:
-    """Subscribe to live mmWave target world positions."""
-    from ..engine.mmwave_target_processor import SIGNAL_MMWAVE_TARGETS_UPDATED
-    from ..models.floor_plan import Coordinates
-
-    # Send initial state
-    processor = hass.data[DOMAIN].get("mmwave_processor")
-    if processor:
-        positions = processor.get_target_positions()
-        connection.send_message(
-            websocket_api.event_message(msg["id"], {"targets": positions})
-        )
-
-    @callback
-    def handle_update(
-        placement_id: str,
-        target_index: int,
-        world_pos: Coordinates,
-        region_id: str | None,
-    ) -> None:
-        connection.send_message(
-            websocket_api.event_message(
-                msg["id"],
-                {
-                    "placement_id": placement_id,
-                    "target_index": target_index,
-                    "world_x": world_pos.x,
-                    "world_y": world_pos.y,
-                    "region_id": region_id,
-                },
-            )
-        )
-
-    unsub = async_dispatcher_connect(
-        hass, SIGNAL_MMWAVE_TARGETS_UPDATED, handle_update
-    )
-
-    @callback
-    def on_close() -> None:
-        unsub()
-
-    connection.subscriptions[msg["id"]] = on_close
-    connection.send_result(msg["id"])
