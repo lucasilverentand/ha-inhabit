@@ -1485,6 +1485,13 @@ export class FpbCanvas extends LitElement {
     if (this._draggingZone) {
       if (this._draggingZone.hasMoved) {
         this._finishZoneDrag();
+      } else if (this._canvasMode === "occupancy") {
+        // In occupancy mode, open the occupancy panel instead of zone editor
+        const zone = this._draggingZone.zone;
+        const areaName = zone.ha_area_id
+          ? this._haAreas.find(a => a.area_id === zone.ha_area_id)?.name ?? zone.name
+          : zone.name;
+        occupancyPanelTarget.value = { id: zone.id, name: areaName, type: "zone" };
       } else {
         // It was a click, not a drag — open the zone editor
         const zone = this._draggingZone.zone;
@@ -2166,72 +2173,95 @@ export class FpbCanvas extends LitElement {
   private _handleSelectClick(point: Coordinates, shiftKey = false): boolean {
     const floor = currentFloor.value;
     if (!floor) return false;
+    const mode = this._canvasMode;
 
-    // Check edges first (they're on top visually)
-    const resolved = resolveFloorEdges(floor);
-    for (const re of resolved) {
-      const dist = this._pointToSegmentDistance(point, re.startPos, re.endPos);
-      if (dist < (re.thickness / 2 + 5)) {
-        // Shift-click multi-select in walls mode
-        if (shiftKey && this._canvasMode === "walls" && selection.value.type === "edge") {
-          const currentIds = [...selection.value.ids];
-          const idx = currentIds.indexOf(re.id);
-          if (idx >= 0) {
-            currentIds.splice(idx, 1);
-          } else {
-            currentIds.push(re.id);
+    // Check edges first (they're on top visually) — walls mode only
+    if (mode === "walls") {
+      const resolved = resolveFloorEdges(floor);
+      for (const re of resolved) {
+        const dist = this._pointToSegmentDistance(point, re.startPos, re.endPos);
+        if (dist < (re.thickness / 2 + 5)) {
+          // Shift-click multi-select in walls mode
+          if (shiftKey && selection.value.type === "edge") {
+            const currentIds = [...selection.value.ids];
+            const idx = currentIds.indexOf(re.id);
+            if (idx >= 0) {
+              currentIds.splice(idx, 1);
+            } else {
+              currentIds.push(re.id);
+            }
+            selection.value = { type: "edge", ids: currentIds };
+            this._updateEdgeEditorForSelection(currentIds);
+            return true;
           }
-          selection.value = { type: "edge", ids: currentIds };
-          this._updateEdgeEditorForSelection(currentIds);
-          return true;
-        }
 
-        // Single select
-        selection.value = { type: "edge", ids: [re.id] };
-        this._updateEdgeEditorForSelection([re.id]);
-        return true;
-      }
-    }
-
-    // Check devices
-    const devices = devicePlacements.value.filter((d) => d.floor_id === floor.id);
-    for (const device of devices) {
-      const dist = Math.sqrt(
-        Math.pow(point.x - device.position.x, 2) +
-        Math.pow(point.y - device.position.y, 2)
-      );
-      if (dist < 15) {
-        selection.value = { type: "device", ids: [device.id] };
-        return true;
-      }
-    }
-
-    // Check zones (furniture/area)
-    if (floor.zones) {
-      const sortedZones = [...floor.zones];
-      for (const zone of sortedZones) {
-        if (zone.polygon?.vertices && this._pointInPolygon(point, zone.polygon.vertices)) {
-          selection.value = { type: "zone", ids: [zone.id] };
-          // Don't open editor here — _handlePointerDown sets up drag, editor opens on pointer-up if not moved
+          // Single select
+          selection.value = { type: "edge", ids: [re.id] };
+          this._updateEdgeEditorForSelection([re.id]);
           return true;
         }
       }
     }
 
-    // Check rooms
-    for (const room of floor.rooms) {
-      if (this._pointInPolygon(point, room.polygon.vertices)) {
-        selection.value = { type: "room", ids: [room.id] };
-        const areaName = room.ha_area_id
-          ? this._haAreas.find(a => a.area_id === room.ha_area_id)?.name ?? room.name
-          : room.name;
-        this._roomEditor = {
-          room,
-          editName: areaName,
-          editColor: room.color,
-          editAreaId: room.ha_area_id ?? null,
-        };
-        return true;
+    // Check devices — placement mode only
+    if (mode === "placement") {
+      const devices = devicePlacements.value.filter((d) => d.floor_id === floor.id);
+      for (const device of devices) {
+        const dist = Math.sqrt(
+          Math.pow(point.x - device.position.x, 2) +
+          Math.pow(point.y - device.position.y, 2)
+        );
+        if (dist < 15) {
+          selection.value = { type: "device", ids: [device.id] };
+          return true;
+        }
+      }
+    }
+
+    // Check zones — furniture mode or occupancy mode
+    if (mode === "furniture" || mode === "occupancy") {
+      if (floor.zones) {
+        const sortedZones = [...floor.zones];
+        for (const zone of sortedZones) {
+          if (zone.polygon?.vertices && this._pointInPolygon(point, zone.polygon.vertices)) {
+            if (mode === "occupancy") {
+              // In occupancy mode, directly open the occupancy panel
+              selection.value = { type: "zone", ids: [zone.id] };
+              const areaName = zone.ha_area_id
+                ? this._haAreas.find(a => a.area_id === zone.ha_area_id)?.name ?? zone.name
+                : zone.name;
+              occupancyPanelTarget.value = { id: zone.id, name: areaName, type: "zone" };
+              return true;
+            }
+            selection.value = { type: "zone", ids: [zone.id] };
+            // Don't open editor here — _handlePointerDown sets up drag, editor opens on pointer-up if not moved
+            return true;
+          }
+        }
+      }
+    }
+
+    // Check rooms — walls mode (for room editing) or occupancy mode (for occupancy config)
+    if (mode === "walls" || mode === "occupancy") {
+      for (const room of floor.rooms) {
+        if (this._pointInPolygon(point, room.polygon.vertices)) {
+          selection.value = { type: "room", ids: [room.id] };
+          const areaName = room.ha_area_id
+            ? this._haAreas.find(a => a.area_id === room.ha_area_id)?.name ?? room.name
+            : room.name;
+          if (mode === "occupancy") {
+            // In occupancy mode, directly open the occupancy panel
+            occupancyPanelTarget.value = { id: room.id, name: areaName, type: "room" };
+          } else {
+            this._roomEditor = {
+              room,
+              editName: areaName,
+              editColor: room.color,
+              editAreaId: room.ha_area_id ?? null,
+            };
+          }
+          return true;
+        }
       }
     }
 
@@ -2980,11 +3010,6 @@ export class FpbCanvas extends LitElement {
 
         <div class="wall-editor-actions">
           <button class="save-btn" @click=${this._handleRoomEditorSave}><ha-icon icon="mdi:check"></ha-icon> Save</button>
-          <button class="save-btn" @click=${() => {
-            if (this._roomEditor) {
-              occupancyPanelTarget.value = { id: this._roomEditor.room.id, name: this._roomEditor.editName || this._roomEditor.room.name, type: "room" };
-            }
-          }}><ha-icon icon="mdi:cog"></ha-icon> Occupancy</button>
           <button class="delete-btn" @click=${this._handleRoomDelete}><ha-icon icon="mdi:delete-outline"></ha-icon> Delete</button>
         </div>
       </div>
@@ -4160,11 +4185,6 @@ export class FpbCanvas extends LitElement {
 
         <div class="wall-editor-actions">
           <button class="save-btn" @click=${this._handleZoneEditorSave}><ha-icon icon="mdi:check"></ha-icon> Save</button>
-          <button class="save-btn" @click=${() => {
-            if (this._zoneEditor) {
-              occupancyPanelTarget.value = { id: this._zoneEditor.zone.id, name: this._zoneEditor.editName || this._zoneEditor.zone.name, type: "zone" };
-            }
-          }}><ha-icon icon="mdi:cog"></ha-icon> Occupancy</button>
           <button class="delete-btn" @click=${this._handleZoneDelete}><ha-icon icon="mdi:delete-outline"></ha-icon> Delete</button>
         </div>
       </div>
@@ -5211,7 +5231,7 @@ export class FpbCanvas extends LitElement {
         ${mode === "walls" ? this._renderAngleConstraints() : null}
         ${mode === "walls" ? this._renderNodeEndpoints() : null}
         ${mode === "furniture" && activeTool.value === "zone" ? this._renderNodeGuideDots() : null}
-        ${mode !== "viewing" ? this._renderDrawingPreview() : null}
+        ${mode !== "viewing" && mode !== "occupancy" ? this._renderDrawingPreview() : null}
         ${mode === "furniture" ? this._renderFurnitureDrawingPreview() : null}
         ${mode === "walls" ? this._renderOpeningPreview() : null}
         ${mode === "placement" ? this._renderDevicePreview() : null}
@@ -5220,7 +5240,7 @@ export class FpbCanvas extends LitElement {
       ${this._renderNodeEditor()}
       ${this._renderMultiEdgeEditor()}
       ${this._renderRoomEditor()}
-      ${this._renderZoneEditor()}
+      ${mode !== "occupancy" ? this._renderZoneEditor() : null}
       ${mode === "placement" ? this._renderEntityPicker() : null}
     `;
   }

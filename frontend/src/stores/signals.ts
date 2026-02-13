@@ -104,6 +104,9 @@ export function setCanvasMode(mode: CanvasMode): void {
   canvasMode.value = mode;
   activeTool.value = "select";
   selection.value = { type: "none", ids: [] };
+  if (mode !== "occupancy") {
+    occupancyPanelTarget.value = null;
+  }
 }
 
 export function setReloadFunction(fn: () => Promise<void>): void {

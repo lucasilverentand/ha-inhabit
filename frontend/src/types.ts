@@ -268,7 +268,7 @@ export interface VisualRule {
 }
 
 // Canvas mode types
-export type CanvasMode = "viewing" | "walls" | "furniture" | "placement";
+export type CanvasMode = "viewing" | "walls" | "furniture" | "placement" | "occupancy";
 
 // Tool types
 export type ToolType =

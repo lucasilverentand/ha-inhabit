@@ -646,6 +646,13 @@ export class FpbToolbar extends LitElement {
         >
           <ha-icon icon="mdi:devices"></ha-icon>
         </button>
+        <button
+          class="mode-button ${mode === "occupancy" ? "active" : ""}"
+          @click=${() => setCanvasMode("occupancy")}
+          title="Occupancy mode"
+        >
+          <ha-icon icon="mdi:motion-sensor"></ha-icon>
+        </button>
       </div>
 
       <div class="spacer"></div>
