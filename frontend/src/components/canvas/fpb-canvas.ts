@@ -20,6 +20,8 @@ import {
   reloadFloorData,
   constraintConflicts,
   focusedRoomId,
+  occupancyPanelTarget,
+  mmwavePlacements,
 } from "../../stores/signals";
 import { polygonToPath, viewBoxToString, groupEdgesIntoChains, wallChainPath } from "../../utils/svg";
 import { snapToGrid as snapPoint, arePointsCollinear } from "../../utils/geometry";
@@ -2978,6 +2980,11 @@ export class FpbCanvas extends LitElement {
 
         <div class="wall-editor-actions">
           <button class="save-btn" @click=${this._handleRoomEditorSave}><ha-icon icon="mdi:check"></ha-icon> Save</button>
+          <button class="save-btn" @click=${() => {
+            if (this._roomEditor) {
+              occupancyPanelTarget.value = { id: this._roomEditor.room.id, name: this._roomEditor.editName || this._roomEditor.room.name, type: "room" };
+            }
+          }}><ha-icon icon="mdi:cog"></ha-icon> Occupancy</button>
           <button class="delete-btn" @click=${this._handleRoomDelete}><ha-icon icon="mdi:delete-outline"></ha-icon> Delete</button>
         </div>
       </div>
@@ -3580,6 +3587,9 @@ export class FpbCanvas extends LitElement {
             `)}
         </g>
       ` : null}
+
+      <!-- mmWave sensors layer -->
+      ${layerConfig.find(l => l.id === "devices")?.visible ? this._renderMmwaveLayer(floor) : null}
     `;
   }
 
@@ -3597,6 +3607,51 @@ export class FpbCanvas extends LitElement {
             ${device.label || state?.attributes.friendly_name || device.entity_id}
           </text>
         ` : null}
+      </g>
+    `;
+  }
+
+  private _renderMmwaveLayer(floor: Floor) {
+    const placements = mmwavePlacements.value.filter(p => p.floor_id === floor.id);
+    if (placements.length === 0) return null;
+
+    const sel = selection.value;
+
+    return svg`
+      <g class="mmwave-layer">
+        ${placements.map(p => {
+          const isSelected = sel.type === "device" && sel.ids.includes(p.id);
+          const facingAngle = p.wall_normal_angle + p.angle;
+          const halfFov = p.field_of_view / 2;
+          const range = p.detection_range;
+
+          // Compute FOV cone arc endpoints
+          const startAngle = (facingAngle - halfFov) * Math.PI / 180;
+          const endAngle = (facingAngle + halfFov) * Math.PI / 180;
+          const ax = p.mount_x + range * Math.cos(startAngle);
+          const ay = p.mount_y + range * Math.sin(startAngle);
+          const bx = p.mount_x + range * Math.cos(endAngle);
+          const by = p.mount_y + range * Math.sin(endAngle);
+          const largeArc = p.field_of_view > 180 ? 1 : 0;
+
+          return svg`
+            <g class="mmwave-placement ${isSelected ? "selected" : ""}">
+              <!-- FOV cone -->
+              <path
+                d="M ${p.mount_x} ${p.mount_y} L ${ax} ${ay} A ${range} ${range} 0 ${largeArc} 1 ${bx} ${by} Z"
+                fill="rgba(33, 150, 243, 0.1)"
+                stroke="rgba(33, 150, 243, 0.4)"
+                stroke-width="1"
+                stroke-dasharray="4 2"
+              />
+              <!-- Sensor icon -->
+              <circle cx="${p.mount_x}" cy="${p.mount_y}" r="8"
+                fill="#2196f3" stroke="#fff" stroke-width="2"/>
+              <text x="${p.mount_x}" y="${p.mount_y + 3}" text-anchor="middle"
+                font-size="8" fill="#fff" font-weight="bold">R</text>
+            </g>
+          `;
+        })}
       </g>
     `;
   }
@@ -4105,6 +4160,11 @@ export class FpbCanvas extends LitElement {
 
         <div class="wall-editor-actions">
           <button class="save-btn" @click=${this._handleZoneEditorSave}><ha-icon icon="mdi:check"></ha-icon> Save</button>
+          <button class="save-btn" @click=${() => {
+            if (this._zoneEditor) {
+              occupancyPanelTarget.value = { id: this._zoneEditor.zone.id, name: this._zoneEditor.editName || this._zoneEditor.zone.name, type: "zone" };
+            }
+          }}><ha-icon icon="mdi:cog"></ha-icon> Occupancy</button>
           <button class="delete-btn" @click=${this._handleZoneDelete}><ha-icon icon="mdi:delete-outline"></ha-icon> Delete</button>
         </div>
       </div>

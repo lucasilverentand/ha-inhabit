@@ -18,6 +18,7 @@ import type {
   ViewBox,
   SelectionState,
   DevicePlacement,
+  MmwavePlacement,
 } from "../types";
 import type { ConstraintViolation } from "../utils/wall-solver";
 
@@ -35,6 +36,8 @@ interface InhabitSignals {
   devicePlacements: Signal<DevicePlacement[]>;
   constraintConflicts: Signal<Map<string, ConstraintViolation[]>>;
   focusedRoomId: Signal<string | null>;
+  occupancyPanelTarget: Signal<{ id: string; name: string; type: "room" | "zone" } | null>;
+  mmwavePlacements: Signal<MmwavePlacement[]>;
   _reloadFloorData: (() => Promise<void>) | null;
 }
 
@@ -67,6 +70,8 @@ function createSignals(): InhabitSignals {
     devicePlacements: signal<DevicePlacement[]>([]),
     constraintConflicts: signal<Map<string, ConstraintViolation[]>>(new Map()),
     focusedRoomId: signal<string | null>(null),
+    occupancyPanelTarget: signal<{ id: string; name: string; type: "room" | "zone" } | null>(null),
+    mmwavePlacements: signal<MmwavePlacement[]>([]),
     _reloadFloorData: null,
   };
 }
@@ -92,6 +97,8 @@ export const layers = s.layers;
 export const devicePlacements = s.devicePlacements;
 export const constraintConflicts = s.constraintConflicts;
 export const focusedRoomId = s.focusedRoomId;
+export const occupancyPanelTarget = s.occupancyPanelTarget;
+export const mmwavePlacements = s.mmwavePlacements;
 
 export function setCanvasMode(mode: CanvasMode): void {
   canvasMode.value = mode;
@@ -135,5 +142,7 @@ export function resetSignals(): void {
   devicePlacements.value = [];
   constraintConflicts.value = new Map();
   focusedRoomId.value = null;
+  occupancyPanelTarget.value = null;
+  mmwavePlacements.value = [];
   s._reloadFloorData = null;
 }

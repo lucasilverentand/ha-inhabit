@@ -184,6 +184,8 @@ export interface VirtualSensorConfig {
   door_sensors: SensorBinding[];
   door_blocks_vacancy: boolean;
   door_open_resets_checking: boolean;
+  occupied_threshold: number;
+  vacant_threshold: number;
 }
 
 export interface OccupancyStateData {
@@ -193,6 +195,36 @@ export interface OccupancyStateData {
   last_presence_at?: string;
   last_door_event_at?: string;
   contributing_sensors: string[];
+}
+
+// mmWave sensor types
+export interface MmwaveTargetMapping {
+  target_index: number;
+  x_entity_id: string;
+  y_entity_id: string;
+}
+
+export interface MmwavePlacement {
+  id: string;
+  floor_plan_id: string;
+  floor_id: string;
+  edge_id: string;
+  position_on_edge: number;
+  angle: number;
+  field_of_view: number;
+  detection_range: number;
+  target_mappings: MmwaveTargetMapping[];
+  mount_x: number;
+  mount_y: number;
+  wall_normal_angle: number;
+}
+
+export interface MmwaveTargetPosition {
+  placement_id: string;
+  target_index: number;
+  world_x: number;
+  world_y: number;
+  region_id?: string;
 }
 
 // Visual rule types

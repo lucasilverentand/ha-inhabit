@@ -8,6 +8,7 @@ from typing import Any
 import voluptuous as vol
 from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
 
 from ..const import DOMAIN, WS_PREFIX
 from ..models.automation_rule import VisualRule
@@ -22,6 +23,7 @@ from ..models.floor_plan import (
     Room,
     _generate_id,
 )
+from ..models.mmwave_sensor import MmwavePlacement, MmwaveTargetMapping
 from ..models.virtual_sensor import SensorBinding, VirtualSensorConfig
 from ..models.zone import Zone
 
@@ -71,6 +73,11 @@ def async_register_websocket_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_rules_update)
     websocket_api.async_register_command(hass, ws_rules_delete)
     websocket_api.async_register_command(hass, ws_occupancy_states)
+    websocket_api.async_register_command(hass, ws_mmwave_place)
+    websocket_api.async_register_command(hass, ws_mmwave_update)
+    websocket_api.async_register_command(hass, ws_mmwave_delete)
+    websocket_api.async_register_command(hass, ws_mmwave_list)
+    websocket_api.async_register_command(hass, ws_mmwave_subscribe_targets)
 
     _LOGGER.debug("Registered WebSocket commands")
 
@@ -543,6 +550,24 @@ def ws_rooms_update(
 
     result = store.update_room(msg["floor_plan_id"], room)
     if result:
+        # Sync occupancy toggle with sensor engine
+        if "occupancy_sensor_enabled" in msg:
+            sensor_engine = hass.data[DOMAIN]["sensor_engine"]
+            if room.occupancy_sensor_enabled:
+                # Ensure sensor config exists, then add to engine
+                config = store.get_sensor_config(room.id)
+                if not config:
+                    config = VirtualSensorConfig(
+                        room_id=room.id,
+                        floor_plan_id=msg["floor_plan_id"],
+                        motion_timeout=room.motion_timeout,
+                        checking_timeout=room.checking_timeout,
+                    )
+                    store.create_sensor_config(config)
+                hass.async_create_task(sensor_engine.async_add_room(config))
+            else:
+                hass.async_create_task(sensor_engine.async_remove_room(room.id))
+                store.delete_sensor_config(room.id)
         connection.send_result(msg["id"], result.to_dict())
     else:
         connection.send_error(msg["id"], "update_failed", "Failed to update room")
@@ -681,6 +706,23 @@ def ws_zones_update(
 
     result = store.update_zone(msg["floor_plan_id"], zone)
     if result:
+        # Sync occupancy toggle with sensor engine
+        if "occupancy_sensor_enabled" in msg:
+            sensor_engine = hass.data[DOMAIN]["sensor_engine"]
+            if zone.occupancy_sensor_enabled:
+                config = store.get_sensor_config(zone.id)
+                if not config:
+                    config = VirtualSensorConfig(
+                        room_id=zone.id,
+                        floor_plan_id=msg["floor_plan_id"],
+                        motion_timeout=zone.motion_timeout,
+                        checking_timeout=zone.checking_timeout,
+                    )
+                    store.create_sensor_config(config)
+                hass.async_create_task(sensor_engine.async_add_room(config))
+            else:
+                hass.async_create_task(sensor_engine.async_remove_room(zone.id))
+                store.delete_sensor_config(zone.id)
         connection.send_result(msg["id"], result.to_dict())
     else:
         connection.send_error(msg["id"], "update_failed", "Failed to update zone")
@@ -1929,6 +1971,8 @@ def ws_sensor_config_get(
         vol.Optional("door_sensors"): list,
         vol.Optional("door_blocks_vacancy"): bool,
         vol.Optional("door_open_resets_checking"): bool,
+        vol.Optional("occupied_threshold"): vol.Coerce(float),
+        vol.Optional("vacant_threshold"): vol.Coerce(float),
     }
 )
 @callback
@@ -1966,6 +2010,10 @@ def ws_sensor_config_update(
         config.door_blocks_vacancy = msg["door_blocks_vacancy"]
     if "door_open_resets_checking" in msg:
         config.door_open_resets_checking = msg["door_open_resets_checking"]
+    if "occupied_threshold" in msg:
+        config.occupied_threshold = msg["occupied_threshold"]
+    if "vacant_threshold" in msg:
+        config.vacant_threshold = msg["vacant_threshold"]
 
     result = store.update_sensor_config(config)
     if result:
@@ -2145,3 +2193,198 @@ def ws_occupancy_states(
         msg["id"],
         {room_id: state.to_dict() for room_id, state in states.items()},
     )
+
+
+# ==================== mmWave Placements ====================
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{WS_PREFIX}/mmwave/place",
+        vol.Required("floor_plan_id"): str,
+        vol.Required("floor_id"): str,
+        vol.Required("edge_id"): str,
+        vol.Optional("position_on_edge", default=0.5): vol.Coerce(float),
+        vol.Optional("angle", default=0.0): vol.Coerce(float),
+        vol.Optional("field_of_view", default=120.0): vol.Coerce(float),
+        vol.Optional("detection_range", default=500.0): vol.Coerce(float),
+        vol.Optional("target_mappings", default=[]): list,
+    }
+)
+@callback
+def ws_mmwave_place(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Place an mmWave sensor on an edge."""
+    store = hass.data[DOMAIN]["store"]
+    placement = MmwavePlacement(
+        floor_plan_id=msg["floor_plan_id"],
+        floor_id=msg["floor_id"],
+        edge_id=msg["edge_id"],
+        position_on_edge=msg["position_on_edge"],
+        angle=msg["angle"],
+        field_of_view=msg["field_of_view"],
+        detection_range=msg["detection_range"],
+        target_mappings=[
+            MmwaveTargetMapping.from_dict(m) for m in msg["target_mappings"]
+        ],
+    )
+    result = store.create_mmwave_placement(placement)
+
+    # Notify the mmWave processor if running
+    processor = hass.data[DOMAIN].get("mmwave_processor")
+    if processor:
+        hass.async_create_task(processor.async_add_placement(result))
+
+    connection.send_result(msg["id"], result.to_dict())
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{WS_PREFIX}/mmwave/update",
+        vol.Required("placement_id"): str,
+        vol.Optional("position_on_edge"): vol.Coerce(float),
+        vol.Optional("angle"): vol.Coerce(float),
+        vol.Optional("field_of_view"): vol.Coerce(float),
+        vol.Optional("detection_range"): vol.Coerce(float),
+        vol.Optional("target_mappings"): list,
+    }
+)
+@callback
+def ws_mmwave_update(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Update an mmWave placement."""
+    store = hass.data[DOMAIN]["store"]
+    placement = store.get_mmwave_placement(msg["placement_id"])
+    if not placement:
+        connection.send_error(msg["id"], "not_found", "mmWave placement not found")
+        return
+
+    if "position_on_edge" in msg:
+        placement.position_on_edge = msg["position_on_edge"]
+    if "angle" in msg:
+        placement.angle = msg["angle"]
+    if "field_of_view" in msg:
+        placement.field_of_view = msg["field_of_view"]
+    if "detection_range" in msg:
+        placement.detection_range = msg["detection_range"]
+    if "target_mappings" in msg:
+        placement.target_mappings = [
+            MmwaveTargetMapping.from_dict(m) for m in msg["target_mappings"]
+        ]
+
+    result = store.update_mmwave_placement(placement)
+    if result:
+        processor = hass.data[DOMAIN].get("mmwave_processor")
+        if processor:
+            hass.async_create_task(processor.async_update_placement(result))
+        connection.send_result(msg["id"], result.to_dict())
+    else:
+        connection.send_error(
+            msg["id"], "update_failed", "Failed to update mmWave placement"
+        )
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{WS_PREFIX}/mmwave/delete",
+        vol.Required("placement_id"): str,
+    }
+)
+@callback
+def ws_mmwave_delete(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Delete an mmWave placement."""
+    store = hass.data[DOMAIN]["store"]
+
+    processor = hass.data[DOMAIN].get("mmwave_processor")
+    if processor:
+        hass.async_create_task(
+            processor.async_remove_placement(msg["placement_id"])
+        )
+
+    if store.delete_mmwave_placement(msg["placement_id"]):
+        connection.send_result(msg["id"], {"success": True})
+    else:
+        connection.send_error(msg["id"], "not_found", "mmWave placement not found")
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{WS_PREFIX}/mmwave/list",
+        vol.Required("floor_plan_id"): str,
+    }
+)
+@callback
+def ws_mmwave_list(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """List all mmWave placements for a floor plan."""
+    store = hass.data[DOMAIN]["store"]
+    placements = store.get_mmwave_placements(msg["floor_plan_id"])
+    connection.send_result(msg["id"], [p.to_dict() for p in placements])
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{WS_PREFIX}/mmwave/subscribe_targets",
+    }
+)
+@websocket_api.async_response
+async def ws_mmwave_subscribe_targets(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Subscribe to live mmWave target world positions."""
+    from ..engine.mmwave_target_processor import SIGNAL_MMWAVE_TARGETS_UPDATED
+    from ..models.floor_plan import Coordinates
+
+    # Send initial state
+    processor = hass.data[DOMAIN].get("mmwave_processor")
+    if processor:
+        positions = processor.get_target_positions()
+        connection.send_message(
+            websocket_api.event_message(msg["id"], {"targets": positions})
+        )
+
+    @callback
+    def handle_update(
+        placement_id: str,
+        target_index: int,
+        world_pos: Coordinates,
+        region_id: str | None,
+    ) -> None:
+        connection.send_message(
+            websocket_api.event_message(
+                msg["id"],
+                {
+                    "placement_id": placement_id,
+                    "target_index": target_index,
+                    "world_x": world_pos.x,
+                    "world_y": world_pos.y,
+                    "region_id": region_id,
+                },
+            )
+        )
+
+    unsub = async_dispatcher_connect(
+        hass, SIGNAL_MMWAVE_TARGETS_UPDATED, handle_update
+    )
+
+    @callback
+    def on_close() -> None:
+        unsub()
+
+    connection.subscriptions[msg["id"]] = on_close
+    connection.send_result(msg["id"])

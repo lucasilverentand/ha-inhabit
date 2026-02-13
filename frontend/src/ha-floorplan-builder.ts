@@ -9,12 +9,15 @@ import type {
   FloorPlan,
   Floor,
   DevicePlacement,
+  MmwavePlacement,
 } from "./types";
 
 // Import sub-components
 import "./components/canvas/fpb-canvas";
 import "./components/toolbar/fpb-toolbar";
 import "./components/dialogs/fpb-import-export-dialog";
+import "./components/panels/fpb-occupancy-panel";
+import "./components/panels/fpb-mmwave-panel";
 import type { FpbImportExportDialog } from "./components/dialogs/fpb-import-export-dialog";
 import { clearHistory } from "./stores/history-store";
 import { validateConstraints } from "./utils/wall-solver";
@@ -35,6 +38,8 @@ export {
   devicePlacements,
   constraintConflicts,
   focusedRoomId,
+  occupancyPanelTarget,
+  mmwavePlacements,
   setCanvasMode,
   setReloadFunction,
   reloadFloorData,
@@ -49,6 +54,8 @@ import {
   devicePlacements,
   constraintConflicts,
   focusedRoomId,
+  occupancyPanelTarget,
+  mmwavePlacements,
   setReloadFunction,
   resetSignals,
 } from "./stores/signals";
@@ -79,6 +86,9 @@ export class HaFloorplanBuilder extends LitElement {
 
   @state()
   private _focusedRoomId: string | null = null;
+
+  @state()
+  private _occupancyPanelTarget: { id: string; name: string; type: "room" | "zone" } | null = null;
 
   private _cleanupEffects: (() => void)[] = [];
 
@@ -242,6 +252,23 @@ export class HaFloorplanBuilder extends LitElement {
       color: var(--text-primary-color, #fff);
       border-color: var(--primary-color, #03a9f4);
     }
+
+    .canvas-with-panel {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+    }
+
+    .canvas-with-panel .canvas-container {
+      flex: 1;
+    }
+
+    fpb-occupancy-panel {
+      width: 320px;
+      flex-shrink: 0;
+      border-left: 1px solid var(--divider-color, #e0e0e0);
+      overflow-y: auto;
+    }
   `;
 
   override connectedCallback(): void {
@@ -257,6 +284,9 @@ export class HaFloorplanBuilder extends LitElement {
     this._cleanupEffects.push(
       effect(() => {
         this._focusedRoomId = focusedRoomId.value;
+      }),
+      effect(() => {
+        this._occupancyPanelTarget = occupancyPanelTarget.value;
       }),
       effect(() => {
         // Track floor changes to re-render chips bar when rooms change
@@ -395,11 +425,18 @@ export class HaFloorplanBuilder extends LitElement {
     if (!this.hass) return;
 
     try {
-      const result = await this.hass.callWS<DevicePlacement[]>({
-        type: "inhabit/devices/list",
-        floor_plan_id: floorPlanId,
-      });
-      devicePlacements.value = result;
+      const [devices, mmwave] = await Promise.all([
+        this.hass.callWS<DevicePlacement[]>({
+          type: "inhabit/devices/list",
+          floor_plan_id: floorPlanId,
+        }),
+        this.hass.callWS<MmwavePlacement[]>({
+          type: "inhabit/mmwave/list",
+          floor_plan_id: floorPlanId,
+        }),
+      ]);
+      devicePlacements.value = devices;
+      mmwavePlacements.value = mmwave;
     } catch (err) {
       console.error("Error loading device placements:", err);
     }
@@ -669,9 +706,24 @@ export class HaFloorplanBuilder extends LitElement {
 
           ${this._renderRoomChips()}
 
-          <div class="canvas-container">
-            <fpb-canvas .hass=${this.hass}></fpb-canvas>
-          </div>
+          ${this._occupancyPanelTarget ? html`
+            <div class="canvas-with-panel">
+              <div class="canvas-container">
+                <fpb-canvas .hass=${this.hass}></fpb-canvas>
+              </div>
+              <fpb-occupancy-panel
+                .hass=${this.hass}
+                .targetId=${this._occupancyPanelTarget.id}
+                .targetName=${this._occupancyPanelTarget.name}
+                .targetType=${this._occupancyPanelTarget.type}
+                @close-panel=${() => { occupancyPanelTarget.value = null; }}
+              ></fpb-occupancy-panel>
+            </div>
+          ` : html`
+            <div class="canvas-container">
+              <fpb-canvas .hass=${this.hass}></fpb-canvas>
+            </div>
+          `}
         </div>
       </div>
       <fpb-import-export-dialog

@@ -13,6 +13,7 @@ from ..const import STORAGE_KEY, STORAGE_VERSION
 from ..models.automation_rule import VisualRule
 from ..models.device_placement import DevicePlacement, DevicePlacementCollection
 from ..models.floor_plan import Door, Edge, Floor, FloorPlan, Node, Room, Wall, Window
+from ..models.mmwave_sensor import MmwavePlacement
 from ..models.virtual_sensor import VirtualSensorConfig
 from ..models.zone import Zone
 
@@ -31,6 +32,7 @@ class FloorPlanStore:
             "device_placements": {},
             "sensor_configs": {},
             "visual_rules": {},
+            "mmwave_placements": {},
         }
         self._loaded = False
 
@@ -466,6 +468,74 @@ class FloorPlanStore:
             self.async_delay_save()
             return True
         return False
+
+    # ==================== mmWave Placements ====================
+
+    def get_mmwave_placements(self, floor_plan_id: str) -> list[MmwavePlacement]:
+        """Get all mmWave placements for a floor plan."""
+        placements = []
+        for data in self._data.get("mmwave_placements", {}).values():
+            if data.get("floor_plan_id") == floor_plan_id:
+                placements.append(MmwavePlacement.from_dict(data))
+        return placements
+
+    def get_mmwave_placement(self, placement_id: str) -> MmwavePlacement | None:
+        """Get a single mmWave placement by ID."""
+        data = self._data.get("mmwave_placements", {}).get(placement_id)
+        if data:
+            return MmwavePlacement.from_dict(data)
+        return None
+
+    def create_mmwave_placement(self, placement: MmwavePlacement) -> MmwavePlacement:
+        """Create an mmWave placement."""
+        if "mmwave_placements" not in self._data:
+            self._data["mmwave_placements"] = {}
+
+        # Compute mount position from edge geometry
+        self._compute_mmwave_mount(placement)
+
+        self._data["mmwave_placements"][placement.id] = placement.to_dict()
+        self.async_delay_save()
+        return placement
+
+    def update_mmwave_placement(
+        self, placement: MmwavePlacement
+    ) -> MmwavePlacement | None:
+        """Update an mmWave placement."""
+        if placement.id not in self._data.get("mmwave_placements", {}):
+            return None
+
+        self._compute_mmwave_mount(placement)
+        self._data["mmwave_placements"][placement.id] = placement.to_dict()
+        self.async_delay_save()
+        return placement
+
+    def delete_mmwave_placement(self, placement_id: str) -> bool:
+        """Delete an mmWave placement."""
+        if placement_id in self._data.get("mmwave_placements", {}):
+            del self._data["mmwave_placements"][placement_id]
+            self.async_delay_save()
+            return True
+        return False
+
+    def _compute_mmwave_mount(self, placement: MmwavePlacement) -> None:
+        """Compute mount position from edge geometry."""
+        floor_plan = self.get_floor_plan(placement.floor_plan_id)
+        if not floor_plan:
+            return
+        floor = floor_plan.get_floor(placement.floor_id)
+        if not floor:
+            return
+        edge = floor.get_edge(placement.edge_id)
+        if not edge:
+            return
+        start_node = floor.get_node(edge.start_node)
+        end_node = floor.get_node(edge.end_node)
+        if not start_node or not end_node:
+            return
+        placement.compute_mount_position(
+            start_node.x, start_node.y, end_node.x, end_node.y
+        )
 
     # ==================== Utilities ====================
 

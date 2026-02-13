@@ -38,7 +38,7 @@ async def async_setup_entry(
     """Set up virtual occupancy sensors from a config entry."""
     store = hass.data[DOMAIN]["store"]
 
-    # Create entities for all existing rooms
+    # Create entities for all existing rooms and zones with occupancy enabled
     entities: list[VirtualOccupancySensor] = []
     for floor_plan in store.get_floor_plans():
         for room in floor_plan.get_all_rooms():
@@ -54,20 +54,34 @@ async def async_setup_entry(
                             room.name,
                         )
                     )
+        for floor in floor_plan.floors:
+            for zone in floor.zones:
+                if zone.occupancy_sensor_enabled:
+                    config = store.get_sensor_config(zone.id)
+                    if config:
+                        entities.append(
+                            VirtualOccupancySensor(
+                                hass,
+                                floor_plan.id,
+                                floor_plan.name,
+                                zone.id,
+                                zone.name,
+                            )
+                        )
 
     if entities:
         async_add_entities(entities)
         _LOGGER.info("Added %d virtual occupancy sensors", len(entities))
 
-    # Listen for new sensors being added
+    # Listen for new sensors being added (rooms or zones)
     @callback
-    def async_add_sensor(room_id: str) -> None:
-        """Handle new sensor being added."""
-        # Find the room
+    def async_add_sensor(region_id: str) -> None:
+        """Handle new sensor being added for a room or zone."""
         for floor_plan in store.get_floor_plans():
-            result = floor_plan.get_room(room_id)
+            # Check rooms
+            result = floor_plan.get_room(region_id)
             if result:
-                floor, room = result
+                _floor, room = result
                 async_add_entities(
                     [
                         VirtualOccupancySensor(
@@ -81,6 +95,25 @@ async def async_setup_entry(
                 )
                 _LOGGER.info("Added virtual occupancy sensor for room %s", room.name)
                 return
+            # Check zones
+            for floor in floor_plan.floors:
+                zone = floor.get_zone(region_id)
+                if zone:
+                    async_add_entities(
+                        [
+                            VirtualOccupancySensor(
+                                hass,
+                                floor_plan.id,
+                                floor_plan.name,
+                                zone.id,
+                                zone.name,
+                            )
+                        ]
+                    )
+                    _LOGGER.info(
+                        "Added virtual occupancy sensor for zone %s", zone.name
+                    )
+                    return
 
     async_dispatcher_connect(
         hass,
