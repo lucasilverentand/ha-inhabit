@@ -439,6 +439,18 @@ export class FpbOccupancyPanel extends LitElement {
           </div>
 
           ${this._config.enabled ? html`
+            <!-- Spatial presence toggle -->
+            <div class="toggle-row">
+              <div>
+                <label>Presence sensors affect this ${this.targetType}</label>
+                <div class="sublabel">Spatial targets inside drive occupancy</div>
+              </div>
+              <ha-switch
+                .checked=${this._config.presence_affects}
+                @change=${(e: Event) => this._updateConfig({ presence_affects: (e.target as any).checked })}
+              ></ha-switch>
+            </div>
+
             ${this._renderStatus()}
 
             <!-- Timing -->
@@ -472,7 +484,6 @@ export class FpbOccupancyPanel extends LitElement {
 
             <!-- Sensor Bindings -->
             ${this._renderSensorSection("Motion Sensors", "motion", this._config.motion_sensors)}
-            ${this._renderSensorSection("Presence Sensors", "presence", this._config.presence_sensors)}
             ${this._renderSensorSection("Door Sensors", "door", this._config.door_sensors)}
 
             <!-- Door Logic -->

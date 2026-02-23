@@ -83,14 +83,8 @@ class OccupancyStateMachine:
             )
             self._unsub_state_listeners.append(unsub)
 
-        # Subscribe to presence sensors
-        for binding in self.config.presence_sensors:
-            unsub = async_track_state_change_event(
-                self.hass,
-                binding.entity_id,
-                self._handle_presence_event,
-            )
-            self._unsub_state_listeners.append(unsub)
+        # Note: presence sensors are no longer entity-bound — presence is
+        # now spatial (hitbox-based via SimulatedTargetProcessor).
 
         # Subscribe to door sensors
         for binding in self.config.door_sensors:
@@ -161,13 +155,6 @@ class OccupancyStateMachine:
             state = self.hass.states.get(binding.entity_id)
             if state and self._is_sensor_active(state, binding.inverted):
                 self._transition_to_occupied("initial motion detected")
-                return
-
-        # Check if any presence sensors are active
-        for binding in self.config.presence_sensors:
-            state = self.hass.states.get(binding.entity_id)
-            if state and self._is_sensor_active(state, binding.inverted):
-                self._transition_to_occupied("initial presence detected")
                 return
 
         # No activity detected
@@ -336,11 +323,7 @@ class OccupancyStateMachine:
             if state and self._is_sensor_active(state, binding.inverted):
                 return
 
-        # Check presence sensors
-        for binding in self.config.presence_sensors:
-            state = self.hass.states.get(binding.entity_id)
-            if state and self._is_sensor_active(state, binding.inverted):
-                return
+        # Note: presence sensors are checked spatially via SimulatedTargetProcessor
 
         # All sensors clear
         self._transition_to_checking("all sensors clear")
@@ -427,11 +410,6 @@ class OccupancyStateMachine:
             total_weight += binding.weight
             if binding.entity_id in self._state.contributing_sensors:
                 active_weight += binding.weight
-
-        for binding in self.config.presence_sensors:
-            total_weight += binding.weight * 1.5  # Presence sensors weighted higher
-            if binding.entity_id in self._state.contributing_sensors:
-                active_weight += binding.weight * 1.5
 
         if total_weight == 0:
             return 0.5 if self._state.contributing_sensors else 0.0

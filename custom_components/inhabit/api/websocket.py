@@ -23,6 +23,7 @@ from ..models.floor_plan import (
     Room,
     _generate_id,
 )
+from ..engine.simulated_target_processor import SimulatedTargetProcessor
 from ..models.mmwave_sensor import MmwavePlacement
 from ..models.virtual_sensor import SensorBinding, VirtualSensorConfig
 from ..models.zone import Zone
@@ -81,6 +82,11 @@ def async_register_websocket_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_mmwave_update)
     websocket_api.async_register_command(hass, ws_mmwave_delete)
     websocket_api.async_register_command(hass, ws_mmwave_list)
+    websocket_api.async_register_command(hass, ws_simulate_target_add)
+    websocket_api.async_register_command(hass, ws_simulate_target_move)
+    websocket_api.async_register_command(hass, ws_simulate_target_remove)
+    websocket_api.async_register_command(hass, ws_simulate_target_clear)
+    websocket_api.async_register_command(hass, ws_simulate_target_list)
     _LOGGER.debug("Registered WebSocket commands")
 
 
@@ -2081,6 +2087,7 @@ def ws_sensor_config_get(
         vol.Optional("motion_sensors"): list,
         vol.Optional("presence_sensors"): list,
         vol.Optional("door_sensors"): list,
+        vol.Optional("presence_affects"): bool,
         vol.Optional("door_blocks_vacancy"): bool,
         vol.Optional("door_open_resets_checking"): bool,
         vol.Optional("occupied_threshold"): vol.Coerce(float),
@@ -2128,6 +2135,8 @@ def ws_sensor_config_update(
         ]
     if "door_sensors" in msg:
         config.door_sensors = [SensorBinding.from_dict(s) for s in msg["door_sensors"]]
+    if "presence_affects" in msg:
+        config.presence_affects = msg["presence_affects"]
     if "door_blocks_vacancy" in msg:
         config.door_blocks_vacancy = msg["door_blocks_vacancy"]
     if "door_open_resets_checking" in msg:
@@ -2446,3 +2455,113 @@ def ws_mmwave_list(
     store = hass.data[DOMAIN]["store"]
     placements = store.get_mmwave_placements(msg["floor_plan_id"])
     connection.send_result(msg["id"], [p.to_dict() for p in placements])
+
+
+# ==================== Simulated Targets ====================
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{WS_PREFIX}/simulate/target/add",
+        vol.Required("floor_plan_id"): str,
+        vol.Required("floor_id"): str,
+        vol.Required("position"): dict,
+        vol.Optional("hitbox", default=True): bool,
+    }
+)
+@callback
+def ws_simulate_target_add(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Add a simulated target at a position."""
+    sim: SimulatedTargetProcessor = hass.data[DOMAIN]["sim_processor"]
+    target = sim.add_target(
+        msg["floor_plan_id"],
+        msg["floor_id"],
+        Coordinates.from_dict(msg["position"]),
+        hitbox=msg["hitbox"],
+    )
+    connection.send_result(msg["id"], target.to_dict())
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{WS_PREFIX}/simulate/target/move",
+        vol.Required("target_id"): str,
+        vol.Required("position"): dict,
+        vol.Optional("hitbox", default=True): bool,
+    }
+)
+@callback
+def ws_simulate_target_move(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Move a simulated target to a new position."""
+    sim: SimulatedTargetProcessor = hass.data[DOMAIN]["sim_processor"]
+    target = sim.move_target(
+        msg["target_id"],
+        Coordinates.from_dict(msg["position"]),
+        hitbox=msg["hitbox"],
+    )
+    if target:
+        connection.send_result(msg["id"], target.to_dict())
+    else:
+        connection.send_error(msg["id"], "not_found", "Simulated target not found")
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{WS_PREFIX}/simulate/target/remove",
+        vol.Required("target_id"): str,
+    }
+)
+@callback
+def ws_simulate_target_remove(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Remove a simulated target."""
+    sim: SimulatedTargetProcessor = hass.data[DOMAIN]["sim_processor"]
+    if sim.remove_target(msg["target_id"]):
+        connection.send_result(msg["id"], {"success": True})
+    else:
+        connection.send_error(msg["id"], "not_found", "Simulated target not found")
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{WS_PREFIX}/simulate/target/clear",
+    }
+)
+@callback
+def ws_simulate_target_clear(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Clear all simulated targets."""
+    sim: SimulatedTargetProcessor = hass.data[DOMAIN]["sim_processor"]
+    sim.clear_all()
+    connection.send_result(msg["id"], {"success": True})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{WS_PREFIX}/simulate/target/list",
+    }
+)
+@callback
+def ws_simulate_target_list(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """List all simulated targets."""
+    sim: SimulatedTargetProcessor = hass.data[DOMAIN]["sim_processor"]
+    targets = sim.get_targets()
+    connection.send_result(msg["id"], [t.to_dict() for t in targets])

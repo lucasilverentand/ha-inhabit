@@ -120,6 +120,9 @@ class VirtualSensorConfig:
     presence_sensors: list[SensorBinding] = field(default_factory=list)
     door_sensors: list[SensorBinding] = field(default_factory=list)
 
+    # Spatial presence detection
+    presence_affects: bool = False  # Spatial presence targets affect this room/zone
+
     # Door-aware logic
     door_blocks_vacancy: bool = True  # Closed door prevents VACANT transition
     door_open_resets_checking: bool = True  # Door opening resets CHECKING timer
@@ -140,6 +143,7 @@ class VirtualSensorConfig:
             "motion_sensors": [s.to_dict() for s in self.motion_sensors],
             "presence_sensors": [s.to_dict() for s in self.presence_sensors],
             "door_sensors": [s.to_dict() for s in self.door_sensors],
+            "presence_affects": self.presence_affects,
             "door_blocks_vacancy": self.door_blocks_vacancy,
             "door_open_resets_checking": self.door_open_resets_checking,
             "occupied_threshold": self.occupied_threshold,
@@ -165,6 +169,7 @@ class VirtualSensorConfig:
             door_sensors=[
                 SensorBinding.from_dict(s) for s in data.get("door_sensors", [])
             ],
+            presence_affects=data.get("presence_affects", False),
             door_blocks_vacancy=data.get("door_blocks_vacancy", True),
             door_open_resets_checking=data.get("door_open_resets_checking", True),
             occupied_threshold=float(data.get("occupied_threshold", 0.5)),
@@ -172,11 +177,12 @@ class VirtualSensorConfig:
         )
 
     def get_all_sensor_entity_ids(self) -> list[str]:
-        """Get all entity IDs for sensors bound to this room."""
+        """Get all entity IDs for sensors bound to this room.
+
+        Note: presence_sensors are excluded — presence is now spatial (hitbox-based).
+        """
         entity_ids = []
         for binding in self.motion_sensors:
-            entity_ids.append(binding.entity_id)
-        for binding in self.presence_sensors:
             entity_ids.append(binding.entity_id)
         for binding in self.door_sensors:
             entity_ids.append(binding.entity_id)

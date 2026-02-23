@@ -12,6 +12,7 @@ import {
   activeTool,
   canvasMode,
   setCanvasMode,
+  simHitboxEnabled,
 } from "../../stores/signals";
 import { canUndo, canRedo, undo, redo } from "../../stores/history-store";
 
@@ -655,6 +656,13 @@ export class FpbToolbar extends LitElement {
         >
           <ha-icon icon="mdi:motion-sensor"></ha-icon>
         </button>
+        <button
+          class="mode-button ${mode === "simulate" ? "active" : ""}"
+          @click=${() => setCanvasMode("simulate")}
+          title="Simulate mode"
+        >
+          <ha-icon icon="mdi:radar"></ha-icon>
+        </button>
       </div>
 
       <div class="spacer"></div>
@@ -680,6 +688,19 @@ export class FpbToolbar extends LitElement {
       </div>
 
       <div class="divider"></div>
+
+      <!-- Simulate mode: hitbox toggle -->
+      ${mode === "simulate" ? html`
+        <div class="tool-group">
+          <button
+            class="tool-button ${simHitboxEnabled.value ? "active" : ""}"
+            @click=${() => { simHitboxEnabled.value = !simHitboxEnabled.value; }}
+            title="${simHitboxEnabled.value ? "Hitbox detection enabled" : "Hitbox detection disabled"}"
+          >
+            <ha-icon icon="${simHitboxEnabled.value ? "mdi:vector-square-edit" : "mdi:vector-square-remove"}"></ha-icon>
+          </button>
+        </div>
+      ` : null}
 
       <!-- Add Menu -->
       ${menuItems.length > 0 ? html`

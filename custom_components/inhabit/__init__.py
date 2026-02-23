@@ -23,6 +23,7 @@ from .api import http as http_api
 from .api import services
 from .api import websocket as ws_api
 from .const import DOMAIN
+from .engine.simulated_target_processor import SimulatedTargetProcessor
 from .engine.virtual_sensor_engine import VirtualSensorEngine
 from .store import FloorPlanStore, ImageStore
 
@@ -51,11 +52,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Initialize virtual sensor engine
     sensor_engine = VirtualSensorEngine(hass, floor_plan_store)
 
+    # Initialize simulated target processor
+    sim_processor = SimulatedTargetProcessor(hass, floor_plan_store, sensor_engine)
+
     # Store references
     hass.data[DOMAIN] = {
         "store": floor_plan_store,
         "image_store": image_store,
         "sensor_engine": sensor_engine,
+        "sim_processor": sim_processor,
         "entry": entry,
     }
 
@@ -142,6 +147,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     _LOGGER.info("Unloading Inhabit Floor Plan Builder")
+
+    # Clear simulated targets
+    sim_processor: SimulatedTargetProcessor = hass.data[DOMAIN]["sim_processor"]
+    sim_processor.clear_all()
 
     # Stop sensor engine
     sensor_engine: VirtualSensorEngine = hass.data[DOMAIN]["sensor_engine"]

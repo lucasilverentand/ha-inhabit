@@ -5,7 +5,7 @@
 import { LitElement, html, css, svg } from "lit";
 import { property, state, query } from "lit/decorators.js";
 import { effect } from "@preact/signals-core";
-import type { HomeAssistant, Coordinates, ViewBox, Edge, Node, Room, WallDirection, CanvasMode, Floor, SelectionState, HassEntity, LightPlacement, SwitchPlacement, Zone } from "../../types";
+import type { HomeAssistant, Coordinates, ViewBox, Edge, Node, Room, WallDirection, CanvasMode, Floor, SelectionState, HassEntity, LightPlacement, SwitchPlacement, Zone, SimulatedTarget } from "../../types";
 import {
   currentFloor,
   currentFloorPlan,
@@ -24,6 +24,8 @@ import {
   occupancyPanelTarget,
   devicePanelTarget,
   mmwavePlacements,
+  simulatedTargets,
+  simHitboxEnabled,
 } from "../../stores/signals";
 import { polygonToPath, viewBoxToString, groupEdgesIntoChains, wallChainPath } from "../../utils/svg";
 import { snapToGrid as snapPoint, arePointsCollinear } from "../../utils/geometry";
@@ -222,6 +224,12 @@ export class FpbCanvas extends LitElement {
     originalAngle: number;
     pointerId: number;
   } | null = null;
+
+  // ---- Simulation state ----
+  @state()
+  private _draggingSimTarget: { targetId: string; pointerId: number } | null = null;
+
+  private _simMoveThrottle: ReturnType<typeof setTimeout> | null = null;
 
   @state()
   private _canvasMode: CanvasMode = "walls";
@@ -1131,7 +1139,13 @@ export class FpbCanvas extends LitElement {
         this._viewBox = viewBox.value;
       }),
       effect(() => {
-        this._canvasMode = canvasMode.value;
+        const newMode = canvasMode.value;
+        const prevMode = this._canvasMode;
+        this._canvasMode = newMode;
+        // When leaving simulate mode, clear backend targets
+        if (prevMode === "simulate" && newMode !== "simulate" && this.hass) {
+          this.hass.callWS({ type: "inhabit/simulate/target/clear" }).catch(() => {});
+        }
       }),
       effect(() => {
         const floor = currentFloor.value;
@@ -1253,6 +1267,38 @@ export class FpbCanvas extends LitElement {
       this._panStart = { x: e.clientX, y: e.clientY };
       this._svg?.setPointerCapture(e.pointerId);
       return;
+    }
+
+    // Simulate mode: left-click places or drags targets, right-click removes
+    if (mode === "simulate" && (e.button === 0 || e.button === 2)) {
+      const targets = simulatedTargets.value;
+      const vb = this._viewBox;
+      const hitRadius = Math.max(vb.width, vb.height) * 0.015;
+
+      // Check if clicking an existing target
+      const hitTarget = targets.find(t => {
+        const dx = t.position.x - point.x;
+        const dy = t.position.y - point.y;
+        return Math.sqrt(dx * dx + dy * dy) < hitRadius;
+      });
+
+      if (e.button === 2 && hitTarget) {
+        // Right-click: remove target
+        this._removeSimulatedTarget(hitTarget.id);
+        return;
+      }
+
+      if (e.button === 0) {
+        if (hitTarget) {
+          // Start dragging existing target
+          this._draggingSimTarget = { targetId: hitTarget.id, pointerId: e.pointerId };
+          this._svg?.setPointerCapture(e.pointerId);
+        } else {
+          // Place a new target
+          this._addSimulatedTarget(point);
+        }
+        return;
+      }
     }
 
     // Left click behavior depends on tool
@@ -1493,6 +1539,13 @@ export class FpbCanvas extends LitElement {
 
     this._cursorPos = snapped;
 
+    // Handle simulated target dragging
+    if (this._draggingSimTarget) {
+      this._moveSimulatedTargetLocal(this._draggingSimTarget.targetId, point);
+      this._throttledMoveSimTarget(this._draggingSimTarget.targetId, point);
+      return;
+    }
+
     // Handle zone dragging
     if (this._draggingZone) {
       const dx = point.x - this._draggingZone.startPoint.x;
@@ -1703,6 +1756,19 @@ export class FpbCanvas extends LitElement {
   }
 
   private _handlePointerUp(e: PointerEvent): void {
+    if (this._draggingSimTarget) {
+      const point = this._screenToSvg({ x: e.clientX, y: e.clientY });
+      // Send final move
+      this._sendSimTargetMove(this._draggingSimTarget.targetId, point);
+      this._svg?.releasePointerCapture(e.pointerId);
+      this._draggingSimTarget = null;
+      if (this._simMoveThrottle) {
+        clearTimeout(this._simMoveThrottle);
+        this._simMoveThrottle = null;
+      }
+      return;
+    }
+
     if (this._rotatingMmwave) {
       this._finishMmwaveRotation();
       this._svg?.releasePointerCapture(e.pointerId);
@@ -1818,6 +1884,10 @@ export class FpbCanvas extends LitElement {
    * Right-click on a node to dissolve it (merge the two connected edges).
    */
   private async _handleContextMenu(e: MouseEvent): Promise<void> {
+    if (this._canvasMode === "simulate") {
+      e.preventDefault();
+      return; // Right-click removal handled in _handlePointerDown
+    }
     if (this._canvasMode !== "walls") return;
     e.preventDefault();
 
@@ -3007,6 +3077,171 @@ export class FpbCanvas extends LitElement {
 
     viewBox.value = newViewBox;
     this._viewBox = newViewBox;
+  }
+
+  // ==================== Simulation Methods ====================
+
+  private async _addSimulatedTarget(point: Coordinates): Promise<void> {
+    if (!this.hass) return;
+    const fp = currentFloorPlan.value;
+    const floor = currentFloor.value;
+    if (!fp || !floor) return;
+
+    try {
+      const result = await this.hass.callWS<SimulatedTarget>({
+        type: "inhabit/simulate/target/add",
+        floor_plan_id: fp.id,
+        floor_id: floor.id,
+        position: { x: point.x, y: point.y },
+        hitbox: simHitboxEnabled.value,
+      });
+      simulatedTargets.value = [...simulatedTargets.value, result];
+    } catch (err) {
+      console.error("Failed to add simulated target:", err);
+    }
+  }
+
+  private async _removeSimulatedTarget(targetId: string): Promise<void> {
+    if (!this.hass) return;
+    try {
+      await this.hass.callWS({ type: "inhabit/simulate/target/remove", target_id: targetId });
+      simulatedTargets.value = simulatedTargets.value.filter(t => t.id !== targetId);
+    } catch (err) {
+      console.error("Failed to remove simulated target:", err);
+    }
+  }
+
+  private _moveSimulatedTargetLocal(targetId: string, point: Coordinates): void {
+    // Optimistic update: move target locally and run client-side region detection
+    const floor = currentFloor.value;
+    const targets = simulatedTargets.value;
+    const idx = targets.findIndex(t => t.id === targetId);
+    if (idx === -1) return;
+
+    const hitbox = simHitboxEnabled.value;
+    const region = hitbox && floor ? this._getRegionAtPoint(point, floor) : null;
+    const updated = {
+      ...targets[idx],
+      position: { x: point.x, y: point.y },
+      region_id: region?.id ?? null,
+      region_name: region?.name ?? null,
+    };
+    const newTargets = [...targets];
+    newTargets[idx] = updated;
+    simulatedTargets.value = newTargets;
+  }
+
+  private _throttledMoveSimTarget(targetId: string, point: Coordinates): void {
+    if (this._simMoveThrottle) return; // Already scheduled
+    this._simMoveThrottle = setTimeout(() => {
+      this._simMoveThrottle = null;
+      this._sendSimTargetMove(targetId, point);
+    }, 66); // ~15fps
+  }
+
+  private async _sendSimTargetMove(targetId: string, point: Coordinates): Promise<void> {
+    if (!this.hass) return;
+    try {
+      const result = await this.hass.callWS<SimulatedTarget>({
+        type: "inhabit/simulate/target/move",
+        target_id: targetId,
+        position: { x: point.x, y: point.y },
+        hitbox: simHitboxEnabled.value,
+      });
+      // Update with authoritative region from backend
+      const targets = simulatedTargets.value;
+      const idx = targets.findIndex(t => t.id === targetId);
+      if (idx !== -1) {
+        const newTargets = [...targets];
+        newTargets[idx] = result;
+        simulatedTargets.value = newTargets;
+      }
+    } catch {
+      // Swallow errors during drag — position is already optimistic
+    }
+  }
+
+  private _getRegionAtPoint(point: Coordinates, floor: Floor): { id: string; name: string } | null {
+    // Check zones first (more specific)
+    if (floor.zones) {
+      for (const zone of floor.zones) {
+        if (zone.polygon?.vertices && this._pointInPolygon(point, zone.polygon.vertices)) {
+          return { id: zone.id, name: zone.name };
+        }
+      }
+    }
+    // Then rooms
+    for (const room of floor.rooms) {
+      if (room.polygon?.vertices && this._pointInPolygon(point, room.polygon.vertices)) {
+        return { id: room.id, name: room.name };
+      }
+    }
+    return null;
+  }
+
+  private _renderSimulationLayer(floor: Floor) {
+    const targets = simulatedTargets.value;
+    const hitbox = simHitboxEnabled.value;
+
+    // Collect region IDs that have targets in them (only when hitbox enabled)
+    const occupiedRegions = new Set<string>();
+    if (hitbox) {
+      for (const t of targets) {
+        if (t.region_id) occupiedRegions.add(t.region_id);
+      }
+    }
+
+    // Scale-independent sizes
+    const vb = this._viewBox;
+    const scale = Math.max(vb.width, vb.height) / 100;
+    const dotRadius = scale * 1.2;
+    const fontSize = scale * 1.4;
+    const labelOffset = dotRadius + fontSize * 0.6;
+
+    return svg`
+      <g class="simulation-layer">
+        <!-- Room/zone occupation highlights -->
+        ${floor.rooms.map(room => occupiedRegions.has(room.id) ? svg`
+          <path d="${polygonToPath(room.polygon)}"
+                fill="rgba(76, 175, 80, 0.18)"
+                stroke="rgba(76, 175, 80, 0.6)"
+                stroke-width="2"
+                pointer-events="none"/>
+        ` : null)}
+        ${(floor.zones || []).map((zone: Zone) => occupiedRegions.has(zone.id) ? svg`
+          <path d="${polygonToPath(zone.polygon)}"
+                fill="rgba(76, 175, 80, 0.18)"
+                stroke="rgba(76, 175, 80, 0.6)"
+                stroke-width="2"
+                pointer-events="none"/>
+        ` : null)}
+
+        <!-- Target dots -->
+        ${targets.map(t => {
+          const inRegion = !!t.region_id;
+          const fill = inRegion ? "#4caf50" : "#9e9e9e";
+          return svg`
+            <g class="sim-target" style="cursor: grab;">
+              <circle cx="${t.position.x}" cy="${t.position.y}" r="${dotRadius}"
+                      fill="${fill}" fill-opacity="0.85"
+                      stroke="white" stroke-width="${scale * 0.2}"/>
+              <circle cx="${t.position.x}" cy="${t.position.y}" r="${dotRadius * 0.4}"
+                      fill="white" fill-opacity="0.9"/>
+              ${t.region_name ? svg`
+                <text x="${t.position.x}" y="${t.position.y + labelOffset}"
+                      text-anchor="middle"
+                      fill="var(--primary-text-color, #333)"
+                      font-size="${fontSize}"
+                      font-weight="500"
+                      pointer-events="none">
+                  ${t.region_name}
+                </text>
+              ` : null}
+            </g>
+          `;
+        })}
+      </g>
+    `;
   }
 
   private _pointInPolygon(point: Coordinates, vertices: Coordinates[]): boolean {
@@ -6030,10 +6265,11 @@ export class FpbCanvas extends LitElement {
         ${mode === "walls" ? this._renderNodeEndpoints() : null}
         ${mode === "furniture" && activeTool.value === "zone" ? this._renderNodeGuideDots() : null}
         ${currentFloor.value ? this._renderDeviceLayer(currentFloor.value) : null}
-        ${mode !== "viewing" && mode !== "occupancy" ? this._renderDrawingPreview() : null}
+        ${mode !== "viewing" && mode !== "occupancy" && mode !== "simulate" ? this._renderDrawingPreview() : null}
         ${mode === "furniture" ? this._renderFurnitureDrawingPreview() : null}
         ${mode === "walls" ? this._renderOpeningPreview() : null}
         ${mode === "placement" ? this._renderDevicePreview() : null}
+        ${mode === "simulate" && currentFloor.value ? this._renderSimulationLayer(currentFloor.value) : null}
       </svg>
       ${this._renderEdgeEditor()}
       ${this._renderNodeEditor()}

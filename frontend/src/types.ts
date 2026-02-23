@@ -177,6 +177,7 @@ export interface VirtualSensorConfig {
   motion_sensors: SensorBinding[];
   presence_sensors: SensorBinding[];
   door_sensors: SensorBinding[];
+  presence_affects: boolean;
   door_blocks_vacancy: boolean;
   door_open_resets_checking: boolean;
   occupied_threshold: number;
@@ -247,7 +248,17 @@ export interface VisualRule {
 }
 
 // Canvas mode types
-export type CanvasMode = "viewing" | "walls" | "furniture" | "placement" | "occupancy";
+export type CanvasMode = "viewing" | "walls" | "furniture" | "placement" | "occupancy" | "simulate";
+
+// Simulated target types
+export interface SimulatedTarget {
+  id: string;
+  floor_plan_id: string;
+  floor_id: string;
+  position: Coordinates;
+  region_id: string | null;
+  region_name: string | null;
+}
 
 // Tool types
 export type ToolType =

@@ -20,6 +20,7 @@ import type {
   LightPlacement,
   SwitchPlacement,
   MmwavePlacement,
+  SimulatedTarget,
 } from "../types";
 import type { ConstraintViolation } from "../utils/wall-solver";
 
@@ -41,6 +42,8 @@ interface InhabitSignals {
   occupancyPanelTarget: Signal<{ id: string; name: string; type: "room" | "zone" } | null>;
   devicePanelTarget: Signal<{ id: string; type: "light" | "switch" | "mmwave" } | null>;
   mmwavePlacements: Signal<MmwavePlacement[]>;
+  simulatedTargets: Signal<SimulatedTarget[]>;
+  simHitboxEnabled: Signal<boolean>;
   _reloadFloorData: (() => Promise<void>) | null;
 }
 
@@ -77,6 +80,8 @@ function createSignals(): InhabitSignals {
     occupancyPanelTarget: signal<{ id: string; name: string; type: "room" | "zone" } | null>(null),
     devicePanelTarget: signal<{ id: string; type: "light" | "switch" | "mmwave" } | null>(null),
     mmwavePlacements: signal<MmwavePlacement[]>([]),
+    simulatedTargets: signal<SimulatedTarget[]>([]),
+    simHitboxEnabled: signal<boolean>(true),
     _reloadFloorData: null,
   };
 }
@@ -106,6 +111,8 @@ export const focusedRoomId = s.focusedRoomId;
 export const occupancyPanelTarget = s.occupancyPanelTarget;
 export const devicePanelTarget = s.devicePanelTarget;
 export const mmwavePlacements = s.mmwavePlacements;
+export const simulatedTargets = s.simulatedTargets;
+export const simHitboxEnabled = s.simHitboxEnabled;
 
 export function setCanvasMode(mode: CanvasMode): void {
   canvasMode.value = mode;
@@ -116,6 +123,10 @@ export function setCanvasMode(mode: CanvasMode): void {
   }
   if (mode !== "placement") {
     devicePanelTarget.value = null;
+  }
+  if (mode !== "simulate") {
+    simulatedTargets.value = [];
+    simHitboxEnabled.value = true;
   }
 }
 
@@ -159,5 +170,7 @@ export function resetSignals(): void {
   occupancyPanelTarget.value = null;
   devicePanelTarget.value = null;
   mmwavePlacements.value = [];
+  simulatedTargets.value = [];
+  simHitboxEnabled.value = true;
   s._reloadFloorData = null;
 }
