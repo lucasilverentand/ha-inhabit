@@ -3410,6 +3410,24 @@ export class FpbCanvas extends LitElement {
     return max + 1;
   }
 
+  private _getAssignedHaAreaIds(exclude?: { roomId?: string; zoneId?: string }): Set<string> {
+    const assigned = new Set<string>();
+    const floorPlan = currentFloorPlan.value;
+    if (!floorPlan) return assigned;
+
+    for (const floor of floorPlan.floors) {
+      for (const room of floor.rooms) {
+        if (room.id === exclude?.roomId) continue;
+        if (room.ha_area_id) assigned.add(room.ha_area_id);
+      }
+      for (const zone of floor.zones) {
+        if (zone.id === exclude?.zoneId) continue;
+        if (zone.ha_area_id) assigned.add(zone.ha_area_id);
+      }
+    }
+    return assigned;
+  }
+
   private async _handleRoomEditorSave(): Promise<void> {
     if (!this._roomEditor || !this.hass) return;
 
@@ -3465,6 +3483,10 @@ export class FpbCanvas extends LitElement {
 
   private _renderRoomEditor() {
     if (!this._roomEditor) return null;
+    const assignedHaAreas = this._getAssignedHaAreaIds({ roomId: this._roomEditor.room.id });
+    const selectableAreas = this._haAreas.filter(
+      area => !assignedHaAreas.has(area.area_id) || area.area_id === this._roomEditor?.editAreaId,
+    );
 
     const ROOM_COLORS = [
       "rgba(156, 156, 156, 0.3)",
@@ -3504,7 +3526,7 @@ export class FpbCanvas extends LitElement {
             }}
           >
             <option value="">None</option>
-            ${this._haAreas.map(a => html`
+            ${selectableAreas.map(a => html`
               <option value=${a.area_id} ?selected=${this._roomEditor?.editAreaId === a.area_id}>${a.name}</option>
             `)}
           </select>
@@ -4696,6 +4718,10 @@ export class FpbCanvas extends LitElement {
 
   private _renderZoneEditor() {
     if (!this._zoneEditor) return null;
+    const assignedHaAreas = this._getAssignedHaAreaIds({ zoneId: this._zoneEditor.zone.id });
+    const selectableAreas = this._haAreas.filter(
+      area => !assignedHaAreas.has(area.area_id) || area.area_id === this._zoneEditor?.editAreaId,
+    );
 
     const ZONE_COLORS = [
       "#a1c4fd", "#c5e1a5", "#ffe0b2", "#d1c4e9",
@@ -4727,7 +4753,7 @@ export class FpbCanvas extends LitElement {
             }}
           >
             <option value="">None</option>
-            ${this._haAreas.map(a => html`
+            ${selectableAreas.map(a => html`
               <option value=${a.area_id} ?selected=${this._zoneEditor?.editAreaId === a.area_id}>${a.name}</option>
             `)}
           </select>

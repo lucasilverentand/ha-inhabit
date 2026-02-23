@@ -25,6 +25,7 @@ from custom_components.inhabit.models.virtual_sensor import (
     SensorBinding,
     VirtualSensorConfig,
 )
+from custom_components.inhabit.models.zone import Zone
 from custom_components.inhabit.store.floor_plan_store import FloorPlanStore
 
 
@@ -302,6 +303,96 @@ class TestRoomOperations:
 
             deleted = store.delete_room(fp.id, room.id)
             assert deleted is True
+
+
+class TestHaAreaAssignments:
+    """Test HA area assignment lookups."""
+
+    @pytest.mark.asyncio
+    async def test_find_ha_area_assignment_for_room(self, mock_hass):
+        """Find an assignment linked to a room."""
+        with patch(
+            "custom_components.inhabit.store.floor_plan_store.Store",
+            return_value=create_mock_store(),
+        ):
+            store = FloorPlanStore(mock_hass)
+            await store.async_load()
+
+            fp = store.create_floor_plan(FloorPlan(name="House"))
+            floor = store.add_floor(fp.id, Floor(name="Ground", level=0))
+            store.add_room(
+                fp.id,
+                floor.id,
+                Room(
+                    name="Living",
+                    polygon=Polygon(vertices=[Coordinates(0, 0)]),
+                    ha_area_id="area_living",
+                ),
+            )
+
+            assignment = store.find_ha_area_assignment(fp.id, "area_living")
+
+            assert assignment is not None
+            assert assignment[0] == "room"
+            assert assignment[2] == "Living"
+
+    @pytest.mark.asyncio
+    async def test_find_ha_area_assignment_for_zone(self, mock_hass):
+        """Find an assignment linked to a zone."""
+        with patch(
+            "custom_components.inhabit.store.floor_plan_store.Store",
+            return_value=create_mock_store(),
+        ):
+            store = FloorPlanStore(mock_hass)
+            await store.async_load()
+
+            fp = store.create_floor_plan(FloorPlan(name="House"))
+            floor = store.add_floor(fp.id, Floor(name="Ground", level=0))
+            store.add_zone(
+                fp.id,
+                floor.id,
+                Zone(
+                    name="Kitchen Zone",
+                    polygon=Polygon(vertices=[Coordinates(1, 1)]),
+                    ha_area_id="area_kitchen",
+                ),
+            )
+
+            assignment = store.find_ha_area_assignment(fp.id, "area_kitchen")
+
+            assert assignment is not None
+            assert assignment[0] == "zone"
+            assert assignment[2] == "Kitchen Zone"
+
+    @pytest.mark.asyncio
+    async def test_find_ha_area_assignment_excludes_entity(self, mock_hass):
+        """Exclude the current room/zone when checking for duplicates."""
+        with patch(
+            "custom_components.inhabit.store.floor_plan_store.Store",
+            return_value=create_mock_store(),
+        ):
+            store = FloorPlanStore(mock_hass)
+            await store.async_load()
+
+            fp = store.create_floor_plan(FloorPlan(name="House"))
+            floor = store.add_floor(fp.id, Floor(name="Ground", level=0))
+            room = store.add_room(
+                fp.id,
+                floor.id,
+                Room(
+                    name="Bedroom",
+                    polygon=Polygon(vertices=[Coordinates(2, 2)]),
+                    ha_area_id="area_bedroom",
+                ),
+            )
+
+            assignment = store.find_ha_area_assignment(
+                fp.id,
+                "area_bedroom",
+                exclude_room_id=room.id,
+            )
+
+            assert assignment is None
 
 
 class TestWallOperations:

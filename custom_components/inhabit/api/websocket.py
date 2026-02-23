@@ -31,6 +31,48 @@ from ..models.zone import Zone
 _LOGGER = logging.getLogger(__name__)
 
 
+def _normalize_ha_area_id(value: str | None) -> str | None:
+    """Normalize empty HA area values to None."""
+    if not value:
+        return None
+    return value
+
+
+def _validate_unique_ha_area(
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+    *,
+    store: Any,
+    floor_plan_id: str,
+    ha_area_id: str | None,
+    exclude_room_id: str | None = None,
+    exclude_zone_id: str | None = None,
+) -> bool:
+    """Ensure an HA area is not already assigned within the floor plan."""
+    if not ha_area_id:
+        return True
+
+    assignment = store.find_ha_area_assignment(
+        floor_plan_id,
+        ha_area_id,
+        exclude_room_id=exclude_room_id,
+        exclude_zone_id=exclude_zone_id,
+    )
+    if not assignment:
+        return True
+
+    assignment_type, assignment_id, assignment_name = assignment
+    connection.send_error(
+        msg["id"],
+        "duplicate_ha_area",
+        (
+            f"HA area '{ha_area_id}' is already assigned to "
+            f"{assignment_type} '{assignment_name}' ({assignment_id})"
+        ),
+    )
+    return False
+
+
 def async_register_websocket_commands(hass: HomeAssistant) -> None:
     """Register WebSocket commands."""
     websocket_api.async_register_command(hass, ws_floor_plans_list)
@@ -505,6 +547,16 @@ def ws_rooms_add(
 ) -> None:
     """Add a room to a floor."""
     store = hass.data[DOMAIN]["store"]
+    ha_area_id = _normalize_ha_area_id(msg.get("ha_area_id"))
+    if not _validate_unique_ha_area(
+        connection,
+        msg,
+        store=store,
+        floor_plan_id=msg["floor_plan_id"],
+        ha_area_id=ha_area_id,
+    ):
+        return
+
     room = Room(
         name=msg["name"],
         polygon=Polygon.from_dict(msg["polygon"]),
@@ -512,7 +564,7 @@ def ws_rooms_add(
         occupancy_sensor_enabled=msg["occupancy_sensor_enabled"],
         motion_timeout=msg["motion_timeout"],
         checking_timeout=msg["checking_timeout"],
-        ha_area_id=msg.get("ha_area_id"),
+        ha_area_id=ha_area_id,
     )
     result = store.add_room(msg["floor_plan_id"], msg["floor_id"], room)
     if result:
@@ -574,7 +626,17 @@ def ws_rooms_update(
     if "checking_timeout" in msg:
         room.checking_timeout = msg["checking_timeout"]
     if "ha_area_id" in msg:
-        room.ha_area_id = msg["ha_area_id"]
+        next_ha_area_id = _normalize_ha_area_id(msg["ha_area_id"])
+        if not _validate_unique_ha_area(
+            connection,
+            msg,
+            store=store,
+            floor_plan_id=msg["floor_plan_id"],
+            ha_area_id=next_ha_area_id,
+            exclude_room_id=room.id,
+        ):
+            return
+        room.ha_area_id = next_ha_area_id
 
     result = store.update_room(msg["floor_plan_id"], room)
     if result:
@@ -654,13 +716,23 @@ def ws_zones_add(
 ) -> None:
     """Add a zone to a floor."""
     store = hass.data[DOMAIN]["store"]
+    ha_area_id = _normalize_ha_area_id(msg.get("ha_area_id"))
+    if not _validate_unique_ha_area(
+        connection,
+        msg,
+        store=store,
+        floor_plan_id=msg["floor_plan_id"],
+        ha_area_id=ha_area_id,
+    ):
+        return
+
     zone = Zone(
         name=msg["name"],
         polygon=Polygon.from_dict(msg["polygon"]),
         color=msg["color"],
         rotation=msg["rotation"],
         room_id=msg.get("room_id"),
-        ha_area_id=msg.get("ha_area_id"),
+        ha_area_id=ha_area_id,
         occupancy_sensor_enabled=msg["occupancy_sensor_enabled"],
         motion_timeout=msg["motion_timeout"],
         checking_timeout=msg["checking_timeout"],
@@ -724,7 +796,17 @@ def ws_zones_update(
     if "room_id" in msg:
         zone.room_id = msg["room_id"]
     if "ha_area_id" in msg:
-        zone.ha_area_id = msg["ha_area_id"] or None
+        next_ha_area_id = _normalize_ha_area_id(msg["ha_area_id"])
+        if not _validate_unique_ha_area(
+            connection,
+            msg,
+            store=store,
+            floor_plan_id=msg["floor_plan_id"],
+            ha_area_id=next_ha_area_id,
+            exclude_zone_id=zone.id,
+        ):
+            return
+        zone.ha_area_id = next_ha_area_id
     if "occupancy_sensor_enabled" in msg:
         zone.occupancy_sensor_enabled = msg["occupancy_sensor_enabled"]
     if "motion_timeout" in msg:

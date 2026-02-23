@@ -322,6 +322,32 @@ class FloorPlanStore:
                 return zone
         return None
 
+    def find_ha_area_assignment(
+        self,
+        floor_plan_id: str,
+        ha_area_id: str,
+        *,
+        exclude_room_id: str | None = None,
+        exclude_zone_id: str | None = None,
+    ) -> tuple[str, str, str] | None:
+        """Find a room/zone using a given HA area within a floor plan."""
+        floor_plan = self.get_floor_plan(floor_plan_id)
+        if not floor_plan:
+            return None
+
+        for floor in floor_plan.floors:
+            for room in floor.rooms:
+                if room.id == exclude_room_id:
+                    continue
+                if room.ha_area_id == ha_area_id:
+                    return ("room", room.id, room.name)
+            for zone in floor.zones:
+                if zone.id == exclude_zone_id:
+                    continue
+                if zone.ha_area_id == ha_area_id:
+                    return ("zone", zone.id, zone.name)
+        return None
+
     # ==================== Edges ====================
 
     def add_edge(self, floor_plan_id: str, floor_id: str, edge: Edge) -> Edge | None:

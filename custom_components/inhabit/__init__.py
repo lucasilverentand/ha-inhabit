@@ -26,6 +26,7 @@ from .api import websocket as ws_api
 from .const import DOMAIN
 from .engine.simulated_target_processor import SimulatedTargetProcessor
 from .engine.virtual_sensor_engine import VirtualSensorEngine
+from .seed import async_seed_demo_house
 from .store import FloorPlanStore, ImageStore
 
 _LOGGER = logging.getLogger(__name__)
@@ -54,6 +55,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     orphaned = floor_plan_store.cleanup_orphaned_sensor_configs()
     if orphaned:
         _LOGGER.info("Cleaned up %d orphaned sensor configs: %s", len(orphaned), orphaned)
+
+    # Seed demo house on first startup (no-op if floor plans exist)
+    await async_seed_demo_house(hass, floor_plan_store)
 
     # Clean up orphaned entity registry entries
     ent_reg = er.async_get(hass)
