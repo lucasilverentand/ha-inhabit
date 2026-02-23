@@ -114,9 +114,15 @@ class OccupancyStateMachine:
         # Cancel checking timer
         self._cancel_checking_timer()
 
-        # Unsubscribe from all sensors
+        # Unsubscribe from all sensors (continue even if one fails)
         for unsub in self._unsub_state_listeners:
-            unsub()
+            try:
+                unsub()
+            except Exception:
+                _LOGGER.exception(
+                    "Error unsubscribing listener for room %s",
+                    self.config.room_id,
+                )
         self._unsub_state_listeners.clear()
 
     def set_state(self, new_state: str, reason: str = "") -> None:

@@ -147,6 +147,10 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     sensor_engine: VirtualSensorEngine = hass.data[DOMAIN]["sensor_engine"]
     await sensor_engine.async_stop()
 
+    # Flush any pending delayed saves to prevent data loss
+    store: FloorPlanStore = hass.data[DOMAIN]["store"]
+    await store.async_save()
+
     # Unload platforms
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS_LIST)
 

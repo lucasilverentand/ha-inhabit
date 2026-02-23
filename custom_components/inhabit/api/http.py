@@ -57,6 +57,12 @@ class ImageUploadView(HomeAssistantView):
         # Read file content
         content = await field.read()
 
+        if not content:
+            return web.json_response(
+                {"error": "File is empty"},
+                status=400,
+            )
+
         # Save image
         image_id = await image_store.async_save_image(content, filename)
         if not image_id:

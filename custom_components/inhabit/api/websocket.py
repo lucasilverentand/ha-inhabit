@@ -2137,6 +2137,15 @@ def ws_sensor_config_update(
     if "vacant_threshold" in msg:
         config.vacant_threshold = msg["vacant_threshold"]
 
+    # Validate threshold bounds
+    if not (0.0 <= config.vacant_threshold <= config.occupied_threshold <= 1.0):
+        connection.send_error(
+            msg["id"],
+            "invalid_thresholds",
+            "Thresholds must satisfy: 0.0 <= vacant_threshold <= occupied_threshold <= 1.0",
+        )
+        return
+
     result = store.update_sensor_config(config)
     if result:
         # Update sensor engine

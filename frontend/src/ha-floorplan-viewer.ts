@@ -37,6 +37,7 @@ import {
 } from "./stores/signals";
 
 import { effect } from "@preact/signals-core";
+import { polygonArea } from "./utils/geometry";
 
 export class HaFloorplanViewer extends LitElement {
   @property({ attribute: false })
@@ -357,6 +358,31 @@ export class HaFloorplanViewer extends LitElement {
     const floor = currentFloor.value;
     if (!floor || floor.rooms.length === 0) return null;
 
+    const floorPlanUnit = currentFloorPlan.value?.unit;
+    const toSquareMeters = (area: number) => {
+      switch (floorPlanUnit) {
+        case "cm":
+          return area / 10000;
+        case "m":
+          return area;
+        case "in":
+          return area * 0.00064516;
+        case "ft":
+          return area * 0.092903;
+        default:
+          return area;
+      }
+    };
+
+    const sortedRooms = [...floor.rooms].sort((roomA, roomB) => {
+      const areaA = toSquareMeters(Math.abs(polygonArea(roomA.polygon)));
+      const areaB = toSquareMeters(Math.abs(polygonArea(roomB.polygon)));
+      if (areaA === areaB) {
+        return roomA.name.localeCompare(roomB.name);
+      }
+      return areaB - areaA;
+    });
+
     return html`
       <div class="room-chips-bar">
         <button
@@ -366,7 +392,7 @@ export class HaFloorplanViewer extends LitElement {
           <ha-icon icon="mdi:home-outline" style="--mdc-icon-size: 16px;"></ha-icon>
           <span>All</span>
         </button>
-        ${floor.rooms.map(room => {
+        ${sortedRooms.map(room => {
           const area = room.ha_area_id
             ? this._haAreas.find(a => a.area_id === room.ha_area_id)
             : null;

@@ -73,6 +73,8 @@ function linkGroupColor(group: string): string {
   return LINK_COLORS[Math.abs(hash) % LINK_COLORS.length];
 }
 
+type IconData = { path?: string; secondaryPath?: string; viewBox?: string };
+
 export class FpbCanvas extends LitElement {
   @property({ attribute: false })
   hass?: HomeAssistant;
@@ -103,6 +105,11 @@ export class FpbCanvas extends LitElement {
 
   @state()
   private _haAreas: Array<{ area_id: string; name: string; icon?: string | null }> = [];
+
+  private _iconCache = new Map<string, IconData>();
+  private _iconLoaders = new Map<string, Promise<void>>();
+  private _stateIconCache = new Map<string, IconData>();
+  private _stateIconLoaders = new Map<string, Promise<void>>();
 
   @state()
   private _hoveredNode: Node | null = null;
@@ -222,6 +229,9 @@ export class FpbCanvas extends LitElement {
   /** Tracks the last floor ID we fitted to, so we only auto-fit on floor switch. */
   private _lastFittedFloorId: string | null = null;
 
+  /** Re-fit content when the canvas element is resized. */
+  private _resizeObserver?: ResizeObserver;
+
   private _cleanupEffects: (() => void)[] = [];
 
   static override styles = css`
@@ -326,6 +336,34 @@ export class FpbCanvas extends LitElement {
       stroke-linecap: round;
     }
 
+    svg.mode-viewing .room {
+      fill: none;
+      stroke: none;
+    }
+
+    svg.mode-viewing .door,
+    svg.mode-viewing .window {
+      fill: none;
+      stroke: var(--primary-text-color, #333);
+    }
+
+    svg.mode-viewing .window-pane,
+    svg.mode-viewing .window-closed-segment {
+      fill: none;
+      stroke: var(--primary-text-color, #333);
+    }
+
+    svg.mode-viewing .door-swing,
+    svg.mode-viewing .swing-wedge,
+    svg.mode-viewing .window-swing-wedge,
+    svg.mode-viewing .door-leaf-panel,
+    svg.mode-viewing .window-leaf-panel,
+    svg.mode-viewing .hinge-dot,
+    svg.mode-viewing .hinge-glow,
+    svg.mode-viewing .sliding-arrow {
+      display: none;
+    }
+
     .door-swing {
       fill: none;
       stroke: #78909c;
@@ -428,8 +466,14 @@ export class FpbCanvas extends LitElement {
       pointer-events: none;
     }
 
-    svg.mode-placement .device-marker {
+    svg.mode-placement .device-marker,
+    svg.mode-viewing .device-marker {
       pointer-events: auto;
+      cursor: pointer;
+    }
+
+    svg.mode-placement .device-marker *,
+    svg.mode-viewing .device-marker * {
       cursor: pointer;
     }
 
@@ -960,6 +1004,13 @@ export class FpbCanvas extends LitElement {
       pointer-events: none;
     }
 
+    svg.mode-viewing .zone-shape {
+      fill: none;
+      fill-opacity: 0;
+      stroke: var(--secondary-text-color, #666);
+      stroke-dasharray: 4,4;
+    }
+
     svg.mode-furniture .zone-shape,
     svg.mode-occupancy .zone-shape {
       pointer-events: auto;
@@ -1104,11 +1155,37 @@ export class FpbCanvas extends LitElement {
     );
 
     this._loadHaAreas();
+
+    // Observe container resizes to keep zoom/pan calculations accurate
+    this._resizeObserver = new ResizeObserver(() => {
+      // Re-fit the current floor on significant resize
+      const floor = currentFloor.value;
+      if (floor) {
+        this._fitToFloor(floor);
+      }
+    });
+    this._resizeObserver.observe(this);
   }
 
   override disconnectedCallback(): void {
     super.disconnectedCallback();
     this._cancelViewBoxAnimation();
+
+    // Cancel door/window swing animation frame
+    if (this._swingRaf !== null) {
+      cancelAnimationFrame(this._swingRaf);
+      this._swingRaf = null;
+    }
+
+    // Cancel constraint conflict blink timer
+    if (this._blinkTimer !== null) {
+      clearTimeout(this._blinkTimer);
+      this._blinkTimer = null;
+    }
+
+    // Clean up resize observer
+    this._resizeObserver?.disconnect();
+
     this._cleanupEffects.forEach((cleanup) => cleanup());
     this._cleanupEffects = [];
   }
@@ -1165,8 +1242,12 @@ export class FpbCanvas extends LitElement {
       return;
     }
 
-    // Viewing mode: left-click always pans
+    // Viewing mode: left-click selects devices or pans
     if (mode === "viewing" && e.button === 0) {
+      const clickedDevice = this._handleSelectClick(point, e.shiftKey);
+      if (clickedDevice) {
+        return;
+      }
       this._cancelViewBoxAnimation();
       this._isPanning = true;
       this._panStart = { x: e.clientX, y: e.clientY };
@@ -2374,13 +2455,17 @@ export class FpbCanvas extends LitElement {
       }
     }
 
-    // Check lights, switches, mmwave — placement mode only
-    if (mode === "placement") {
+    // Check lights, switches, mmwave — placement and viewing modes
+    if (mode === "placement" || mode === "viewing") {
       for (const light of lightPlacements.value.filter(d => d.floor_id === floor.id)) {
         const dist = Math.hypot(point.x - light.position.x, point.y - light.position.y);
         if (dist < 15) {
           selection.value = { type: "light", ids: [light.id] };
-          devicePanelTarget.value = { id: light.id, type: "light" };
+          if (mode === "placement") {
+            devicePanelTarget.value = { id: light.id, type: "light" };
+          } else {
+            this._openEntityDetails(light.entity_id);
+          }
           return true;
         }
       }
@@ -2388,7 +2473,11 @@ export class FpbCanvas extends LitElement {
         const dist = Math.hypot(point.x - sw.position.x, point.y - sw.position.y);
         if (dist < 15) {
           selection.value = { type: "switch", ids: [sw.id] };
-          devicePanelTarget.value = { id: sw.id, type: "switch" };
+          if (mode === "placement") {
+            devicePanelTarget.value = { id: sw.id, type: "switch" };
+          } else {
+            this._openEntityDetails(sw.entity_id);
+          }
           return true;
         }
       }
@@ -2396,7 +2485,11 @@ export class FpbCanvas extends LitElement {
         const dist = Math.hypot(point.x - mw.position.x, point.y - mw.position.y);
         if (dist < 15) {
           selection.value = { type: "mmwave", ids: [mw.id] };
-          devicePanelTarget.value = { id: mw.id, type: "mmwave" };
+          if (mode === "placement") {
+            devicePanelTarget.value = { id: mw.id, type: "mmwave" };
+          } else if (mw.entity_id) {
+            this._openEntityDetails(mw.entity_id);
+          }
           return true;
         }
       }
@@ -3749,21 +3842,37 @@ export class FpbCanvas extends LitElement {
     const layerConfig = layers.value;
     const frid = this._focusedRoomId;
     const focusedEdgeIds = frid ? this._getRoomEdgeIds(frid, floor) : null;
+    const backgroundLayer = layerConfig.find(l => l.id === "background");
+    const structureLayer = layerConfig.find(l => l.id === "structure");
+    const furnitureLayer = layerConfig.find(l => l.id === "furniture");
+    const labelsLayer = layerConfig.find(l => l.id === "labels");
+    const showZonesAboveWalls = this._canvasMode === "furniture" && (activeTool.value === "zone" || !!this._zoneEditor);
+    const furnitureBlock = furnitureLayer?.visible ? svg`
+      <g class="furniture-layer-container" opacity="${furnitureLayer.opacity ?? 1}">
+        ${this._renderFurnitureLayer()}
+      </g>
+    ` : null;
+    const wallsBlock = structureLayer?.visible ? svg`
+      <g class="structure-layer" opacity="${structureLayer.opacity ?? 1}">
+        <!-- Edges (rendered as chains for proper corners) -->
+        ${this._renderEdgeChains(floor, sel, focusedEdgeIds)}
+      </g>
+    ` : null;
 
     return svg`
       <!-- Background layer -->
-      ${layerConfig.find(l => l.id === "background")?.visible && floor.background_image ? svg`
+      ${backgroundLayer?.visible && floor.background_image ? svg`
         <image href="${floor.background_image}"
                x="0" y="0"
                width="${1000 * floor.background_scale}"
                height="${800 * floor.background_scale}"
-               opacity="${layerConfig.find(l => l.id === "background")?.opacity ?? 1}"
+               opacity="${backgroundLayer.opacity ?? 1}"
                class="${frid ? "room-dimmed" : ""}"/>
       ` : null}
 
-      <!-- Structure layer -->
-      ${layerConfig.find(l => l.id === "structure")?.visible ? svg`
-        <g class="structure-layer" opacity="${layerConfig.find(l => l.id === "structure")?.opacity ?? 1}">
+      <!-- Structure layer (rooms) -->
+      ${structureLayer?.visible ? svg`
+        <g class="structure-layer" opacity="${structureLayer.opacity ?? 1}">
           <!-- Rooms -->
           ${floor.rooms.map(room => svg`
             <path class="room ${sel.type === "room" && sel.ids.includes(room.id) ? "selected" : ""} ${frid ? (room.id === frid ? "room-focused" : "room-dimmed") : ""}"
@@ -3772,22 +3881,15 @@ export class FpbCanvas extends LitElement {
                   stroke="var(--divider-color, #999)"
                   stroke-width="1"/>
           `)}
-
-          <!-- Edges (rendered as chains for proper corners) -->
-          ${this._renderEdgeChains(floor, sel, focusedEdgeIds)}
         </g>
       ` : null}
 
-      <!-- Furniture layer -->
-      ${layerConfig.find(l => l.id === "furniture")?.visible ? svg`
-        <g class="furniture-layer-container" opacity="${layerConfig.find(l => l.id === "furniture")?.opacity ?? 1}">
-          ${this._renderFurnitureLayer()}
-        </g>
-      ` : null}
+      ${showZonesAboveWalls ? wallsBlock : furnitureBlock}
+      ${showZonesAboveWalls ? furnitureBlock : wallsBlock}
 
       <!-- Labels layer -->
-      ${layerConfig.find(l => l.id === "labels")?.visible ? svg`
-        <g class="labels-layer" opacity="${layerConfig.find(l => l.id === "labels")?.opacity ?? 1}">
+      ${labelsLayer?.visible ? svg`
+        <g class="labels-layer" opacity="${labelsLayer.opacity ?? 1}">
           ${floor.rooms.map(room => {
             const center = this._getPolygonCenter(room.polygon.vertices);
             if (!center) return null;
@@ -3808,65 +3910,55 @@ export class FpbCanvas extends LitElement {
           })}
         </g>
       ` : null}
-
-      <!-- Lights layer -->
-      ${layerConfig.find(l => l.id === "devices")?.visible ? svg`
-        <g class="devices-layer" opacity="${layerConfig.find(l => l.id === "devices")?.opacity ?? 1}">
-          ${lightPlacements.value
-            .filter(d => d.floor_id === floor.id)
-            .map(light => svg`
-              <g class="${frid ? (light.room_id === frid ? "device-focused" : "device-dimmed") : ""}">
-                ${this._renderLight(light)}
-              </g>
-            `)}
-          ${switchPlacements.value
-            .filter(d => d.floor_id === floor.id)
-            .map(sw => svg`
-              <g class="${frid ? (sw.room_id === frid ? "device-focused" : "device-dimmed") : ""}">
-                ${this._renderSwitch(sw)}
-              </g>
-            `)}
-        </g>
-      ` : null}
-
-      <!-- mmWave sensors layer -->
-      ${layerConfig.find(l => l.id === "devices")?.visible ? this._renderMmwaveLayer(floor) : null}
     `;
   }
 
-  // MDI lightbulb path (24x24 viewBox)
-  private static readonly _mdiPaths: Record<string, string> = {
-    "mdi:lightbulb": "M12,2A7,7 0 0,0 5,9C5,11.38 6.19,13.47 8,14.74V17A1,1 0 0,0 9,18H15A1,1 0 0,0 16,17V14.74C17.81,13.47 19,11.38 19,9A7,7 0 0,0 12,2M9,21A1,1 0 0,0 10,22H14A1,1 0 0,0 15,21V20H9V21Z",
-    "mdi:toggle-switch": "M17,7H7A5,5 0 0,0 2,12A5,5 0 0,0 7,17H17A5,5 0 0,0 22,12A5,5 0 0,0 17,7M17,15A3,3 0 0,1 14,12A3,3 0 0,1 17,9A3,3 0 0,1 20,12A3,3 0 0,1 17,15Z",
-    "mdi:eye": "M12,9A3,3 0 0,0 9,12A3,3 0 0,0 12,15A3,3 0 0,0 15,12A3,3 0 0,0 12,9M12,17A5,5 0 0,1 7,12A5,5 0 0,1 12,7A5,5 0 0,1 17,12A5,5 0 0,1 12,17M12,4.5C7,4.5 2.73,7.61 1,12C2.73,16.39 7,19.5 12,19.5C17,19.5 21.27,16.39 23,12C21.27,7.61 17,4.5 12,4.5Z",
-    "mdi:radiobox-marked": "M12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,7A5,5 0 0,0 7,12A5,5 0 0,0 12,17A5,5 0 0,0 17,12A5,5 0 0,0 12,7Z",
-    "mdi:thermostat": "M16.95,16.95L14.83,14.83C15.55,14.1 16,13.1 16,12C16,11.26 15.76,10.57 15.35,10H17.5C17.82,10.6 18,11.28 18,12C18,13.61 17.28,15.05 16.17,16.05L16.95,16.95M12,4A2,2 0 0,0 10,6V10.17C8.84,10.58 8,11.69 8,13A4,4 0 0,0 12,17A4,4 0 0,0 16,13C16,11.69 15.16,10.58 14,10.17V6A2,2 0 0,0 12,4M12,2A4,4 0 0,1 16,6V8.17C17.24,9.11 18,10.46 18,12A6,6 0 0,1 12,18A6,6 0 0,1 6,12C6,10.46 6.76,9.11 8,8.17V6A4,4 0 0,1 12,2Z",
-    "mdi:fan": "M12,11A1,1 0 0,0 11,12A1,1 0 0,0 12,13A1,1 0 0,0 13,12A1,1 0 0,0 12,11M12.5,2C17,2 17.11,5.57 14.75,6.75C13.76,7.24 13.32,8.29 13.13,9.22C13.61,9.42 14.03,9.73 14.35,10.13C18.05,8.13 22.03,8.92 22.03,12.5C22.03,17 18.46,17.1 17.28,14.73C16.78,13.74 15.72,13.3 14.79,13.11C14.59,13.59 14.28,14 13.88,14.34C15.87,18.03 15.08,22 11.5,22C7,22 6.91,18.42 9.27,17.24C10.25,16.75 10.69,15.71 10.89,14.79C10.4,14.59 9.97,14.27 9.65,13.87C5.96,15.85 2,15.07 2,11.5C2,7 5.56,6.89 6.74,9.26C7.24,10.25 8.29,10.68 9.22,10.87C9.41,10.39 9.73,9.97 10.14,9.65C8.15,5.96 8.94,2 12.5,2Z",
-    "mdi:window-shutter": "M3,4H21V8H19V20H17V8H7V20H5V8H3V4M8,10H16V12H8V10M8,14H16V16H8V14Z",
-    "mdi:camera": "M4,4H7L9,2H15L17,4H20A2,2 0 0,1 22,6V18A2,2 0 0,1 20,20H4A2,2 0 0,1 2,18V6A2,2 0 0,1 4,4M12,7A5,5 0 0,0 7,12A5,5 0 0,0 12,17A5,5 0 0,0 17,12A5,5 0 0,0 12,7M12,9A3,3 0 0,1 15,12A3,3 0 0,1 12,15A3,3 0 0,1 9,12A3,3 0 0,1 12,9Z",
-    "mdi:cast": "M1,10V12A9,9 0 0,1 10,21H12C12,14.92 7.07,10 1,10M1,14V16A5,5 0 0,1 6,21H8A7,7 0 0,0 1,14M1,18V21H4A3,3 0 0,0 1,18M21,3H3C1.89,3 1,3.89 1,5V8H3V5H21V19H14V21H21A2,2 0 0,0 23,19V5C23,3.89 22.1,3 21,3Z",
-    "mdi:devices": "M3,6H21V18H3V6M21,4H3A2,2 0 0,0 1,6V18A2,2 0 0,0 3,20H21A2,2 0 0,0 23,18V6A2,2 0 0,0 21,4Z",
-    "mdi:motion-sensor": "M10,0.2C9,0.2 8.2,1 8.2,2C8.2,3 9,3.8 10,3.8C11,3.8 11.8,3 11.8,2C11.8,1 11,0.2 10,0.2M15.67,1A7.33,7.33 0 0,0 23,8.33H21.67A6,6 0 0,0 15.67,2.33V1M15.67,3.67A4.66,4.66 0 0,0 20.33,8.33H19A3.33,3.33 0 0,0 15.67,5V3.67M15.67,6.33A2,2 0 0,0 17.67,8.33H16.33C16.33,7.97 16.03,7.67 15.67,7.67V6.33M13,12V7H9L6.5,13.5H9.17L7.67,19.5L14.5,12H13Z",
-    "mdi:door": "M8,2L20,2V22H8L8,2M14,13A1,1 0 0,0 15,12A1,1 0 0,0 14,11A1,1 0 0,0 13,12A1,1 0 0,0 14,13Z",
-    "mdi:account-eye": "M12,4A4,4 0 0,1 16,8A4,4 0 0,1 12,12A4,4 0 0,1 8,8A4,4 0 0,1 12,4M12,14C16.42,14 20,15.79 20,18V20H4V18C4,15.79 7.58,14 12,14Z",
-  };
+  private _renderDeviceLayer(floor: Floor) {
+    const layerConfig = layers.value;
+    const frid = this._focusedRoomId;
 
-  private _getIconPath(icon: string): string {
-    return FpbCanvas._mdiPaths[icon] ?? FpbCanvas._mdiPaths["mdi:devices"];
+    if (!layerConfig.find(l => l.id === "devices")?.visible) {
+      return null;
+    }
+
+    return svg`
+      <g class="devices-layer" opacity="${layerConfig.find(l => l.id === "devices")?.opacity ?? 1}">
+        ${lightPlacements.value
+          .filter(d => d.floor_id === floor.id)
+          .map(light => svg`
+            <g class="${frid ? (light.room_id === frid ? "device-focused" : "device-dimmed") : ""}">
+              ${this._renderLight(light)}
+            </g>
+          `)}
+        ${switchPlacements.value
+          .filter(d => d.floor_id === floor.id)
+          .map(sw => svg`
+            <g class="${frid ? (sw.room_id === frid ? "device-focused" : "device-dimmed") : ""}">
+              ${this._renderSwitch(sw)}
+            </g>
+          `)}
+        ${this._renderMmwaveLayer(floor)}
+      </g>
+    `;
   }
 
-  private _renderDeviceIcon(x: number, y: number, isOn: boolean, selType: string, selId: string, label: string, bgOnColor: string, iconColor: string, icon: string) {
+  private _renderDeviceIcon(x: number, y: number, isOn: boolean, selType: string, selId: string, label: string, bgOnColor: string, iconColor: string, iconData?: IconData) {
     const sel = selection.value;
     const r = 14;
-    const iconScale = r / 16;
-    const path = this._getIconPath(icon);
+    const iconSize = 18;
+    const fallback = this._getIconData("mdi:devices");
+    const resolvedIcon = iconData ?? fallback;
+    const viewBox = resolvedIcon?.viewBox ?? "0 0 24 24";
     return svg`
       <g class="device-marker ${isOn ? "on" : "off"} ${sel.type === selType && sel.ids.includes(selId) ? "selected" : ""}"
          transform="translate(${x}, ${y})">
         <circle r="${r}" fill="${isOn ? bgOnColor : "#e0e0e0"}" stroke="#333" stroke-width="2"/>
-        <g transform="scale(${iconScale})">
-          <path d="${path}" fill="${iconColor}" transform="translate(-12,-12)"/>
-        </g>
+        ${resolvedIcon?.path ? svg`
+          <svg x="${-iconSize / 2}" y="${-iconSize / 2}" width="${iconSize}" height="${iconSize}" viewBox="${viewBox}">
+            <path d="${resolvedIcon.path}" fill="${iconColor}"></path>
+            ${resolvedIcon.secondaryPath ? svg`<path d="${resolvedIcon.secondaryPath}" fill="${iconColor}"></path>` : null}
+          </svg>
+        ` : null}
         <text y="${r + 12}" text-anchor="middle" font-size="10" fill="#333">${label}</text>
       </g>
     `;
@@ -3876,16 +3968,16 @@ export class FpbCanvas extends LitElement {
     const state = this.hass?.states[light.entity_id];
     const isOn = state?.state === "on";
     const label = (light.label || state?.attributes.friendly_name || light.entity_id) as string;
-    const icon = state ? this._getEntityIcon(state) : "mdi:lightbulb";
-    return this._renderDeviceIcon(light.position.x, light.position.y, isOn, "light", light.id, label, "#ffd600", isOn ? "#333" : "#616161", icon);
+    const iconData = this._getEntityIconData(state, "mdi:lightbulb");
+    return this._renderDeviceIcon(light.position.x, light.position.y, isOn, "light", light.id, label, "#ffd600", isOn ? "#333" : "#616161", iconData);
   }
 
   private _renderSwitch(sw: SwitchPlacement) {
     const state = this.hass?.states[sw.entity_id];
     const isOn = state?.state === "on";
     const label = (sw.label || state?.attributes.friendly_name || sw.entity_id) as string;
-    const icon = state ? this._getEntityIcon(state) : "mdi:toggle-switch";
-    return this._renderDeviceIcon(sw.position.x, sw.position.y, isOn, "switch", sw.id, label, "#4caf50", isOn ? "#fff" : "#616161", icon);
+    const iconData = this._getEntityIconData(state, "mdi:toggle-switch");
+    return this._renderDeviceIcon(sw.position.x, sw.position.y, isOn, "switch", sw.id, label, "#4caf50", isOn ? "#fff" : "#616161", iconData);
   }
 
   private _renderMmwaveLayer(floor: Floor) {
@@ -3893,6 +3985,7 @@ export class FpbCanvas extends LitElement {
     if (placements.length === 0) return null;
 
     const sel = selection.value;
+    const showCoverage = this._canvasMode !== "viewing";
 
     return svg`
       <g class="mmwave-layer">
@@ -3920,20 +4013,22 @@ export class FpbCanvas extends LitElement {
 
           return svg`
             <g class="mmwave-placement ${isSelected ? "selected" : ""}">
-              <!-- FOV cone -->
-              <path
-                d="M ${px} ${py} L ${ax} ${ay} A ${range} ${range} 0 ${largeArc} 1 ${bx} ${by} Z"
-                fill="rgba(33, 150, 243, 0.1)"
-                stroke="rgba(33, 150, 243, 0.4)"
-                stroke-width="1"
-                stroke-dasharray="4 2"
-              />
+              ${showCoverage ? svg`
+                <!-- FOV cone -->
+                <path
+                  d="M ${px} ${py} L ${ax} ${ay} A ${range} ${range} 0 ${largeArc} 1 ${bx} ${by} Z"
+                  fill="rgba(33, 150, 243, 0.1)"
+                  stroke="rgba(33, 150, 243, 0.4)"
+                  stroke-width="1"
+                  stroke-dasharray="4 2"
+                />
+              ` : null}
               <!-- Sensor icon -->
               <circle cx="${px}" cy="${py}" r="8"
                 fill="#2196f3" stroke="#fff" stroke-width="2"/>
               <text x="${px}" y="${py + 3}" text-anchor="middle"
                 font-size="8" fill="#fff" font-weight="bold">R</text>
-              ${isSelected ? svg`
+              ${showCoverage && isSelected ? svg`
                 <!-- Rotation handle -->
                 <g class="rotation-handle"
                    data-mmwave-id="${p.id}"
@@ -5362,6 +5457,210 @@ export class FpbCanvas extends LitElement {
     return (entity.attributes.icon as string) || "mdi:devices";
   }
 
+  private _getEntityIconData(entity: HassEntity | undefined, fallbackIcon: string): IconData | undefined {
+    if (!entity) return this._getIconData(fallbackIcon);
+
+    const hassWithEntities = this.hass as HomeAssistant & { entities?: Record<string, { icon?: string }> };
+    const override = hassWithEntities?.entities?.[entity.entity_id]?.icon;
+    const attrIcon = entity.attributes.icon as string | undefined;
+    if (override || attrIcon) {
+      return this._getIconData(override ?? attrIcon ?? fallbackIcon);
+    }
+
+    const cacheKey = this._getStateIconCacheKey(entity);
+    const cached = this._stateIconCache.get(cacheKey);
+    if (cached) return cached;
+
+    this._queueStateIconLoad(entity, cacheKey);
+    return this._getIconData(fallbackIcon);
+  }
+
+  private _openEntityDetails(entityId: string) {
+    if (!this.hass) return;
+    this.dispatchEvent(new CustomEvent("hass-more-info", {
+      detail: { entityId },
+      bubbles: true,
+      composed: true,
+    }));
+  }
+
+  private _getStateIconCacheKey(entity: HassEntity): string {
+    const deviceClass = entity.attributes.device_class as string | undefined;
+    return `${entity.entity_id}:${entity.state}:${deviceClass ?? ""}`;
+  }
+
+  private _queueStateIconLoad(entity: HassEntity, cacheKey: string) {
+    if (this._stateIconLoaders.has(cacheKey)) return;
+    const loader = this._loadStateIcon(entity, cacheKey)
+      .catch((err) => {
+        console.warn("Failed to load state icon", entity.entity_id, err);
+      })
+      .finally(() => {
+        this._stateIconLoaders.delete(cacheKey);
+      });
+    this._stateIconLoaders.set(cacheKey, loader);
+  }
+
+  private async _ensureHaStateIconDefined(): Promise<void> {
+    if (customElements.get("ha-state-icon")) return;
+
+    await this._ensureHaIconDefined();
+    const dynamicImport = new Function("path", "return import(path);") as (path: string) => Promise<unknown>;
+    const candidates = ["/frontend_latest/ha-state-icon.js", "/frontend_es5/ha-state-icon.js"];
+
+    for (const path of candidates) {
+      try {
+        await dynamicImport(path);
+      } catch (err) {
+        console.warn("Failed to load ha-state-icon module", path, err);
+      }
+      if (customElements.get("ha-state-icon")) break;
+    }
+
+    if (customElements.get("ha-state-icon")) {
+      await customElements.whenDefined("ha-state-icon");
+    }
+  }
+
+  private async _loadStateIcon(entity: HassEntity, cacheKey: string): Promise<void> {
+    if (!this.hass) return;
+
+    await this._ensureHaStateIconDefined();
+    if (!customElements.get("ha-state-icon")) return;
+
+    const stateEl = document.createElement("ha-state-icon") as HTMLElement & {
+      hass?: HomeAssistant;
+      stateObj?: HassEntity;
+      updateComplete?: Promise<unknown>;
+    };
+    stateEl.hass = this.hass as HomeAssistant;
+    stateEl.stateObj = entity;
+    stateEl.style.display = "none";
+
+    const host = this.isConnected ? this : document.body;
+    host?.appendChild(stateEl);
+
+    try {
+      if (stateEl.updateComplete) {
+        await stateEl.updateComplete;
+      }
+
+      let iconData: IconData | null = null;
+      for (let i = 0; i < 20; i++) {
+        const directSvg = stateEl.shadowRoot?.querySelector("ha-svg-icon") as IconData | null;
+        if (directSvg?.path) {
+          iconData = {
+            path: directSvg.path,
+            secondaryPath: directSvg.secondaryPath,
+            viewBox: directSvg.viewBox,
+          };
+          break;
+        }
+
+        const haIcon = stateEl.shadowRoot?.querySelector("ha-icon") as HTMLElement | null;
+        const nestedSvg = haIcon?.shadowRoot?.querySelector("ha-svg-icon") as IconData | null;
+        if (nestedSvg?.path) {
+          iconData = {
+            path: nestedSvg.path,
+            secondaryPath: nestedSvg.secondaryPath,
+            viewBox: nestedSvg.viewBox,
+          };
+          break;
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+
+      if (iconData) {
+        this._stateIconCache.set(cacheKey, iconData);
+        this.requestUpdate();
+      }
+    } finally {
+      stateEl.remove();
+    }
+  }
+
+  private _getIconData(icon: string) {
+    const cached = this._iconCache.get(icon);
+    if (cached) return cached;
+    this._queueIconLoad(icon);
+    return undefined;
+  }
+
+  private _queueIconLoad(icon: string) {
+    if (this._iconLoaders.has(icon)) return;
+    const loader = this._loadIcon(icon)
+      .catch((err) => {
+        console.warn("Failed to load icon", icon, err);
+      })
+      .finally(() => {
+        this._iconLoaders.delete(icon);
+      });
+    this._iconLoaders.set(icon, loader);
+  }
+
+  private async _ensureHaIconDefined(): Promise<void> {
+    if (customElements.get("ha-icon")) return;
+
+    const dynamicImport = new Function("path", "return import(path);") as (path: string) => Promise<unknown>;
+    const candidates = ["/frontend_latest/ha-icon.js", "/frontend_es5/ha-icon.js"];
+
+    for (const path of candidates) {
+      try {
+        await dynamicImport(path);
+      } catch (err) {
+        console.warn("Failed to load ha-icon module", path, err);
+      }
+      if (customElements.get("ha-icon")) break;
+    }
+
+    if (customElements.get("ha-icon")) {
+      await customElements.whenDefined("ha-icon");
+    }
+  }
+
+  private async _loadIcon(icon: string): Promise<void> {
+    await this._ensureHaIconDefined();
+    if (!customElements.get("ha-icon")) {
+      return;
+    }
+
+    const iconEl = document.createElement("ha-icon") as HTMLElement & { icon?: string; updateComplete?: Promise<unknown> };
+    iconEl.icon = icon;
+    iconEl.style.display = "none";
+    const host = this.isConnected ? this : document.body;
+    host?.appendChild(iconEl);
+
+    try {
+      if (iconEl.updateComplete) {
+        await iconEl.updateComplete;
+      }
+
+      let iconData: { path?: string; secondaryPath?: string; viewBox?: string } | null = null;
+      for (let i = 0; i < 10; i++) {
+        const svgIcon = iconEl.shadowRoot?.querySelector("ha-svg-icon") as
+          | { path?: string; secondaryPath?: string; viewBox?: string }
+          | null;
+        if (svgIcon?.path) {
+          iconData = {
+            path: svgIcon.path,
+            secondaryPath: svgIcon.secondaryPath,
+            viewBox: svgIcon.viewBox,
+          };
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+
+      if (iconData) {
+        this._iconCache.set(icon, iconData);
+        this.requestUpdate();
+      }
+    } finally {
+      iconEl.remove();
+    }
+  }
+
   private async _placeDevice(entityId: string): Promise<void> {
     if (!this.hass || !this._pendingDevice) return;
 
@@ -5730,6 +6029,7 @@ export class FpbCanvas extends LitElement {
         ${mode === "walls" ? this._renderAngleConstraints() : null}
         ${mode === "walls" ? this._renderNodeEndpoints() : null}
         ${mode === "furniture" && activeTool.value === "zone" ? this._renderNodeGuideDots() : null}
+        ${currentFloor.value ? this._renderDeviceLayer(currentFloor.value) : null}
         ${mode !== "viewing" && mode !== "occupancy" ? this._renderDrawingPreview() : null}
         ${mode === "furniture" ? this._renderFurnitureDrawingPreview() : null}
         ${mode === "walls" ? this._renderOpeningPreview() : null}
