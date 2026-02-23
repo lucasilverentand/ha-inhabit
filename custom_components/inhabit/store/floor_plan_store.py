@@ -494,6 +494,33 @@ class FloorPlanStore:
             return True
         return False
 
+    def cleanup_orphaned_sensor_configs(self) -> list[str]:
+        """Remove sensor configs whose room/zone no longer exists.
+
+        Returns the list of removed room_ids.
+        """
+        sensor_configs = self._data.get("sensor_configs", {})
+        if not sensor_configs:
+            return []
+
+        # Collect all valid room and zone IDs
+        valid_ids: set[str] = set()
+        for fp in self.get_floor_plans():
+            for floor in fp.floors:
+                for room in floor.rooms:
+                    valid_ids.add(room.id)
+                for zone in floor.zones:
+                    valid_ids.add(zone.id)
+
+        orphaned = [rid for rid in sensor_configs if rid not in valid_ids]
+        for rid in orphaned:
+            del sensor_configs[rid]
+
+        if orphaned:
+            self.async_delay_save()
+
+        return orphaned
+
     # ==================== Visual Rules ====================
 
     def get_visual_rules(self, floor_plan_id: str) -> list[VisualRule]:

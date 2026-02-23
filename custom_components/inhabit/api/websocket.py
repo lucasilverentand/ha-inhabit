@@ -206,10 +206,21 @@ def ws_floor_plans_delete(
 ) -> None:
     """Delete a floor plan."""
     store = hass.data[DOMAIN]["store"]
-    if store.delete_floor_plan(msg["floor_plan_id"]):
-        connection.send_result(msg["id"], {"success": True})
-    else:
+    floor_plan = store.get_floor_plan(msg["floor_plan_id"])
+    if not floor_plan:
         connection.send_error(msg["id"], "not_found", "Floor plan not found")
+        return
+
+    # Remove all occupancy sensors from the engine before deleting the floor plan
+    sensor_engine = hass.data[DOMAIN]["sensor_engine"]
+    region_ids = [room.id for room in floor_plan.get_all_rooms()]
+    for floor in floor_plan.floors:
+        region_ids.extend(zone.id for zone in floor.zones)
+    for region_id in region_ids:
+        hass.async_create_task(sensor_engine.async_remove_room(region_id))
+
+    store.delete_floor_plan(msg["floor_plan_id"])
+    connection.send_result(msg["id"], {"success": True})
 
 
 # ==================== Floors ====================

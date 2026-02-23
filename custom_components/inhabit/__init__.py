@@ -17,6 +17,7 @@ except ImportError:
     HAS_STATIC_PATH_CONFIG = False
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.typing import ConfigType
 
 from .api import http as http_api
@@ -48,6 +49,32 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     image_store = ImageStore(hass)
     await image_store.async_setup()
+
+    # Clean up orphaned sensor configs (rooms/zones deleted in a previous session)
+    orphaned = floor_plan_store.cleanup_orphaned_sensor_configs()
+    if orphaned:
+        _LOGGER.info("Cleaned up %d orphaned sensor configs: %s", len(orphaned), orphaned)
+
+    # Clean up orphaned entity registry entries
+    ent_reg = er.async_get(hass)
+    valid_ids = set()
+    for fp in floor_plan_store.get_floor_plans():
+        for room in fp.get_all_rooms():
+            valid_ids.add(room.id)
+        for floor in fp.floors:
+            for zone in floor.zones:
+                valid_ids.add(zone.id)
+
+    orphaned_entities = [
+        ent
+        for ent in er.async_entries_for_config_entry(ent_reg, entry.entry_id)
+        if ent.unique_id.startswith("fp_")
+        and ent.unique_id.endswith("_occupancy")
+        and ent.unique_id[3:-10] not in valid_ids  # strip "fp_" and "_occupancy"
+    ]
+    for ent in orphaned_entities:
+        _LOGGER.info("Removing orphaned entity %s (%s)", ent.entity_id, ent.unique_id)
+        ent_reg.async_remove(ent.entity_id)
 
     # Initialize virtual sensor engine
     sensor_engine = VirtualSensorEngine(hass, floor_plan_store)
