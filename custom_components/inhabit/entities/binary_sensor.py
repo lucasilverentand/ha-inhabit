@@ -158,14 +158,15 @@ class VirtualOccupancySensor(BinarySensorEntity):
 
         # Entity attributes
         self._attr_unique_id = f"fp_{room_id}_occupancy"
-        self._attr_name = f"{room_name} Occupancy"
+        self._attr_name = "Occupancy"
 
-        # Device info - group sensors by floor plan
+        # Device info - one device per sensor
         self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, floor_plan_id)},
-            name=f"{floor_plan_name} Floor Plan",
+            identifiers={(DOMAIN, room_id)},
+            name=room_name,
             manufacturer="Inhabit",
-            model="Virtual Floor Plan",
+            model="Virtual Occupancy Sensor",
+            via_device=(DOMAIN, floor_plan_id),
         )
 
         # State
