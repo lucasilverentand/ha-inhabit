@@ -1148,6 +1148,13 @@ export class FpbCanvas extends LitElement {
         }
       }),
       effect(() => {
+        const enabled = simHitboxEnabled.value;
+        // When simulation is toggled off, clear backend targets
+        if (!enabled && this.hass) {
+          this.hass.callWS({ type: "inhabit/simulate/target/clear" }).catch(() => {});
+        }
+      }),
+      effect(() => {
         const floor = currentFloor.value;
         if (floor && floor.id !== this._lastFittedFloorId) {
           this._lastFittedFloorId = floor.id;
@@ -1269,8 +1276,8 @@ export class FpbCanvas extends LitElement {
       return;
     }
 
-    // Occupancy mode: simulated target interactions (drag/remove existing targets)
-    if (mode === "occupancy" && (e.button === 0 || e.button === 2)) {
+    // Occupancy mode + simulation enabled: place/drag/remove targets
+    if (mode === "occupancy" && simHitboxEnabled.value && (e.button === 0 || e.button === 2)) {
       const targets = simulatedTargets.value;
       const vb = this._viewBox;
       const hitRadius = Math.max(vb.width, vb.height) * 0.015;
@@ -1294,8 +1301,11 @@ export class FpbCanvas extends LitElement {
         this._svg?.setPointerCapture(e.pointerId);
         return;
       }
-      // For left-click with no target hit, fall through to select handling
-      // (rooms/zones open occupancy panel; empty space places a new target)
+      // Left-click with no target hit: place a new simulated target
+      if (e.button === 0) {
+        this._addSimulatedTarget(point);
+        return;
+      }
     }
 
     // Left click behavior depends on tool
@@ -1314,11 +1324,6 @@ export class FpbCanvas extends LitElement {
           // Clear selection if we had an editor open
           if (hadEditor) {
             selection.value = { type: "none", ids: [] };
-          }
-          if (mode === "occupancy") {
-            // Place a new simulated target on empty space
-            this._addSimulatedTarget(point);
-            return;
           }
           // Start panning if clicking on empty space
           this._isPanning = true;
@@ -1887,7 +1892,7 @@ export class FpbCanvas extends LitElement {
    * Right-click on a node to dissolve it (merge the two connected edges).
    */
   private async _handleContextMenu(e: MouseEvent): Promise<void> {
-    if (this._canvasMode === "occupancy") {
+    if (this._canvasMode === "occupancy" && simHitboxEnabled.value) {
       e.preventDefault();
       return; // Right-click removal of sim targets handled in _handlePointerDown
     }
@@ -6325,7 +6330,7 @@ export class FpbCanvas extends LitElement {
         ${mode === "furniture" ? this._renderFurnitureDrawingPreview() : null}
         ${mode === "walls" ? this._renderOpeningPreview() : null}
         ${mode === "placement" ? this._renderDevicePreview() : null}
-        ${mode === "occupancy" && currentFloor.value ? this._renderSimulationLayer(currentFloor.value) : null}
+        ${mode === "occupancy" && simHitboxEnabled.value && currentFloor.value ? this._renderSimulationLayer(currentFloor.value) : null}
       </svg>
       ${this._renderEdgeEditor()}
       ${this._renderNodeEditor()}

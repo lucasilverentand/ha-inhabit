@@ -13,6 +13,7 @@ import {
   canvasMode,
   setCanvasMode,
   simHitboxEnabled,
+  simulatedTargets,
 } from "../../stores/signals";
 import { canUndo, canRedo, undo, redo } from "../../stores/history-store";
 
@@ -597,16 +598,22 @@ export class FpbToolbar extends LitElement {
           </button>
         </div>
 
-        <!-- Occupancy mode: region detection toggle -->
+        <!-- Occupancy mode: simulation toggle -->
         ${mode === "occupancy" ? html`
           <div class="divider"></div>
           <div class="tool-group">
             <button
-              class="tool-button ${simHitboxEnabled.value ? "" : "active"}"
-              @click=${() => { simHitboxEnabled.value = !simHitboxEnabled.value; }}
-              title="${simHitboxEnabled.value ? "Disable region detection" : "Enable region detection"}"
+              class="tool-button ${simHitboxEnabled.value ? "active" : ""}"
+              @click=${() => {
+                const next = !simHitboxEnabled.value;
+                simHitboxEnabled.value = next;
+                if (!next) {
+                  simulatedTargets.value = [];
+                }
+              }}
+              title="${simHitboxEnabled.value ? "Stop simulating" : "Simulate positions"}"
             >
-              <ha-icon icon="${simHitboxEnabled.value ? "mdi:target-account" : "mdi:account-off-outline"}"></ha-icon>
+              <ha-icon icon="mdi:target-account"></ha-icon>
             </button>
           </div>
         ` : null}

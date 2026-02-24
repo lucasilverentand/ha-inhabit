@@ -81,7 +81,7 @@ function createSignals(): InhabitSignals {
     devicePanelTarget: signal<{ id: string; type: "light" | "switch" | "mmwave" } | null>(null),
     mmwavePlacements: signal<MmwavePlacement[]>([]),
     simulatedTargets: signal<SimulatedTarget[]>([]),
-    simHitboxEnabled: signal<boolean>(true),
+    simHitboxEnabled: signal<boolean>(false),
     _reloadFloorData: null,
   };
 }
@@ -121,7 +121,7 @@ export function setCanvasMode(mode: CanvasMode): void {
   if (mode !== "occupancy") {
     occupancyPanelTarget.value = null;
     simulatedTargets.value = [];
-    simHitboxEnabled.value = true;
+    simHitboxEnabled.value = false;
   }
   if (mode !== "placement") {
     devicePanelTarget.value = null;
@@ -169,6 +169,6 @@ export function resetSignals(): void {
   devicePanelTarget.value = null;
   mmwavePlacements.value = [];
   simulatedTargets.value = [];
-  simHitboxEnabled.value = true;
+  simHitboxEnabled.value = false;
   s._reloadFloorData = null;
 }
