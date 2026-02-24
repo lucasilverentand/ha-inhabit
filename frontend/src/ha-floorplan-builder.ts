@@ -614,7 +614,15 @@ export class HaFloorplanBuilder extends LitElement {
   }
 
   private _handleRoomChipClick(roomId: string | null): void {
-    if (focusedRoomId.value === roomId) {
+    if (roomId === null) {
+      // "All" — always reset and animate to floor
+      // Use sentinel to force signal change even if already null
+      if (focusedRoomId.value === null) {
+        focusedRoomId.value = "__reset__";
+      }
+      focusedRoomId.value = null;
+      occupancyPanelTarget.value = null;
+    } else if (focusedRoomId.value === roomId) {
       // Toggle off if clicking same chip
       focusedRoomId.value = null;
     } else {
@@ -754,7 +762,7 @@ export class HaFloorplanBuilder extends LitElement {
                 .targetId=${this._occupancyPanelTarget.id}
                 .targetName=${this._occupancyPanelTarget.name}
                 .targetType=${this._occupancyPanelTarget.type}
-                @close-panel=${() => { occupancyPanelTarget.value = null; }}
+                @close-panel=${() => { occupancyPanelTarget.value = null; focusedRoomId.value = null; }}
               ></fpb-occupancy-panel>
             ` : null}
             ${this._devicePanelTarget ? html`

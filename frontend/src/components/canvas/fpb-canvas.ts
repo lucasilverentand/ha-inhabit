@@ -1159,7 +1159,7 @@ export class FpbCanvas extends LitElement {
         const roomId = focusedRoomId.value;
         const prev = this._focusedRoomId;
         this._focusedRoomId = roomId;
-        if (roomId) {
+        if (roomId && roomId !== "__reset__") {
           requestAnimationFrame(() => this._animateToRoom(roomId));
         } else if (prev !== null) {
           // "All" clicked — animate back to show entire floor

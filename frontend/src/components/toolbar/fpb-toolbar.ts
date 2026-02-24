@@ -46,9 +46,6 @@ export class FpbToolbar extends LitElement {
   floorPlans: FloorPlan[] = [];
 
   @state()
-  private _addMenuOpen = false;
-
-  @state()
   private _floorMenuOpen = false;
 
   @state()
@@ -70,8 +67,10 @@ export class FpbToolbar extends LitElement {
       align-items: center;
       padding: 0 12px;
       gap: 4px;
-      background: var(--app-header-background-color, var(--primary-color));
-      color: var(--app-header-text-color, var(--text-primary-color));
+      height: var(--header-height, 56px);
+      background: var(--card-background-color, #fff);
+      color: var(--primary-text-color);
+      border-bottom: 1px solid var(--divider-color, rgba(0, 0, 0, 0.12));
       box-sizing: border-box;
       overflow: visible;
     }
@@ -98,7 +97,7 @@ export class FpbToolbar extends LitElement {
     }
 
     .floor-trigger:hover {
-      background: rgba(255, 255, 255, 0.12);
+      background: rgba(0, 0, 0, 0.06);
     }
 
     .floor-trigger ha-icon {
@@ -137,6 +136,7 @@ export class FpbToolbar extends LitElement {
       width: 100%;
       text-align: left;
       transition: background 0.12s;
+      white-space: nowrap;
     }
 
     .floor-option:hover {
@@ -163,9 +163,11 @@ export class FpbToolbar extends LitElement {
       margin: 4px 6px;
     }
 
+    .floor-option .rename-btn,
     .floor-option .delete-btn {
-      display: none;
-      margin-left: auto;
+      display: flex;
+      visibility: hidden;
+      opacity: 0;
       padding: 4px;
       border: none;
       border-radius: 8px;
@@ -173,41 +175,27 @@ export class FpbToolbar extends LitElement {
       color: var(--secondary-text-color);
       cursor: pointer;
       line-height: 1;
-      transition: color 0.12s, background 0.12s;
+      transition: color 0.12s, background 0.12s, opacity 0.12s, visibility 0.12s;
     }
 
+    .floor-option .rename-btn {
+      margin-left: auto;
+    }
+
+    .floor-option .rename-btn ha-icon,
     .floor-option .delete-btn ha-icon {
       --mdc-icon-size: 16px;
     }
 
+    .floor-option:hover .rename-btn,
     .floor-option:hover .delete-btn {
-      display: flex;
+      visibility: visible;
+      opacity: 1;
     }
 
     .floor-option .delete-btn:hover {
       color: var(--error-color, #f44336);
       background: rgba(244, 67, 54, 0.08);
-    }
-
-    .floor-option .rename-btn {
-      display: none;
-      margin-left: auto;
-      padding: 4px;
-      border: none;
-      border-radius: 8px;
-      background: transparent;
-      color: var(--secondary-text-color);
-      cursor: pointer;
-      line-height: 1;
-      transition: color 0.12s, background 0.12s;
-    }
-
-    .floor-option .rename-btn ha-icon {
-      --mdc-icon-size: 16px;
-    }
-
-    .floor-option:hover .rename-btn {
-      display: flex;
     }
 
     .floor-option .rename-btn:hover {
@@ -242,7 +230,7 @@ export class FpbToolbar extends LitElement {
     .divider {
       width: 1px;
       height: 24px;
-      background: rgba(255, 255, 255, 0.2);
+      background: var(--divider-color, rgba(0, 0, 0, 0.12));
       margin: 0 4px;
     }
 
@@ -260,21 +248,23 @@ export class FpbToolbar extends LitElement {
       border: none;
       border-radius: 8px;
       background: transparent;
-      color: inherit;
+      color: var(--secondary-text-color);
       cursor: pointer;
-      transition: background 0.15s;
+      transition: background 0.15s, color 0.15s;
     }
 
     .tool-button:hover {
-      background: rgba(255, 255, 255, 0.12);
+      background: rgba(0, 0, 0, 0.08);
+      color: var(--primary-text-color);
     }
 
     .tool-button.active {
-      background: rgba(255, 255, 255, 0.22);
+      background: var(--primary-color);
+      color: #fff;
     }
 
     .tool-button:disabled {
-      opacity: 0.35;
+      opacity: 0.3;
       cursor: not-allowed;
     }
 
@@ -290,7 +280,7 @@ export class FpbToolbar extends LitElement {
     .mode-group {
       display: flex;
       gap: 2px;
-      background: rgba(255, 255, 255, 0.08);
+      background: rgba(0, 0, 0, 0.06);
       border-radius: 10px;
       padding: 2px;
     }
@@ -304,17 +294,19 @@ export class FpbToolbar extends LitElement {
       border: none;
       border-radius: 8px;
       background: transparent;
-      color: inherit;
+      color: var(--secondary-text-color);
       cursor: pointer;
-      transition: background 0.15s;
+      transition: background 0.15s, color 0.15s;
     }
 
     .mode-button:hover {
-      background: rgba(255, 255, 255, 0.1);
+      background: rgba(0, 0, 0, 0.08);
+      color: var(--primary-text-color);
     }
 
     .mode-button.active {
-      background: rgba(255, 255, 255, 0.22);
+      background: var(--primary-color);
+      color: #fff;
     }
 
     .mode-button ha-icon {
@@ -325,78 +317,6 @@ export class FpbToolbar extends LitElement {
       flex: 1;
     }
 
-    /* --- Add button + menu --- */
-    .add-button-container {
-      position: relative;
-    }
-
-    .add-button {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      width: 36px;
-      height: 36px;
-      border: none;
-      border-radius: 8px;
-      background: rgba(255, 255, 255, 0.15);
-      color: inherit;
-      cursor: pointer;
-      transition: background 0.15s;
-    }
-
-    .add-button:hover {
-      background: rgba(255, 255, 255, 0.25);
-    }
-
-    .add-button.menu-open {
-      background: rgba(255, 255, 255, 0.25);
-    }
-
-    .add-button ha-icon {
-      --mdc-icon-size: 20px;
-    }
-
-    .add-menu {
-      position: absolute;
-      top: calc(100% + 6px);
-      right: 0;
-      background: var(--card-background-color);
-      border-radius: 14px;
-      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15), 0 2px 8px rgba(0, 0, 0, 0.08);
-      min-width: 160px;
-      z-index: 100;
-      overflow: hidden;
-      padding: 6px;
-    }
-
-    .add-menu-item {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      padding: 10px 12px;
-      border: none;
-      border-radius: 10px;
-      background: transparent;
-      color: var(--primary-text-color);
-      cursor: pointer;
-      font-size: 14px;
-      width: 100%;
-      text-align: left;
-      transition: background 0.12s;
-    }
-
-    .add-menu-item:hover {
-      background: var(--secondary-background-color, #f5f5f5);
-    }
-
-    .add-menu-item.active {
-      color: var(--primary-color);
-      font-weight: 600;
-    }
-
-    .add-menu-item ha-icon {
-      --mdc-icon-size: 18px;
-    }
   `;
 
   private _selectFloor(floorId: string): void {
@@ -412,7 +332,6 @@ export class FpbToolbar extends LitElement {
 
   private _handleToolSelect(tool: ToolType): void {
     activeTool.value = tool;
-    this._addMenuOpen = false;
   }
 
   private _handleUndo(): void {
@@ -499,18 +418,11 @@ export class FpbToolbar extends LitElement {
     );
   }
 
-  private _toggleAddMenu(): void {
-    this._addMenuOpen = !this._addMenuOpen;
-    this._floorMenuOpen = false;
-  }
-
   private _toggleFloorMenu(): void {
     this._floorMenuOpen = !this._floorMenuOpen;
-    this._addMenuOpen = false;
   }
 
   private _closeMenus(): void {
-    this._addMenuOpen = false;
     this._floorMenuOpen = false;
   }
 
@@ -686,10 +598,9 @@ export class FpbToolbar extends LitElement {
         </button>
       </div>
 
-      <div class="divider"></div>
-
       <!-- Simulate mode: hitbox toggle -->
       ${mode === "simulate" ? html`
+        <div class="divider"></div>
         <div class="tool-group">
           <button
             class="tool-button ${simHitboxEnabled.value ? "active" : ""}"
@@ -701,33 +612,19 @@ export class FpbToolbar extends LitElement {
         </div>
       ` : null}
 
-      <!-- Add Menu -->
+      <!-- Tool buttons (contextual) -->
       ${menuItems.length > 0 ? html`
-        <div class="add-button-container">
-          <button
-            class="add-button ${this._addMenuOpen ? "menu-open" : ""}"
-            @click=${this._toggleAddMenu}
-            title="Add element"
-          >
-            <ha-icon icon="mdi:plus"></ha-icon>
-          </button>
-          ${this._addMenuOpen
-            ? html`
-                <div class="add-menu">
-                  ${menuItems.map(
-                    (item) => html`
-                      <button
-                        class="add-menu-item ${tool === item.id ? "active" : ""}"
-                        @click=${() => this._handleToolSelect(item.id)}
-                      >
-                        <ha-icon icon=${item.icon}></ha-icon>
-                        ${item.label}
-                      </button>
-                    `
-                  )}
-                </div>
-              `
-            : null}
+        <div class="divider"></div>
+        <div class="tool-group">
+          ${menuItems.map(item => html`
+            <button
+              class="tool-button ${tool === item.id ? "active" : ""}"
+              @click=${() => this._handleToolSelect(item.id)}
+              title=${item.label}
+            >
+              <ha-icon icon=${item.icon}></ha-icon>
+            </button>
+          `)}
         </div>
       ` : null}
     `;
