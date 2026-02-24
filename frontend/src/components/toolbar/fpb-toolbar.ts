@@ -63,16 +63,27 @@ export class FpbToolbar extends LitElement {
 
   static override styles = css`
     :host {
-      display: flex;
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
       align-items: center;
       padding: 0 12px;
-      gap: 4px;
       height: var(--header-height, 56px);
       background: var(--card-background-color, #fff);
       color: var(--primary-text-color);
       border-bottom: 1px solid var(--divider-color, rgba(0, 0, 0, 0.12));
       box-sizing: border-box;
       overflow: visible;
+    }
+
+    .toolbar-left {
+      justify-self: start;
+    }
+
+    .toolbar-right {
+      justify-self: end;
+      display: flex;
+      align-items: center;
+      gap: 4px;
     }
 
     /* --- Floor selector dropdown --- */
@@ -313,10 +324,6 @@ export class FpbToolbar extends LitElement {
       --mdc-icon-size: 18px;
     }
 
-    .spacer {
-      flex: 1;
-    }
-
   `;
 
   private _selectFloor(floorId: string): void {
@@ -467,77 +474,77 @@ export class FpbToolbar extends LitElement {
       : [];
 
     return html`
-      <!-- Floor Selector -->
-      ${floors.length > 0 ? html`
-        <div class="floor-selector">
-          <button
-            class="floor-trigger ${this._floorMenuOpen ? "open" : ""}"
-            @click=${this._toggleFloorMenu}
-          >
-            ${floor?.name || "Select floor"}
-            <ha-icon icon="mdi:chevron-down"></ha-icon>
+      <!-- Left: Floor Selector -->
+      <div class="toolbar-left">
+        ${floors.length > 0 ? html`
+          <div class="floor-selector">
+            <button
+              class="floor-trigger ${this._floorMenuOpen ? "open" : ""}"
+              @click=${this._toggleFloorMenu}
+            >
+              ${floor?.name || "Select floor"}
+              <ha-icon icon="mdi:chevron-down"></ha-icon>
+            </button>
+            ${this._floorMenuOpen ? html`
+              <div class="floor-dropdown">
+                ${floors.map(
+                  (f) => this._renamingFloorId === f.id
+                    ? html`
+                      <div class="floor-option">
+                        <ha-icon icon="mdi:layers"></ha-icon>
+                        <input
+                          class="rename-input"
+                          .value=${this._renameValue}
+                          @input=${(e: InputEvent) => {
+                            this._renameValue = (e.target as HTMLInputElement).value;
+                          }}
+                          @keydown=${this._handleRenameKeyDown}
+                          @blur=${this._commitRename}
+                          @click=${(e: Event) => e.stopPropagation()}
+                        />
+                      </div>
+                    `
+                    : html`
+                      <button
+                        class="floor-option ${f.id === floor?.id ? "selected" : ""}"
+                        @click=${() => this._selectFloor(f.id)}
+                      >
+                        <ha-icon icon="mdi:layers"></ha-icon>
+                        ${f.name}
+                        <span class="rename-btn"
+                              @click=${(e: Event) => this._startRename(e, f.id, f.name)}
+                              title="Rename floor">
+                          <ha-icon icon="mdi:pencil-outline"></ha-icon>
+                        </span>
+                        <span class="delete-btn"
+                              @click=${(e: Event) => this._handleDeleteFloor(e, f.id, f.name)}
+                              title="Delete floor">
+                          <ha-icon icon="mdi:delete-outline"></ha-icon>
+                        </span>
+                      </button>
+                    `
+                )}
+                <div class="floor-dropdown-divider"></div>
+                <button class="floor-option add-floor" @click=${this._handleAddFloor}>
+                  <ha-icon icon="mdi:plus"></ha-icon>
+                  Add floor
+                </button>
+                <button class="floor-option action-item" @click=${this._openImportExport}>
+                  <ha-icon icon="mdi:swap-horizontal"></ha-icon>
+                  Import / Export
+                </button>
+              </div>
+            ` : null}
+          </div>
+        ` : html`
+          <button class="floor-trigger" @click=${this._handleAddFloor}>
+            <ha-icon icon="mdi:plus" style="--mdc-icon-size: 16px;"></ha-icon>
+            Add floor
           </button>
-          ${this._floorMenuOpen ? html`
-            <div class="floor-dropdown">
-              ${floors.map(
-                (f) => this._renamingFloorId === f.id
-                  ? html`
-                    <div class="floor-option">
-                      <ha-icon icon="mdi:layers"></ha-icon>
-                      <input
-                        class="rename-input"
-                        .value=${this._renameValue}
-                        @input=${(e: InputEvent) => {
-                          this._renameValue = (e.target as HTMLInputElement).value;
-                        }}
-                        @keydown=${this._handleRenameKeyDown}
-                        @blur=${this._commitRename}
-                        @click=${(e: Event) => e.stopPropagation()}
-                      />
-                    </div>
-                  `
-                  : html`
-                    <button
-                      class="floor-option ${f.id === floor?.id ? "selected" : ""}"
-                      @click=${() => this._selectFloor(f.id)}
-                    >
-                      <ha-icon icon="mdi:layers"></ha-icon>
-                      ${f.name}
-                      <span class="rename-btn"
-                            @click=${(e: Event) => this._startRename(e, f.id, f.name)}
-                            title="Rename floor">
-                        <ha-icon icon="mdi:pencil-outline"></ha-icon>
-                      </span>
-                      <span class="delete-btn"
-                            @click=${(e: Event) => this._handleDeleteFloor(e, f.id, f.name)}
-                            title="Delete floor">
-                        <ha-icon icon="mdi:delete-outline"></ha-icon>
-                      </span>
-                    </button>
-                  `
-              )}
-              <div class="floor-dropdown-divider"></div>
-              <button class="floor-option add-floor" @click=${this._handleAddFloor}>
-                <ha-icon icon="mdi:plus"></ha-icon>
-                Add floor
-              </button>
-              <button class="floor-option action-item" @click=${this._openImportExport}>
-                <ha-icon icon="mdi:swap-horizontal"></ha-icon>
-                Import / Export
-              </button>
-            </div>
-          ` : null}
-        </div>
-      ` : html`
-        <button class="floor-trigger" @click=${this._handleAddFloor}>
-          <ha-icon icon="mdi:plus" style="--mdc-icon-size: 16px;"></ha-icon>
-          Add floor
-        </button>
-      `}
+        `}
+      </div>
 
-      <div class="spacer"></div>
-
-      <!-- Mode Switcher -->
+      <!-- Center: Mode Switcher -->
       <div class="mode-group">
         <button
           class="mode-button ${mode === "walls" ? "active" : ""}"
@@ -567,66 +574,59 @@ export class FpbToolbar extends LitElement {
         >
           <ha-icon icon="mdi:motion-sensor"></ha-icon>
         </button>
-        <button
-          class="mode-button ${mode === "simulate" ? "active" : ""}"
-          @click=${() => setCanvasMode("simulate")}
-          title="Simulate mode"
-        >
-          <ha-icon icon="mdi:radar"></ha-icon>
-        </button>
       </div>
 
-      <div class="spacer"></div>
-
-      <!-- Undo/Redo -->
-      <div class="tool-group">
-        <button
-          class="tool-button"
-          @click=${this._handleUndo}
-          ?disabled=${!canUndo.value}
-          title="Undo"
-        >
-          <ha-icon icon="mdi:undo"></ha-icon>
-        </button>
-        <button
-          class="tool-button"
-          @click=${this._handleRedo}
-          ?disabled=${!canRedo.value}
-          title="Redo"
-        >
-          <ha-icon icon="mdi:redo"></ha-icon>
-        </button>
-      </div>
-
-      <!-- Simulate mode: hitbox toggle -->
-      ${mode === "simulate" ? html`
-        <div class="divider"></div>
+      <!-- Right: Undo/Redo + contextual tools -->
+      <div class="toolbar-right">
         <div class="tool-group">
           <button
-            class="tool-button ${simHitboxEnabled.value ? "active" : ""}"
-            @click=${() => { simHitboxEnabled.value = !simHitboxEnabled.value; }}
-            title="${simHitboxEnabled.value ? "Hitbox detection enabled" : "Hitbox detection disabled"}"
+            class="tool-button"
+            @click=${this._handleUndo}
+            ?disabled=${!canUndo.value}
+            title="Undo"
           >
-            <ha-icon icon="${simHitboxEnabled.value ? "mdi:vector-square-edit" : "mdi:vector-square-remove"}"></ha-icon>
+            <ha-icon icon="mdi:undo"></ha-icon>
+          </button>
+          <button
+            class="tool-button"
+            @click=${this._handleRedo}
+            ?disabled=${!canRedo.value}
+            title="Redo"
+          >
+            <ha-icon icon="mdi:redo"></ha-icon>
           </button>
         </div>
-      ` : null}
 
-      <!-- Tool buttons (contextual) -->
-      ${menuItems.length > 0 ? html`
-        <div class="divider"></div>
-        <div class="tool-group">
-          ${menuItems.map(item => html`
+        <!-- Occupancy mode: region detection toggle -->
+        ${mode === "occupancy" ? html`
+          <div class="divider"></div>
+          <div class="tool-group">
             <button
-              class="tool-button ${tool === item.id ? "active" : ""}"
-              @click=${() => this._handleToolSelect(item.id)}
-              title=${item.label}
+              class="tool-button ${simHitboxEnabled.value ? "" : "active"}"
+              @click=${() => { simHitboxEnabled.value = !simHitboxEnabled.value; }}
+              title="${simHitboxEnabled.value ? "Disable region detection" : "Enable region detection"}"
             >
-              <ha-icon icon=${item.icon}></ha-icon>
+              <ha-icon icon="${simHitboxEnabled.value ? "mdi:target-account" : "mdi:account-off-outline"}"></ha-icon>
             </button>
-          `)}
-        </div>
-      ` : null}
+          </div>
+        ` : null}
+
+        <!-- Tool buttons (contextual) -->
+        ${menuItems.length > 0 ? html`
+          <div class="divider"></div>
+          <div class="tool-group">
+            ${menuItems.map(item => html`
+              <button
+                class="tool-button ${tool === item.id ? "active" : ""}"
+                @click=${() => this._handleToolSelect(item.id)}
+                title=${item.label}
+              >
+                <ha-icon icon=${item.icon}></ha-icon>
+              </button>
+            `)}
+          </div>
+        ` : null}
+      </div>
     `;
   }
 }

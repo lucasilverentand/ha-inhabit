@@ -120,13 +120,11 @@ export function setCanvasMode(mode: CanvasMode): void {
   selection.value = { type: "none", ids: [] };
   if (mode !== "occupancy") {
     occupancyPanelTarget.value = null;
+    simulatedTargets.value = [];
+    simHitboxEnabled.value = true;
   }
   if (mode !== "placement") {
     devicePanelTarget.value = null;
-  }
-  if (mode !== "simulate") {
-    simulatedTargets.value = [];
-    simHitboxEnabled.value = true;
   }
 }
 

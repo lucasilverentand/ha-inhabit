@@ -1142,8 +1142,8 @@ export class FpbCanvas extends LitElement {
         const newMode = canvasMode.value;
         const prevMode = this._canvasMode;
         this._canvasMode = newMode;
-        // When leaving simulate mode, clear backend targets
-        if (prevMode === "simulate" && newMode !== "simulate" && this.hass) {
+        // When leaving occupancy mode, clear backend targets
+        if (prevMode === "occupancy" && newMode !== "occupancy" && this.hass) {
           this.hass.callWS({ type: "inhabit/simulate/target/clear" }).catch(() => {});
         }
       }),
@@ -1269,8 +1269,8 @@ export class FpbCanvas extends LitElement {
       return;
     }
 
-    // Simulate mode: left-click places or drags targets, right-click removes
-    if (mode === "simulate" && (e.button === 0 || e.button === 2)) {
+    // Occupancy mode: simulated target interactions (drag/remove existing targets)
+    if (mode === "occupancy" && (e.button === 0 || e.button === 2)) {
       const targets = simulatedTargets.value;
       const vb = this._viewBox;
       const hitRadius = Math.max(vb.width, vb.height) * 0.015;
@@ -1288,17 +1288,14 @@ export class FpbCanvas extends LitElement {
         return;
       }
 
-      if (e.button === 0) {
-        if (hitTarget) {
-          // Start dragging existing target
-          this._draggingSimTarget = { targetId: hitTarget.id, pointerId: e.pointerId };
-          this._svg?.setPointerCapture(e.pointerId);
-        } else {
-          // Place a new target
-          this._addSimulatedTarget(point);
-        }
+      if (e.button === 0 && hitTarget) {
+        // Start dragging existing target
+        this._draggingSimTarget = { targetId: hitTarget.id, pointerId: e.pointerId };
+        this._svg?.setPointerCapture(e.pointerId);
         return;
       }
+      // For left-click with no target hit, fall through to select handling
+      // (rooms/zones open occupancy panel; empty space places a new target)
     }
 
     // Left click behavior depends on tool
@@ -1317,6 +1314,11 @@ export class FpbCanvas extends LitElement {
           // Clear selection if we had an editor open
           if (hadEditor) {
             selection.value = { type: "none", ids: [] };
+          }
+          if (mode === "occupancy") {
+            // Place a new simulated target on empty space
+            this._addSimulatedTarget(point);
+            return;
           }
           // Start panning if clicking on empty space
           this._isPanning = true;
@@ -1885,9 +1887,9 @@ export class FpbCanvas extends LitElement {
    * Right-click on a node to dissolve it (merge the two connected edges).
    */
   private async _handleContextMenu(e: MouseEvent): Promise<void> {
-    if (this._canvasMode === "simulate") {
+    if (this._canvasMode === "occupancy") {
       e.preventDefault();
-      return; // Right-click removal handled in _handlePointerDown
+      return; // Right-click removal of sim targets handled in _handlePointerDown
     }
     if (this._canvasMode !== "walls") return;
     e.preventDefault();
@@ -3208,45 +3210,59 @@ export class FpbCanvas extends LitElement {
     // Scale-independent sizes
     const vb = this._viewBox;
     const scale = Math.max(vb.width, vb.height) / 100;
-    const dotRadius = scale * 1.2;
-    const fontSize = scale * 1.4;
-    const labelOffset = dotRadius + fontSize * 0.6;
+    const r = scale * 0.55;
+    const pulseR = r * 2.8;
+    const fontSize = scale * 1.1;
+    const labelOffset = r + fontSize * 0.8;
 
     return svg`
+      <defs>
+        <filter id="sim-shadow" x="-50%" y="-50%" width="200%" height="200%">
+          <feDropShadow dx="0" dy="${scale * 0.1}" stdDeviation="${scale * 0.15}" flood-opacity="0.25"/>
+        </filter>
+      </defs>
       <g class="simulation-layer">
         <!-- Room/zone occupation highlights -->
         ${floor.rooms.map(room => occupiedRegions.has(room.id) ? svg`
           <path d="${polygonToPath(room.polygon)}"
-                fill="rgba(76, 175, 80, 0.18)"
-                stroke="rgba(76, 175, 80, 0.6)"
-                stroke-width="2"
+                fill="rgba(76, 175, 80, 0.12)"
+                stroke="rgba(76, 175, 80, 0.4)"
+                stroke-width="${scale * 0.12}"
+                stroke-dasharray="${scale * 0.4} ${scale * 0.2}"
                 pointer-events="none"/>
         ` : null)}
         ${(floor.zones || []).map((zone: Zone) => occupiedRegions.has(zone.id) ? svg`
           <path d="${polygonToPath(zone.polygon)}"
-                fill="rgba(76, 175, 80, 0.18)"
-                stroke="rgba(76, 175, 80, 0.6)"
-                stroke-width="2"
+                fill="rgba(76, 175, 80, 0.12)"
+                stroke="rgba(76, 175, 80, 0.4)"
+                stroke-width="${scale * 0.12}"
+                stroke-dasharray="${scale * 0.4} ${scale * 0.2}"
                 pointer-events="none"/>
         ` : null)}
 
-        <!-- Target dots -->
+        <!-- Target markers -->
         ${targets.map(t => {
           const inRegion = !!t.region_id;
-          const fill = inRegion ? "#4caf50" : "#9e9e9e";
+          const color = inRegion ? "#4caf50" : "#78909c";
           return svg`
             <g class="sim-target" style="cursor: grab;">
-              <circle cx="${t.position.x}" cy="${t.position.y}" r="${dotRadius}"
-                      fill="${fill}" fill-opacity="0.85"
-                      stroke="white" stroke-width="${scale * 0.2}"/>
-              <circle cx="${t.position.x}" cy="${t.position.y}" r="${dotRadius * 0.4}"
-                      fill="white" fill-opacity="0.9"/>
+              <!-- Pulse ring for detected targets -->
+              ${inRegion ? svg`
+                <circle cx="${t.position.x}" cy="${t.position.y}" r="${pulseR}"
+                        fill="none" stroke="${color}" stroke-width="${scale * 0.06}"
+                        opacity="0.3"/>
+              ` : null}
+              <!-- Dot -->
+              <circle cx="${t.position.x}" cy="${t.position.y}" r="${r}"
+                      fill="${color}"
+                      filter="url(#sim-shadow)"/>
               ${t.region_name ? svg`
                 <text x="${t.position.x}" y="${t.position.y + labelOffset}"
                       text-anchor="middle"
-                      fill="var(--primary-text-color, #333)"
+                      fill="var(--secondary-text-color, #666)"
                       font-size="${fontSize}"
-                      font-weight="500"
+                      font-weight="400"
+                      font-family="var(--ha-font-family, Roboto, sans-serif)"
                       pointer-events="none">
                   ${t.region_name}
                 </text>
@@ -6305,11 +6321,11 @@ export class FpbCanvas extends LitElement {
         ${mode === "walls" ? this._renderNodeEndpoints() : null}
         ${mode === "furniture" && activeTool.value === "zone" ? this._renderNodeGuideDots() : null}
         ${currentFloor.value ? this._renderDeviceLayer(currentFloor.value) : null}
-        ${mode !== "viewing" && mode !== "occupancy" && mode !== "simulate" ? this._renderDrawingPreview() : null}
+        ${mode !== "viewing" && mode !== "occupancy" ? this._renderDrawingPreview() : null}
         ${mode === "furniture" ? this._renderFurnitureDrawingPreview() : null}
         ${mode === "walls" ? this._renderOpeningPreview() : null}
         ${mode === "placement" ? this._renderDevicePreview() : null}
-        ${mode === "simulate" && currentFloor.value ? this._renderSimulationLayer(currentFloor.value) : null}
+        ${mode === "occupancy" && currentFloor.value ? this._renderSimulationLayer(currentFloor.value) : null}
       </svg>
       ${this._renderEdgeEditor()}
       ${this._renderNodeEditor()}

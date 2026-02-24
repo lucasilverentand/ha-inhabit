@@ -248,7 +248,7 @@ export interface VisualRule {
 }
 
 // Canvas mode types
-export type CanvasMode = "viewing" | "walls" | "furniture" | "placement" | "occupancy" | "simulate";
+export type CanvasMode = "viewing" | "walls" | "furniture" | "placement" | "occupancy";
 
 // Simulated target types
 export interface SimulatedTarget {
