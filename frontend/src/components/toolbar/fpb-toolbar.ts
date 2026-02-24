@@ -49,6 +49,9 @@ export class FpbToolbar extends LitElement {
   private _addMenuOpen = false;
 
   @state()
+  private _floorMenuOpen = false;
+
+  @state()
   private _canvasMode: CanvasMode = "walls";
 
   @state()
@@ -64,173 +67,175 @@ export class FpbToolbar extends LitElement {
   static override styles = css`
     :host {
       display: flex;
-      flex-direction: column;
+      align-items: center;
+      padding: 0 12px;
+      gap: 4px;
       background: var(--app-header-background-color, var(--primary-color));
       color: var(--app-header-text-color, var(--text-primary-color));
       box-sizing: border-box;
+      overflow: visible;
     }
 
-    /* --- Floor tab bar --- */
-    .floor-bar {
-      display: flex;
-      align-items: center;
-      gap: 2px;
-      padding: 0 12px;
-      min-height: 40px;
-      overflow-x: auto;
-      scrollbar-width: none;
-      -ms-overflow-style: none;
-      background: rgba(0, 0, 0, 0.1);
-    }
-
-    .floor-bar::-webkit-scrollbar {
-      display: none;
-    }
-
-    .floor-tab {
+    /* --- Floor selector dropdown --- */
+    .floor-selector {
       position: relative;
+    }
+
+    .floor-trigger {
       display: flex;
       align-items: center;
       gap: 6px;
-      padding: 6px 14px;
+      padding: 6px 10px;
       border: none;
-      border-radius: 8px 8px 0 0;
+      border-radius: 8px;
       background: transparent;
       color: inherit;
-      font-size: 13px;
+      font-size: 15px;
       font-weight: 500;
       cursor: pointer;
       white-space: nowrap;
-      opacity: 0.7;
-      transition: background 0.15s, opacity 0.15s;
+      transition: background 0.15s;
     }
 
-    .floor-tab:hover {
-      background: rgba(255, 255, 255, 0.08);
-      opacity: 0.9;
+    .floor-trigger:hover {
+      background: rgba(255, 255, 255, 0.12);
     }
 
-    .floor-tab.active {
-      background: rgba(255, 255, 255, 0.15);
-      opacity: 1;
+    .floor-trigger ha-icon {
+      --mdc-icon-size: 18px;
+      transition: transform 0.2s ease;
     }
 
-    .floor-tab ha-icon {
+    .floor-trigger.open ha-icon {
+      transform: rotate(180deg);
+    }
+
+    .floor-dropdown {
+      position: absolute;
+      top: calc(100% + 6px);
+      left: 0;
+      background: var(--card-background-color);
+      border-radius: 14px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15), 0 2px 8px rgba(0, 0, 0, 0.08);
+      min-width: 180px;
+      z-index: 100;
+      overflow: hidden;
+      padding: 6px;
+    }
+
+    .floor-option {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px;
+      border: none;
+      border-radius: 10px;
+      background: transparent;
+      color: var(--primary-text-color);
+      cursor: pointer;
+      font-size: 14px;
+      width: 100%;
+      text-align: left;
+      transition: background 0.12s;
+    }
+
+    .floor-option:hover {
+      background: var(--secondary-background-color, #f5f5f5);
+    }
+
+    .floor-option.selected {
+      color: var(--primary-color);
+      font-weight: 600;
+    }
+
+    .floor-option.selected ha-icon {
+      color: var(--primary-color);
+    }
+
+    .floor-option ha-icon {
+      --mdc-icon-size: 18px;
+      color: var(--secondary-text-color);
+    }
+
+    .floor-dropdown-divider {
+      height: 1px;
+      background: var(--divider-color, #e8e8e8);
+      margin: 4px 6px;
+    }
+
+    .floor-option .delete-btn {
+      display: none;
+      margin-left: auto;
+      padding: 4px;
+      border: none;
+      border-radius: 8px;
+      background: transparent;
+      color: var(--secondary-text-color);
+      cursor: pointer;
+      line-height: 1;
+      transition: color 0.12s, background 0.12s;
+    }
+
+    .floor-option .delete-btn ha-icon {
       --mdc-icon-size: 16px;
     }
 
-    .floor-tab .tab-actions {
+    .floor-option:hover .delete-btn {
+      display: flex;
+    }
+
+    .floor-option .delete-btn:hover {
+      color: var(--error-color, #f44336);
+      background: rgba(244, 67, 54, 0.08);
+    }
+
+    .floor-option .rename-btn {
       display: none;
-      align-items: center;
-      gap: 2px;
-      margin-left: 2px;
-    }
-
-    .floor-tab:hover .tab-actions {
-      display: flex;
-    }
-
-    .floor-tab .tab-action {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 2px;
+      margin-left: auto;
+      padding: 4px;
       border: none;
-      border-radius: 4px;
+      border-radius: 8px;
       background: transparent;
-      color: inherit;
+      color: var(--secondary-text-color);
       cursor: pointer;
-      opacity: 0.6;
-      transition: opacity 0.12s, background 0.12s;
+      line-height: 1;
+      transition: color 0.12s, background 0.12s;
     }
 
-    .floor-tab .tab-action:hover {
-      opacity: 1;
-      background: rgba(255, 255, 255, 0.15);
+    .floor-option .rename-btn ha-icon {
+      --mdc-icon-size: 16px;
     }
 
-    .floor-tab .tab-action.delete:hover {
-      background: rgba(244, 67, 54, 0.25);
-    }
-
-    .floor-tab .tab-action ha-icon {
-      --mdc-icon-size: 14px;
-    }
-
-    .floor-tab .rename-input {
-      padding: 2px 6px;
-      border: 1px solid rgba(255, 255, 255, 0.5);
-      border-radius: 4px;
-      font-size: 13px;
-      font-weight: 500;
-      background: rgba(0, 0, 0, 0.2);
-      color: inherit;
-      outline: none;
-      min-width: 80px;
-    }
-
-    .floor-add-tab {
+    .floor-option:hover .rename-btn {
       display: flex;
-      align-items: center;
-      gap: 4px;
-      padding: 6px 10px;
-      border: none;
-      border-radius: 8px 8px 0 0;
-      background: transparent;
-      color: inherit;
-      font-size: 13px;
-      cursor: pointer;
-      white-space: nowrap;
-      opacity: 0.5;
-      transition: background 0.15s, opacity 0.15s;
     }
 
-    .floor-add-tab:hover {
-      background: rgba(255, 255, 255, 0.08);
-      opacity: 0.8;
+    .floor-option .rename-btn:hover {
+      color: var(--primary-color);
+      background: rgba(var(--rgb-primary-color, 33, 150, 243), 0.08);
     }
 
-    .floor-add-tab ha-icon {
-      --mdc-icon-size: 14px;
-    }
-
-    .floor-bar-spacer {
+    .floor-option .rename-input {
       flex: 1;
+      min-width: 0;
+      padding: 4px 8px;
+      border: 1px solid var(--primary-color);
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 500;
+      background: var(--card-background-color);
+      color: var(--primary-text-color);
+      outline: none;
     }
 
-    .floor-bar-action {
-      display: flex;
-      align-items: center;
-      gap: 4px;
-      padding: 6px 10px;
-      border: none;
-      border-radius: 8px 8px 0 0;
-      background: transparent;
-      color: inherit;
-      font-size: 12px;
-      cursor: pointer;
-      white-space: nowrap;
-      opacity: 0.5;
-      transition: background 0.15s, opacity 0.15s;
+    .floor-option.add-floor,
+    .floor-option.action-item {
+      color: var(--secondary-text-color);
     }
 
-    .floor-bar-action:hover {
-      background: rgba(255, 255, 255, 0.08);
-      opacity: 0.8;
-    }
-
-    .floor-bar-action ha-icon {
-      --mdc-icon-size: 14px;
-    }
-
-    /* --- Tool bar --- */
-    .tool-row {
-      display: flex;
-      align-items: center;
-      padding: 0 12px;
-      gap: 4px;
-      min-height: 44px;
-      overflow: visible;
+    .floor-option.add-floor:hover,
+    .floor-option.action-item:hover {
+      color: var(--primary-text-color);
     }
 
     /* --- Divider --- */
@@ -302,14 +307,6 @@ export class FpbToolbar extends LitElement {
       color: inherit;
       cursor: pointer;
       transition: background 0.15s;
-    }
-
-    .mode-button:first-child {
-      border-radius: 8px;
-    }
-
-    .mode-button:last-child {
-      border-radius: 8px;
     }
 
     .mode-button:hover {
@@ -403,6 +400,7 @@ export class FpbToolbar extends LitElement {
   `;
 
   private _selectFloor(floorId: string): void {
+    this._floorMenuOpen = false;
     this.dispatchEvent(
       new CustomEvent("floor-select", {
         detail: { id: floorId },
@@ -426,6 +424,7 @@ export class FpbToolbar extends LitElement {
   }
 
   private _handleAddFloor(): void {
+    this._floorMenuOpen = false;
     this.dispatchEvent(
       new CustomEvent("add-floor", {
         bubbles: true,
@@ -437,6 +436,7 @@ export class FpbToolbar extends LitElement {
   private _handleDeleteFloor(e: Event, floorId: string, floorName: string): void {
     e.stopPropagation();
     if (!confirm(`Delete "${floorName}"? This will remove all walls, rooms, and devices on this floor.`)) return;
+    this._floorMenuOpen = false;
     this.dispatchEvent(
       new CustomEvent("delete-floor", {
         detail: { id: floorId },
@@ -490,6 +490,7 @@ export class FpbToolbar extends LitElement {
   }
 
   private _openImportExport(): void {
+    this._floorMenuOpen = false;
     this.dispatchEvent(
       new CustomEvent("open-import-export", {
         bubbles: true,
@@ -500,10 +501,17 @@ export class FpbToolbar extends LitElement {
 
   private _toggleAddMenu(): void {
     this._addMenuOpen = !this._addMenuOpen;
+    this._floorMenuOpen = false;
+  }
+
+  private _toggleFloorMenu(): void {
+    this._floorMenuOpen = !this._floorMenuOpen;
+    this._addMenuOpen = false;
   }
 
   private _closeMenus(): void {
     this._addMenuOpen = false;
+    this._floorMenuOpen = false;
   }
 
   override connectedCallback(): void {
@@ -547,60 +555,75 @@ export class FpbToolbar extends LitElement {
       : [];
 
     return html`
-      <!-- Floor Tab Bar -->
-      <div class="floor-bar">
-        ${floors.map(
-          (f) => this._renamingFloorId === f.id
-            ? html`
-              <div class="floor-tab active">
-                <ha-icon icon="mdi:layers"></ha-icon>
-                <input
-                  class="rename-input"
-                  .value=${this._renameValue}
-                  @input=${(e: InputEvent) => {
-                    this._renameValue = (e.target as HTMLInputElement).value;
-                  }}
-                  @keydown=${this._handleRenameKeyDown}
-                  @blur=${this._commitRename}
-                  @click=${(e: Event) => e.stopPropagation()}
-                />
-              </div>
-            `
-            : html`
-              <button
-                class="floor-tab ${f.id === floor?.id ? "active" : ""}"
-                @click=${() => this._selectFloor(f.id)}
-              >
-                <ha-icon icon="mdi:layers"></ha-icon>
-                ${f.name}
-                <span class="tab-actions">
-                  <span class="tab-action"
-                        @click=${(e: Event) => this._startRename(e, f.id, f.name)}
-                        title="Rename">
-                    <ha-icon icon="mdi:pencil-outline"></ha-icon>
-                  </span>
-                  <span class="tab-action delete"
-                        @click=${(e: Event) => this._handleDeleteFloor(e, f.id, f.name)}
-                        title="Delete">
-                    <ha-icon icon="mdi:delete-outline"></ha-icon>
-                  </span>
-                </span>
+      <!-- Floor Selector -->
+      ${floors.length > 0 ? html`
+        <div class="floor-selector">
+          <button
+            class="floor-trigger ${this._floorMenuOpen ? "open" : ""}"
+            @click=${this._toggleFloorMenu}
+          >
+            ${floor?.name || "Select floor"}
+            <ha-icon icon="mdi:chevron-down"></ha-icon>
+          </button>
+          ${this._floorMenuOpen ? html`
+            <div class="floor-dropdown">
+              ${floors.map(
+                (f) => this._renamingFloorId === f.id
+                  ? html`
+                    <div class="floor-option">
+                      <ha-icon icon="mdi:layers"></ha-icon>
+                      <input
+                        class="rename-input"
+                        .value=${this._renameValue}
+                        @input=${(e: InputEvent) => {
+                          this._renameValue = (e.target as HTMLInputElement).value;
+                        }}
+                        @keydown=${this._handleRenameKeyDown}
+                        @blur=${this._commitRename}
+                        @click=${(e: Event) => e.stopPropagation()}
+                      />
+                    </div>
+                  `
+                  : html`
+                    <button
+                      class="floor-option ${f.id === floor?.id ? "selected" : ""}"
+                      @click=${() => this._selectFloor(f.id)}
+                    >
+                      <ha-icon icon="mdi:layers"></ha-icon>
+                      ${f.name}
+                      <span class="rename-btn"
+                            @click=${(e: Event) => this._startRename(e, f.id, f.name)}
+                            title="Rename floor">
+                        <ha-icon icon="mdi:pencil-outline"></ha-icon>
+                      </span>
+                      <span class="delete-btn"
+                            @click=${(e: Event) => this._handleDeleteFloor(e, f.id, f.name)}
+                            title="Delete floor">
+                        <ha-icon icon="mdi:delete-outline"></ha-icon>
+                      </span>
+                    </button>
+                  `
+              )}
+              <div class="floor-dropdown-divider"></div>
+              <button class="floor-option add-floor" @click=${this._handleAddFloor}>
+                <ha-icon icon="mdi:plus"></ha-icon>
+                Add floor
               </button>
-            `
-        )}
-        <button class="floor-add-tab" @click=${this._handleAddFloor}>
-          <ha-icon icon="mdi:plus"></ha-icon>
+              <button class="floor-option action-item" @click=${this._openImportExport}>
+                <ha-icon icon="mdi:swap-horizontal"></ha-icon>
+                Import / Export
+              </button>
+            </div>
+          ` : null}
+        </div>
+      ` : html`
+        <button class="floor-trigger" @click=${this._handleAddFloor}>
+          <ha-icon icon="mdi:plus" style="--mdc-icon-size: 16px;"></ha-icon>
           Add floor
         </button>
-        <span class="floor-bar-spacer"></span>
-        <button class="floor-bar-action" @click=${this._openImportExport}>
-          <ha-icon icon="mdi:swap-horizontal"></ha-icon>
-          Import / Export
-        </button>
-      </div>
+      `}
 
-      <!-- Tool Row -->
-      <div class="tool-row">
+      <div class="spacer"></div>
 
       <!-- Mode Switcher -->
       <div class="mode-group">
@@ -707,7 +730,6 @@ export class FpbToolbar extends LitElement {
             : null}
         </div>
       ` : null}
-      </div>
     `;
   }
 }

@@ -6,38 +6,44 @@ import {
   clickToolbarButton,
 } from "../helpers";
 
-// Inline helper used inside page.evaluate calls
-const FIND_TOOLBAR_JS = `
-  const _find = (root, tag) => {
-    const direct = root.querySelector(tag);
-    if (direct) return direct;
-    for (const el of root.querySelectorAll("*")) {
-      if (el.shadowRoot) { const f = _find(el.shadowRoot, tag); if (f) return f; }
-    }
-    return null;
-  };
-  const _toolbar = _find(document, "fpb-toolbar");
-`;
-
 test.describe("Inhabit Editor", () => {
   test.beforeEach(async ({ page }) => {
     await waitForEditor(page);
   });
 
-  test("editor loads with seeded floor plan", async ({ page }) => {
-    const tabCount = await toolbarQuery(page, (toolbar) => {
-      return toolbar.shadowRoot!.querySelectorAll(".floor-tab").length;
+  test("editor loads with floor selector", async ({ page }) => {
+    // Floor trigger (dropdown button) should be visible
+    const hasTrigger = await toolbarQuery(page, (toolbar) => {
+      return !!toolbar.shadowRoot!.querySelector(".floor-trigger");
     });
-    expect(tabCount).toBeGreaterThanOrEqual(1);
+    expect(hasTrigger).toBe(true);
   });
 
-  test("floor tabs are clickable", async ({ page }) => {
-    const tabCount = await toolbarQuery(page, (toolbar) => {
-      return toolbar.shadowRoot!.querySelectorAll(".floor-tab").length;
-    });
-    expect(tabCount).toBeGreaterThanOrEqual(1);
+  test("floor dropdown opens and lists floors", async ({ page }) => {
+    // Open the floor dropdown
+    await clickToolbarButton(page, ".floor-trigger");
+    await page.waitForTimeout(100);
 
-    await clickToolbarButton(page, ".floor-tab");
+    const result = await toolbarQuery(page, (toolbar) => {
+      const dropdown = toolbar.shadowRoot!.querySelector(".floor-dropdown");
+      if (!dropdown) return { hasDropdown: false, floorCount: 0 };
+      const options = dropdown.querySelectorAll(
+        ".floor-option:not(.add-floor):not(.action-item)"
+      );
+      return { hasDropdown: true, floorCount: options.length };
+    });
+
+    expect(result.hasDropdown).toBe(true);
+    expect(result.floorCount).toBeGreaterThanOrEqual(1);
+
+    // Close by clicking outside
+    await page.mouse.click(0, 0);
+    await page.waitForTimeout(200);
+
+    const dropdownGone = await toolbarQuery(page, (toolbar) => {
+      return !toolbar.shadowRoot!.querySelector(".floor-dropdown");
+    });
+    expect(dropdownGone).toBe(true);
   });
 
   test("mode switching sets active class", async ({ page }) => {
@@ -47,7 +53,6 @@ test.describe("Inhabit Editor", () => {
     expect(modeCount).toBe(5);
 
     for (let i = 0; i < modeCount; i++) {
-      // Click mode button at index i
       await page.evaluate(
         ({ index }) => {
           const _find = (
@@ -132,7 +137,6 @@ test.describe("Inhabit Editor", () => {
   });
 
   test("room chips bar matches room state", async ({ page }) => {
-    // Check if the current floor has rooms — chips bar only renders when rooms exist
     const result = await editorEval(page, (builder) => {
       const chipsBar = builder.shadowRoot!.querySelector(".room-chips-bar");
       const chipCount = chipsBar
@@ -142,10 +146,8 @@ test.describe("Inhabit Editor", () => {
     });
 
     if (result.hasChipsBar) {
-      // If present, should have at least the "All" chip
       expect(result.chipCount).toBeGreaterThanOrEqual(1);
     } else {
-      // No rooms on this floor — chips bar correctly hidden
       expect(result.hasChipsBar).toBe(false);
     }
   });
@@ -174,8 +176,12 @@ test.describe("Inhabit Editor", () => {
     expect(result.redoDisabled).toBe(true);
   });
 
-  test("floor rename via pencil icon", async ({ page }) => {
-    // Click the pencil (rename) action on the first floor tab
+  test("floor rename via dropdown", async ({ page }) => {
+    // Open the floor dropdown
+    await clickToolbarButton(page, ".floor-trigger");
+    await page.waitForTimeout(200);
+
+    // Click the rename button on the first floor option
     await page.evaluate(() => {
       const _find = (
         root: Document | ShadowRoot,
@@ -192,17 +198,16 @@ test.describe("Inhabit Editor", () => {
         return null;
       };
       const toolbar = _find(document, "fpb-toolbar")!;
-      const firstTab =
-        toolbar.shadowRoot!.querySelector(".floor-tab")!;
-      const renameAction = firstTab.querySelector(
-        ".tab-action"
+      const renameBtn = toolbar.shadowRoot!.querySelector(
+        ".floor-option .rename-btn"
       ) as HTMLElement;
-      if (!renameAction) throw new Error("Rename action not found");
-      renameAction.click();
+      if (!renameBtn) throw new Error("Rename button not found");
+      renameBtn.click();
     });
 
     await page.waitForTimeout(200);
 
+    // Rename input should now be visible
     const hasRenameInput = await toolbarQuery(page, (toolbar) => {
       return !!toolbar.shadowRoot!.querySelector(".rename-input");
     });
@@ -237,6 +242,7 @@ test.describe("Inhabit Editor", () => {
 
     await page.waitForTimeout(300);
 
+    // Input should disappear
     const inputGone = await toolbarQuery(page, (toolbar) => {
       return !toolbar.shadowRoot!.querySelector(".rename-input");
     });
