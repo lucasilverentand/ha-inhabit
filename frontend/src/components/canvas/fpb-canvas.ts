@@ -1794,6 +1794,7 @@ export class FpbCanvas extends LitElement {
           ? this._haAreas.find(a => a.area_id === zone.ha_area_id)?.name ?? zone.name
           : zone.name;
         occupancyPanelTarget.value = { id: zone.id, name: areaName, type: "zone" };
+        focusedRoomId.value = zone.id;
       } else {
         // It was a click, not a drag — open the zone editor
         const zone = this._draggingZone.zone;
@@ -2578,6 +2579,7 @@ export class FpbCanvas extends LitElement {
                 ? this._haAreas.find(a => a.area_id === zone.ha_area_id)?.name ?? zone.name
                 : zone.name;
               occupancyPanelTarget.value = { id: zone.id, name: areaName, type: "zone" };
+              focusedRoomId.value = zone.id;
               return true;
             }
             selection.value = { type: "zone", ids: [zone.id] };
@@ -2599,6 +2601,7 @@ export class FpbCanvas extends LitElement {
           if (mode === "occupancy") {
             // In occupancy mode, directly open the occupancy panel
             occupancyPanelTarget.value = { id: room.id, name: areaName, type: "room" };
+            focusedRoomId.value = room.id;
           } else {
             this._roomEditor = {
               room,
@@ -2843,8 +2846,9 @@ export class FpbCanvas extends LitElement {
     const floor = currentFloor.value;
     if (!floor) return;
 
-    const room = floor.rooms.find(r => r.id === roomId);
-    if (!room || room.polygon.vertices.length === 0) return;
+    const room = floor.rooms.find(r => r.id === roomId)
+      ?? floor.zones?.find(z => z.id === roomId);
+    if (!room || !room.polygon?.vertices?.length) return;
 
     const xs = room.polygon.vertices.map(v => v.x);
     const ys = room.polygon.vertices.map(v => v.y);
@@ -2856,9 +2860,10 @@ export class FpbCanvas extends LitElement {
     const contentW = maxX - minX;
     const contentH = maxY - minY;
 
-    // 15% padding
-    const padW = Math.max(contentW, 50) * 0.15;
-    const padH = Math.max(contentH, 50) * 0.15;
+    // 30% padding for occupancy focus, 15% otherwise
+    const padFactor = !!occupancyPanelTarget.value ? 0.30 : 0.15;
+    const padW = Math.max(contentW, 50) * padFactor;
+    const padH = Math.max(contentH, 50) * padFactor;
 
     let fitW = contentW + padW * 2;
     let fitH = contentH + padH * 2;
@@ -2879,8 +2884,17 @@ export class FpbCanvas extends LitElement {
     const cx = (minX + maxX) / 2;
     const cy = (minY + maxY) / 2;
 
+    // Shift viewport right in world-space so the room appears centered
+    // in the visible area left of the occupancy panel
+    const panelOpen = !!occupancyPanelTarget.value;
+    let offsetX = 0;
+    if (panelOpen && svgRect && svgRect.width > 0) {
+      const panelScreenPx = 316; // 300px width + 16px right margin
+      offsetX = (panelScreenPx / svgRect.width) * fitW / 2;
+    }
+
     this._animateViewBox({
-      x: cx - fitW / 2,
+      x: cx - fitW / 2 + offsetX,
       y: cy - fitH / 2,
       width: fitW,
       height: fitH,
