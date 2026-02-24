@@ -3300,6 +3300,27 @@ export class FpbCanvas extends LitElement {
     return inside;
   }
 
+  /** Check if a point is inside a polygon OR within `margin` units of its edges. */
+  private _pointInOrNearPolygon(point: Coordinates, vertices: Coordinates[], margin: number): boolean {
+    if (this._pointInPolygon(point, vertices)) return true;
+    const n = vertices.length;
+    for (let i = 0, j = n - 1; i < n; j = i++) {
+      const ax = vertices[j].x, ay = vertices[j].y;
+      const bx = vertices[i].x, by = vertices[i].y;
+      const dx = bx - ax, dy = by - ay;
+      const lenSq = dx * dx + dy * dy;
+      if (lenSq === 0) {
+        const d = Math.hypot(point.x - ax, point.y - ay);
+        if (d <= margin) return true;
+        continue;
+      }
+      const t = Math.max(0, Math.min(1, ((point.x - ax) * dx + (point.y - ay) * dy) / lenSq));
+      const px = ax + t * dx, py = ay + t * dy;
+      if (Math.hypot(point.x - px, point.y - py) <= margin) return true;
+    }
+    return false;
+  }
+
   private _getRandomRoomColor(): string {
     // Colors that work in both light and dark themes (semi-transparent)
     const colors = [
@@ -4205,6 +4226,19 @@ export class FpbCanvas extends LitElement {
     `;
   }
 
+  private _isDeviceInFocusedRegion(deviceRoomId: string | undefined, position: Coordinates, frid: string, floor: Floor): boolean {
+    if (deviceRoomId === frid) return true;
+    // Wall-mounted tolerance: devices snapped to a wall can sit exactly on the edge
+    const wallMargin = 5;
+    // Check if the device is inside/on a focused zone
+    const focusedZone = floor.zones?.find(z => z.id === frid);
+    if (focusedZone?.polygon?.vertices && this._pointInOrNearPolygon(position, focusedZone.polygon.vertices, wallMargin)) return true;
+    // Check if the device is inside/on the focused room (or a room containing the focused zone)
+    const focusedRoom = floor.rooms.find(r => r.id === frid);
+    if (focusedRoom && this._pointInOrNearPolygon(position, focusedRoom.polygon.vertices, wallMargin)) return true;
+    return false;
+  }
+
   private _renderDeviceLayer(floor: Floor) {
     const layerConfig = layers.value;
     const frid = this._focusedRoomId;
@@ -4218,14 +4252,14 @@ export class FpbCanvas extends LitElement {
         ${lightPlacements.value
           .filter(d => d.floor_id === floor.id)
           .map(light => svg`
-            <g class="${frid ? (light.room_id === frid ? "device-focused" : "device-dimmed") : ""}">
+            <g class="${frid ? (this._isDeviceInFocusedRegion(light.room_id, light.position, frid, floor) ? "device-focused" : "device-dimmed") : ""}">
               ${this._renderLight(light)}
             </g>
           `)}
         ${switchPlacements.value
           .filter(d => d.floor_id === floor.id)
           .map(sw => svg`
-            <g class="${frid ? (sw.room_id === frid ? "device-focused" : "device-dimmed") : ""}">
+            <g class="${frid ? (this._isDeviceInFocusedRegion(sw.room_id, sw.position, frid, floor) ? "device-focused" : "device-dimmed") : ""}">
               ${this._renderSwitch(sw)}
             </g>
           `)}
@@ -4656,6 +4690,7 @@ export class FpbCanvas extends LitElement {
     const sel = selection.value;
     const frid = this._focusedRoomId;
     const sortedZones = floor.zones;
+    const focusedRoom = frid ? floor.rooms.find(r => r.id === frid) : null;
 
     return svg`
       <g class="furniture-layer">
@@ -4664,7 +4699,12 @@ export class FpbCanvas extends LitElement {
           const path = polygonToPath(zone.polygon);
           const isSelected = sel.type === "zone" && sel.ids.includes(zone.id);
           const center = this._getPolygonCenter(zone.polygon.vertices);
-          const dimClass = frid ? (zone.room_id === frid ? "" : "room-dimmed") : "";
+          const zoneInFocusedRoom = frid && (
+            zone.id === frid ||
+            zone.room_id === frid ||
+            (focusedRoom && center && this._pointInOrNearPolygon(center, focusedRoom.polygon.vertices, 5))
+          );
+          const dimClass = frid ? (zoneInFocusedRoom ? "" : "room-dimmed") : "";
 
           return svg`
             <g class="${dimClass}">
