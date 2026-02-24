@@ -9,11 +9,13 @@ import type {
   HomeAssistant,
   LightPlacement,
   SwitchPlacement,
+  ButtonPlacement,
   MmwavePlacement,
 } from "../../types";
 import {
   lightPlacements,
   switchPlacements,
+  buttonPlacements,
   mmwavePlacements,
   devicePanelTarget,
   selection,
@@ -27,7 +29,7 @@ export class FpbDevicePanel extends LitElement {
   placementId = "";
 
   @property({ type: String })
-  deviceType: "light" | "switch" | "mmwave" = "light";
+  deviceType: "light" | "switch" | "mmwave" | "button" = "light";
 
   @state()
   private _entitySearch = "";
@@ -218,11 +220,13 @@ export class FpbDevicePanel extends LitElement {
     }
   `;
 
-  private _getPlacement(): LightPlacement | SwitchPlacement | MmwavePlacement | null {
+  private _getPlacement(): LightPlacement | SwitchPlacement | ButtonPlacement | MmwavePlacement | null {
     if (this.deviceType === "light") {
       return lightPlacements.value.find(p => p.id === this.placementId) ?? null;
     } else if (this.deviceType === "switch") {
       return switchPlacements.value.find(p => p.id === this.placementId) ?? null;
+    } else if (this.deviceType === "button") {
+      return buttonPlacements.value.find(p => p.id === this.placementId) ?? null;
     } else {
       return mmwavePlacements.value.find(p => p.id === this.placementId) ?? null;
     }
@@ -266,6 +270,15 @@ export class FpbDevicePanel extends LitElement {
           entity_id: newEntityId,
         });
         switchPlacements.value = switchPlacements.value.map(p =>
+          p.id === this.placementId ? { ...p, entity_id: newEntityId } : p
+        );
+      } else if (this.deviceType === "button") {
+        await this.hass.callWS({
+          type: "inhabit/buttons/update",
+          button_id: this.placementId,
+          entity_id: newEntityId,
+        });
+        buttonPlacements.value = buttonPlacements.value.map(p =>
           p.id === this.placementId ? { ...p, entity_id: newEntityId } : p
         );
       } else {
@@ -318,6 +331,12 @@ export class FpbDevicePanel extends LitElement {
           switch_id: this.placementId,
         });
         switchPlacements.value = switchPlacements.value.filter(p => p.id !== this.placementId);
+      } else if (this.deviceType === "button") {
+        await this.hass.callWS({
+          type: "inhabit/buttons/remove",
+          button_id: this.placementId,
+        });
+        buttonPlacements.value = buttonPlacements.value.filter(p => p.id !== this.placementId);
       } else {
         await this.hass.callWS({
           type: "inhabit/mmwave/delete",
@@ -339,12 +358,14 @@ export class FpbDevicePanel extends LitElement {
   private _getIcon(): string {
     if (this.deviceType === "light") return "mdi:lightbulb";
     if (this.deviceType === "switch") return "mdi:toggle-switch";
+    if (this.deviceType === "button") return "mdi:gesture-tap-button";
     return "mdi:access-point";
   }
 
   private _getTitle(): string {
     if (this.deviceType === "light") return "Light";
     if (this.deviceType === "switch") return "Switch";
+    if (this.deviceType === "button") return "Button";
     return "mmWave Sensor";
   }
 

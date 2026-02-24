@@ -13,6 +13,7 @@ import type {
   FloorPlan,
   LightPlacement,
   SwitchPlacement,
+  ButtonPlacement,
   MmwavePlacement,
 } from "./types";
 
@@ -30,6 +31,7 @@ import {
   showGrid,
   lightPlacements,
   switchPlacements,
+  buttonPlacements,
   mmwavePlacements,
   focusedRoomId,
   setReloadFunction,
@@ -311,13 +313,17 @@ export class HaFloorplanViewer extends LitElement {
     if (!this.hass) return;
 
     try {
-      const [lights, switches, mmwave] = await Promise.all([
+      const [lights, switches, buttons, mmwave] = await Promise.all([
         this.hass.callWS<LightPlacement[]>({
           type: "inhabit/lights/list",
           floor_plan_id: floorPlanId,
         }),
         this.hass.callWS<SwitchPlacement[]>({
           type: "inhabit/switches/list",
+          floor_plan_id: floorPlanId,
+        }),
+        this.hass.callWS<ButtonPlacement[]>({
+          type: "inhabit/buttons/list",
           floor_plan_id: floorPlanId,
         }),
         this.hass.callWS<MmwavePlacement[]>({
@@ -327,6 +333,7 @@ export class HaFloorplanViewer extends LitElement {
       ]);
       lightPlacements.value = lights;
       switchPlacements.value = switches;
+      buttonPlacements.value = buttons;
       mmwavePlacements.value = mmwave;
     } catch (err) {
       console.error("Error loading device placements:", err);

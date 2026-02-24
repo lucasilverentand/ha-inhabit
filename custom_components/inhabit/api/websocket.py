@@ -12,7 +12,7 @@ from homeassistant.helpers.dispatcher import async_dispatcher_connect
 
 from ..const import DOMAIN, WS_PREFIX
 from ..models.automation_rule import VisualRule
-from ..models.device_placement import LightPlacement, SwitchPlacement
+from ..models.device_placement import ButtonPlacement, LightPlacement, SwitchPlacement
 from ..models.floor_plan import (
     Coordinates,
     Edge,
@@ -113,6 +113,10 @@ def async_register_websocket_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_switches_update)
     websocket_api.async_register_command(hass, ws_switches_remove)
     websocket_api.async_register_command(hass, ws_switches_list)
+    websocket_api.async_register_command(hass, ws_buttons_place)
+    websocket_api.async_register_command(hass, ws_buttons_update)
+    websocket_api.async_register_command(hass, ws_buttons_remove)
+    websocket_api.async_register_command(hass, ws_buttons_list)
     websocket_api.async_register_command(hass, ws_sensor_config_get)
     websocket_api.async_register_command(hass, ws_sensor_config_update)
     websocket_api.async_register_command(hass, ws_rules_list)
@@ -2157,6 +2161,116 @@ def ws_switches_list(
     """List all switch placements for a floor plan."""
     store = hass.data[DOMAIN]["store"]
     placements = store.get_switch_placements(msg["floor_plan_id"])
+    connection.send_result(msg["id"], [p.to_dict() for p in placements])
+
+
+# ==================== Button Placements ====================
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{WS_PREFIX}/buttons/place",
+        vol.Required("floor_plan_id"): str,
+        vol.Required("floor_id"): str,
+        vol.Required("entity_id"): str,
+        vol.Required("position"): dict,
+        vol.Optional("room_id"): vol.Any(str, None),
+        vol.Optional("label"): vol.Any(str, None),
+    }
+)
+@callback
+def ws_buttons_place(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Place a button on a floor plan."""
+    store = hass.data[DOMAIN]["store"]
+    button = ButtonPlacement(
+        entity_id=msg["entity_id"],
+        floor_id=msg["floor_id"],
+        room_id=msg.get("room_id"),
+        position=Coordinates.from_dict(msg["position"]),
+        label=msg.get("label"),
+    )
+    result = store.place_button(msg["floor_plan_id"], button)
+    connection.send_result(msg["id"], result.to_dict())
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{WS_PREFIX}/buttons/update",
+        vol.Required("button_id"): str,
+        vol.Optional("entity_id"): str,
+        vol.Optional("position"): dict,
+        vol.Optional("room_id"): vol.Any(str, None),
+        vol.Optional("label"): vol.Any(str, None),
+    }
+)
+@callback
+def ws_buttons_update(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Update a button placement."""
+    store = hass.data[DOMAIN]["store"]
+    button = store.get_button_placement(msg["button_id"])
+    if not button:
+        connection.send_error(msg["id"], "not_found", "Button not found")
+        return
+
+    if "entity_id" in msg:
+        button.entity_id = msg["entity_id"]
+    if "position" in msg:
+        button.position = Coordinates.from_dict(msg["position"])
+    if "room_id" in msg:
+        button.room_id = msg["room_id"]
+    if "label" in msg:
+        button.label = msg["label"]
+
+    result = store.update_button_placement(button)
+    if result:
+        connection.send_result(msg["id"], result.to_dict())
+    else:
+        connection.send_error(msg["id"], "update_failed", "Failed to update button")
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{WS_PREFIX}/buttons/remove",
+        vol.Required("button_id"): str,
+    }
+)
+@callback
+def ws_buttons_remove(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Remove a button placement."""
+    store = hass.data[DOMAIN]["store"]
+    if store.remove_button_placement(msg["button_id"]):
+        connection.send_result(msg["id"], {"success": True})
+    else:
+        connection.send_error(msg["id"], "not_found", "Button not found")
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{WS_PREFIX}/buttons/list",
+        vol.Required("floor_plan_id"): str,
+    }
+)
+@callback
+def ws_buttons_list(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """List all button placements for a floor plan."""
+    store = hass.data[DOMAIN]["store"]
+    placements = store.get_button_placements(msg["floor_plan_id"])
     connection.send_result(msg["id"], [p.to_dict() for p in placements])
 
 

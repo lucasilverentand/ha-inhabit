@@ -10,6 +10,7 @@ import type {
   Floor,
   LightPlacement,
   SwitchPlacement,
+  ButtonPlacement,
   MmwavePlacement,
 } from "./types";
 
@@ -40,6 +41,7 @@ export {
   layers,
   lightPlacements,
   switchPlacements,
+  buttonPlacements,
   constraintConflicts,
   focusedRoomId,
   occupancyPanelTarget,
@@ -58,6 +60,7 @@ import {
   gridSize,
   lightPlacements,
   switchPlacements,
+  buttonPlacements,
   constraintConflicts,
   focusedRoomId,
   occupancyPanelTarget,
@@ -98,7 +101,7 @@ export class HaFloorplanBuilder extends LitElement {
   private _occupancyPanelTarget: { id: string; name: string; type: "room" | "zone" } | null = null;
 
   @state()
-  private _devicePanelTarget: { id: string; type: "light" | "switch" | "mmwave" } | null = null;
+  private _devicePanelTarget: { id: string; type: "light" | "switch" | "mmwave" | "button" } | null = null;
 
   private _cleanupEffects: (() => void)[] = [];
 
@@ -434,13 +437,17 @@ export class HaFloorplanBuilder extends LitElement {
     if (!this.hass) return;
 
     try {
-      const [lights, switches, mmwave] = await Promise.all([
+      const [lights, switches, buttons, mmwave] = await Promise.all([
         this.hass.callWS<LightPlacement[]>({
           type: "inhabit/lights/list",
           floor_plan_id: floorPlanId,
         }),
         this.hass.callWS<SwitchPlacement[]>({
           type: "inhabit/switches/list",
+          floor_plan_id: floorPlanId,
+        }),
+        this.hass.callWS<ButtonPlacement[]>({
+          type: "inhabit/buttons/list",
           floor_plan_id: floorPlanId,
         }),
         this.hass.callWS<MmwavePlacement[]>({
@@ -450,6 +457,7 @@ export class HaFloorplanBuilder extends LitElement {
       ]);
       lightPlacements.value = lights;
       switchPlacements.value = switches;
+      buttonPlacements.value = buttons;
       mmwavePlacements.value = mmwave;
     } catch (err) {
       console.error("Error loading device placements:", err);

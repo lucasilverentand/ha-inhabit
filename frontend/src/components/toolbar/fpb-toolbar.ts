@@ -36,6 +36,7 @@ const ZONES_MENU_ITEMS: AddMenuItem[] = [
 const PLACEMENT_MENU_ITEMS: AddMenuItem[] = [
   { id: "light", icon: "mdi:lightbulb", label: "Light" },
   { id: "switch", icon: "mdi:toggle-switch", label: "Switch" },
+  { id: "button", icon: "mdi:gesture-tap-button", label: "Button" },
   { id: "mmwave", icon: "mdi:access-point", label: "mmWave" },
 ];
 

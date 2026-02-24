@@ -11,7 +11,7 @@ from homeassistant.helpers.storage import Store
 
 from ..const import STORAGE_KEY, STORAGE_VERSION
 from ..models.automation_rule import VisualRule
-from ..models.device_placement import LightPlacement, SwitchPlacement
+from ..models.device_placement import ButtonPlacement, LightPlacement, SwitchPlacement
 from ..models.floor_plan import Door, Edge, Floor, FloorPlan, Node, Room, Wall, Window
 from ..models.mmwave_sensor import MmwavePlacement
 from ..models.virtual_sensor import VirtualSensorConfig
@@ -34,6 +34,7 @@ class FloorPlanStore:
             "sensor_configs": {},
             "visual_rules": {},
             "mmwave_placements": {},
+            "button_placements": {},
         }
         self._loaded = False
 
@@ -110,7 +111,7 @@ class FloorPlanStore:
         del self._data["floor_plans"][floor_plan_id]
 
         # Clean up associated data
-        for key in ("light_placements", "switch_placements"):
+        for key in ("light_placements", "switch_placements", "button_placements"):
             placements = self._data.get(key, {})
             to_del = [k for k, v in placements.items() if v.get("floor_plan_id") == floor_plan_id]
             for k in to_del:
@@ -462,6 +463,56 @@ class FloorPlanStore:
         data = self._data.get("switch_placements", {}).get(switch_id)
         if data:
             return SwitchPlacement.from_dict(data)
+        return None
+
+    # ==================== Button Placements ====================
+
+    def get_button_placements(self, floor_plan_id: str) -> list[ButtonPlacement]:
+        """Get all button placements for a floor plan."""
+        placements = []
+        for data in self._data.get("button_placements", {}).values():
+            if data.get("floor_plan_id") == floor_plan_id:
+                placements.append(ButtonPlacement.from_dict(data))
+        return placements
+
+    def place_button(
+        self, floor_plan_id: str, button: ButtonPlacement
+    ) -> ButtonPlacement:
+        """Place a button on a floor plan."""
+        if "button_placements" not in self._data:
+            self._data["button_placements"] = {}
+        data = button.to_dict()
+        data["floor_plan_id"] = floor_plan_id
+        self._data["button_placements"][button.id] = data
+        self.async_delay_save()
+        return button
+
+    def update_button_placement(
+        self, button: ButtonPlacement
+    ) -> ButtonPlacement | None:
+        """Update a button placement."""
+        if button.id not in self._data.get("button_placements", {}):
+            return None
+        fp_id = self._data["button_placements"][button.id].get("floor_plan_id", "")
+        data = button.to_dict()
+        data["floor_plan_id"] = fp_id
+        self._data["button_placements"][button.id] = data
+        self.async_delay_save()
+        return button
+
+    def remove_button_placement(self, button_id: str) -> bool:
+        """Remove a button placement."""
+        if button_id in self._data.get("button_placements", {}):
+            del self._data["button_placements"][button_id]
+            self.async_delay_save()
+            return True
+        return False
+
+    def get_button_placement(self, button_id: str) -> ButtonPlacement | None:
+        """Get a single button placement by ID."""
+        data = self._data.get("button_placements", {}).get(button_id)
+        if data:
+            return ButtonPlacement.from_dict(data)
         return None
 
     # ==================== Sensor Configs ====================
