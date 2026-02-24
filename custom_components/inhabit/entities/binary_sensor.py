@@ -20,6 +20,8 @@ from ..const import (
     ATTR_CONTRIBUTING_SENSORS,
     ATTR_LAST_MOTION_AT,
     ATTR_LAST_PRESENCE_AT,
+    ATTR_SEALED,
+    ATTR_SEALED_SINCE,
     ATTR_STATE_MACHINE_STATE,
     DOMAIN,
     OccupancyState,
@@ -187,6 +189,7 @@ class VirtualOccupancySensor(BinarySensorEntity):
             ATTR_STATE_MACHINE_STATE: self._state_data.state,
             ATTR_CONFIDENCE: self._state_data.confidence,
             ATTR_CONTRIBUTING_SENSORS: self._state_data.contributing_sensors,
+            ATTR_SEALED: self._state_data.sealed,
         }
 
         if self._state_data.last_motion_at:
@@ -194,6 +197,9 @@ class VirtualOccupancySensor(BinarySensorEntity):
 
         if self._state_data.last_presence_at:
             attrs[ATTR_LAST_PRESENCE_AT] = self._state_data.last_presence_at.isoformat()
+
+        if self._state_data.sealed_since:
+            attrs[ATTR_SEALED_SINCE] = self._state_data.sealed_since.isoformat()
 
         return attrs
 

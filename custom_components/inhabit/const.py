@@ -25,6 +25,9 @@ class OccupancyState:
 DEFAULT_CHECKING_TIMEOUT: Final = 30
 DEFAULT_MOTION_TIMEOUT: Final = 120
 DEFAULT_PRESENCE_TIMEOUT: Final = 300
+DEFAULT_SEAL_MAX_DURATION: Final = 14400  # 4 hours
+DEFAULT_LONG_STAY_SEAL_MAX_DURATION: Final = 28800  # 8 hours
+DEFAULT_HOUSE_GUARD_MAX_DURATION: Final = 86400  # 24 hours
 
 
 # Device categories
@@ -58,6 +61,9 @@ ATTR_CONFIDENCE: Final = "confidence"
 ATTR_LAST_MOTION_AT: Final = "last_motion_at"
 ATTR_LAST_PRESENCE_AT: Final = "last_presence_at"
 ATTR_CONTRIBUTING_SENSORS: Final = "contributing_sensors"
+ATTR_SEALED: Final = "sealed"
+ATTR_SEALED_SINCE: Final = "sealed_since"
+ATTR_HOUSE_SEALED: Final = "house_sealed"
 
 # Layer names for frontend
 LAYER_BACKGROUND: Final = "background"

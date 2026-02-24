@@ -706,6 +706,8 @@ def ws_rooms_delete(
         vol.Optional("occupancy_sensor_enabled", default=False): bool,
         vol.Optional("motion_timeout", default=120): int,
         vol.Optional("checking_timeout", default=30): int,
+        vol.Optional("long_stay", default=False): bool,
+        vol.Optional("occupies_parent", default=False): bool,
     }
 )
 @callback
@@ -736,6 +738,8 @@ def ws_zones_add(
         occupancy_sensor_enabled=msg["occupancy_sensor_enabled"],
         motion_timeout=msg["motion_timeout"],
         checking_timeout=msg["checking_timeout"],
+        long_stay=msg["long_stay"],
+        occupies_parent=msg["occupies_parent"],
     )
     result = store.add_zone(msg["floor_plan_id"], msg["floor_id"], zone)
     if result:
@@ -748,6 +752,8 @@ def ws_zones_add(
                         floor_plan_id=msg["floor_plan_id"],
                         motion_timeout=zone.motion_timeout,
                         checking_timeout=zone.checking_timeout,
+                        long_stay=zone.long_stay,
+                        occupies_parent=zone.occupies_parent,
                     )
                 )
             )
@@ -770,6 +776,8 @@ def ws_zones_add(
         vol.Optional("occupancy_sensor_enabled"): bool,
         vol.Optional("motion_timeout"): int,
         vol.Optional("checking_timeout"): int,
+        vol.Optional("long_stay"): bool,
+        vol.Optional("occupies_parent"): bool,
     }
 )
 @callback
@@ -813,9 +821,25 @@ def ws_zones_update(
         zone.motion_timeout = msg["motion_timeout"]
     if "checking_timeout" in msg:
         zone.checking_timeout = msg["checking_timeout"]
+    if "long_stay" in msg:
+        zone.long_stay = msg["long_stay"]
+    if "occupies_parent" in msg:
+        zone.occupies_parent = msg["occupies_parent"]
 
     result = store.update_zone(msg["floor_plan_id"], zone)
     if result:
+        # Sync zone config fields to sensor config when occupancy is active
+        zone_config_fields = {"motion_timeout", "checking_timeout", "long_stay", "occupies_parent"}
+        if zone.occupancy_sensor_enabled and zone_config_fields & msg.keys():
+            config = store.get_sensor_config(zone.id)
+            if config:
+                config.motion_timeout = zone.motion_timeout
+                config.checking_timeout = zone.checking_timeout
+                config.long_stay = zone.long_stay
+                config.occupies_parent = zone.occupies_parent
+                sensor_engine = hass.data[DOMAIN]["sensor_engine"]
+                hass.async_create_task(sensor_engine.async_update_room(config))
+
         # Sync occupancy toggle with sensor engine
         if "occupancy_sensor_enabled" in msg:
             sensor_engine = hass.data[DOMAIN]["sensor_engine"]
@@ -827,6 +851,8 @@ def ws_zones_update(
                         floor_plan_id=msg["floor_plan_id"],
                         motion_timeout=zone.motion_timeout,
                         checking_timeout=zone.checking_timeout,
+                        long_stay=zone.long_stay,
+                        occupies_parent=zone.occupies_parent,
                     )
                     store.create_sensor_config(config)
                 hass.async_create_task(sensor_engine.async_add_room(config))
@@ -2180,9 +2206,15 @@ def ws_sensor_config_get(
         vol.Optional("motion_sensors"): list,
         vol.Optional("presence_sensors"): list,
         vol.Optional("door_sensors"): list,
+        vol.Optional("exit_sensors"): list,
+        vol.Optional("hold_until_exit"): bool,
+        vol.Optional("occupies_parent"): bool,
         vol.Optional("presence_affects"): bool,
-        vol.Optional("door_blocks_vacancy"): bool,
-        vol.Optional("door_open_resets_checking"): bool,
+        vol.Optional("door_seals_room"): bool,
+        vol.Optional("seal_max_duration"): int,
+        vol.Optional("long_stay"): bool,
+        vol.Optional("door_blocks_vacancy"): bool,  # Legacy, maps to door_seals_room
+        vol.Optional("door_open_resets_checking"): bool,  # Legacy
         vol.Optional("occupied_threshold"): vol.Coerce(float),
         vol.Optional("vacant_threshold"): vol.Coerce(float),
     }
@@ -2228,9 +2260,24 @@ def ws_sensor_config_update(
         ]
     if "door_sensors" in msg:
         config.door_sensors = [SensorBinding.from_dict(s) for s in msg["door_sensors"]]
+    if "exit_sensors" in msg:
+        config.exit_sensors = [SensorBinding.from_dict(s) for s in msg["exit_sensors"]]
+    if "hold_until_exit" in msg:
+        config.hold_until_exit = msg["hold_until_exit"]
+    if "occupies_parent" in msg:
+        config.occupies_parent = msg["occupies_parent"]
     if "presence_affects" in msg:
         config.presence_affects = msg["presence_affects"]
-    if "door_blocks_vacancy" in msg:
+    if "door_seals_room" in msg:
+        config.door_seals_room = msg["door_seals_room"]
+        config.door_blocks_vacancy = msg["door_seals_room"]  # Keep in sync
+    if "seal_max_duration" in msg:
+        config.seal_max_duration = msg["seal_max_duration"]
+    if "long_stay" in msg:
+        config.long_stay = msg["long_stay"]
+    # Legacy field: map to door_seals_room
+    if "door_blocks_vacancy" in msg and "door_seals_room" not in msg:
+        config.door_seals_room = msg["door_blocks_vacancy"]
         config.door_blocks_vacancy = msg["door_blocks_vacancy"]
     if "door_open_resets_checking" in msg:
         config.door_open_resets_checking = msg["door_open_resets_checking"]

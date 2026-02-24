@@ -23,6 +23,8 @@ class Zone:
     occupancy_sensor_enabled: bool = False
     motion_timeout: int = 120
     checking_timeout: int = 30
+    long_stay: bool = False  # Zone where occupants stay for hours (couch, bed, etc.)
+    occupies_parent: bool = False  # When occupied, also mark parent room as occupied
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
@@ -38,6 +40,8 @@ class Zone:
             "occupancy_sensor_enabled": self.occupancy_sensor_enabled,
             "motion_timeout": self.motion_timeout,
             "checking_timeout": self.checking_timeout,
+            "long_stay": self.long_stay,
+            "occupies_parent": self.occupies_parent,
         }
 
     @classmethod
@@ -55,4 +59,6 @@ class Zone:
             occupancy_sensor_enabled=data.get("occupancy_sensor_enabled", False),
             motion_timeout=int(data.get("motion_timeout", 120)),
             checking_timeout=int(data.get("checking_timeout", 30)),
+            long_stay=data.get("long_stay", False),
+            occupies_parent=data.get("occupies_parent", False),
         )
