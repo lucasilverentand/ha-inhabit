@@ -9,7 +9,7 @@ STORAGE_KEY: Final = "inhabit.floor_plans"
 STORAGE_VERSION: Final = 1
 
 # Platform types
-PLATFORMS: Final = ["binary_sensor"]
+PLATFORMS: Final = ["binary_sensor", "button"]
 
 
 # Occupancy states

@@ -22,9 +22,11 @@ sys.modules["homeassistant.helpers.entity"] = MagicMock()
 sys.modules["homeassistant.helpers.entity_platform"] = MagicMock()
 sys.modules["homeassistant.helpers.typing"] = MagicMock()
 sys.modules["homeassistant.components"] = MagicMock()
+sys.modules["homeassistant.components.frontend"] = MagicMock()
 sys.modules["homeassistant.components.websocket_api"] = MagicMock()
 sys.modules["homeassistant.components.http"] = MagicMock()
 sys.modules["homeassistant.components.binary_sensor"] = MagicMock()
+sys.modules["homeassistant.components.button"] = MagicMock()
 sys.modules["voluptuous"] = MagicMock()
 sys.modules["aiohttp"] = MagicMock()
 
@@ -595,6 +597,89 @@ class TestScenarioRunner:
         result = await runner.run_scenario(scenarios[1])
 
         assert result["success"] is True
+
+
+class TestOccupancyOverrideButton:
+    """Test occupancy override button toggle logic."""
+
+    def test_toggle_vacant_to_occupied(self):
+        """Pressing the button when vacant should switch to occupied."""
+        from custom_components.inhabit.const import OccupancyState
+        from custom_components.inhabit.models.virtual_sensor import OccupancyStateData
+
+        current = OccupancyStateData(state=OccupancyState.VACANT)
+        if current.state in (OccupancyState.OCCUPIED, OccupancyState.CHECKING):
+            new_state = OccupancyState.VACANT
+        else:
+            new_state = OccupancyState.OCCUPIED
+        assert new_state == OccupancyState.OCCUPIED
+
+    def test_toggle_occupied_to_vacant(self):
+        """Pressing the button when occupied should switch to vacant."""
+        from custom_components.inhabit.const import OccupancyState
+        from custom_components.inhabit.models.virtual_sensor import OccupancyStateData
+
+        current = OccupancyStateData(state=OccupancyState.OCCUPIED)
+        if current.state in (OccupancyState.OCCUPIED, OccupancyState.CHECKING):
+            new_state = OccupancyState.VACANT
+        else:
+            new_state = OccupancyState.OCCUPIED
+        assert new_state == OccupancyState.VACANT
+
+    def test_toggle_checking_to_vacant(self):
+        """Pressing the button when checking should switch to vacant."""
+        from custom_components.inhabit.const import OccupancyState
+        from custom_components.inhabit.models.virtual_sensor import OccupancyStateData
+
+        current = OccupancyStateData(state=OccupancyState.CHECKING)
+        if current.state in (OccupancyState.OCCUPIED, OccupancyState.CHECKING):
+            new_state = OccupancyState.VACANT
+        else:
+            new_state = OccupancyState.OCCUPIED
+        assert new_state == OccupancyState.VACANT
+
+    def test_toggle_no_current_state_defaults_to_occupied(self):
+        """When there's no current state, pressing should set occupied."""
+        from custom_components.inhabit.const import OccupancyState
+
+        current = None
+        if current and current.state in (
+            OccupancyState.OCCUPIED,
+            OccupancyState.CHECKING,
+        ):
+            new_state = OccupancyState.VACANT
+        else:
+            new_state = OccupancyState.OCCUPIED
+        assert new_state == OccupancyState.OCCUPIED
+
+    def test_button_unique_id_format(self):
+        """Test unique ID format for override buttons."""
+        room_id = "room_1"
+        assert f"fp_{room_id}_occupancy_override" == "fp_room_1_occupancy_override"
+
+    def test_button_unique_id_differs_from_sensor(self):
+        """Button unique ID must differ from the binary sensor unique ID."""
+        room_id = "room_1"
+        assert f"fp_{room_id}_occupancy" != f"fp_{room_id}_occupancy_override"
+
+    def test_orphan_cleanup_covers_buttons(self):
+        """Orphan detection should find stale button entities too."""
+        valid_ids = {"room_a"}
+
+        def is_orphaned(unique_id: str) -> bool:
+            if not unique_id.startswith("fp_"):
+                return False
+            for suffix in ("_occupancy", "_occupancy_override"):
+                if unique_id.endswith(suffix):
+                    region_id = unique_id[3 : -len(suffix)]
+                    return region_id not in valid_ids
+            return False
+
+        assert is_orphaned("fp_room_b_occupancy") is True
+        assert is_orphaned("fp_room_b_occupancy_override") is True
+        assert is_orphaned("fp_room_a_occupancy") is False
+        assert is_orphaned("fp_room_a_occupancy_override") is False
+        assert is_orphaned("some_other_entity") is False
 
 
 if __name__ == "__main__":

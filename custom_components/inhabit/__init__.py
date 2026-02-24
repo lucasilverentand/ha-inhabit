@@ -31,7 +31,7 @@ from .store import FloorPlanStore, ImageStore
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS_LIST: list[Platform] = [Platform.BINARY_SENSOR]
+PLATFORMS_LIST: list[Platform] = [Platform.BINARY_SENSOR, Platform.BUTTON]
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
@@ -69,12 +69,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             for zone in floor.zones:
                 valid_ids.add(zone.id)
 
+    def _is_orphaned(unique_id: str) -> bool:
+        """Check if a unique_id belongs to a region that no longer exists."""
+        if not unique_id.startswith("fp_"):
+            return False
+        for suffix in ("_occupancy", "_occupancy_override"):
+            if unique_id.endswith(suffix):
+                region_id = unique_id[3 : -len(suffix)]
+                return region_id not in valid_ids
+        return False
+
     orphaned_entities = [
         ent
         for ent in er.async_entries_for_config_entry(ent_reg, entry.entry_id)
-        if ent.unique_id.startswith("fp_")
-        and ent.unique_id.endswith("_occupancy")
-        and ent.unique_id[3:-10] not in valid_ids  # strip "fp_" and "_occupancy"
+        if _is_orphaned(ent.unique_id)
     ]
     for ent in orphaned_entities:
         _LOGGER.info("Removing orphaned entity %s (%s)", ent.entity_id, ent.unique_id)
