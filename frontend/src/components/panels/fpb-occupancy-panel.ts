@@ -513,6 +513,36 @@ export class FpbOccupancyPanel extends LitElement {
               </div>
             </div>
 
+            <!-- Override Trigger -->
+            <div class="section">
+              <div class="section-title">Override Trigger</div>
+              <div class="add-sensor-row">
+                <input
+                  id="override-entity-input"
+                  type="text"
+                  placeholder="event.wall_switch"
+                  .value=${this._config.override_trigger_entity ?? ""}
+                  @change=${(e: Event) => this._updateConfig({ override_trigger_entity: (e.target as HTMLInputElement).value.trim() })}
+                />
+              </div>
+              <div class="add-sensor-row">
+                <input
+                  id="override-action-input"
+                  type="text"
+                  placeholder="on_press"
+                  .value=${this._config.override_trigger_action ?? ""}
+                  @change=${(e: Event) => this._updateConfig({ override_trigger_action: (e.target as HTMLInputElement).value.trim() })}
+                />
+              </div>
+              ${this._config.override_trigger_entity && this._config.override_trigger_action ? html`
+                <div class="sensor-item">
+                  <ha-icon icon="mdi:gesture-tap-button" style="--mdc-icon-size: 18px;"></ha-icon>
+                  <span class="entity-id">${this._config.override_trigger_entity} (${this._config.override_trigger_action})</span>
+                  <button class="remove-btn" @click=${() => this._updateConfig({ override_trigger_entity: "", override_trigger_action: "" })}>x</button>
+                </div>
+              ` : nothing}
+            </div>
+
             <!-- Thresholds -->
             <div class="section">
               <div class="section-title">Thresholds</div>

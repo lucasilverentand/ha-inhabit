@@ -131,6 +131,15 @@ class OccupancyStateMachine:
             )
             self._unsub_state_listeners.append(unsub)
 
+        # Subscribe to override trigger (physical button)
+        if self.config.override_trigger_entity and self.config.override_trigger_action:
+            unsub = async_track_state_change_event(
+                self.hass,
+                self.config.override_trigger_entity,
+                self._handle_override_trigger_event,
+            )
+            self._unsub_state_listeners.append(unsub)
+
         # Check initial state
         await self._evaluate_initial_state()
 
@@ -376,6 +385,43 @@ class OccupancyStateMachine:
             self._break_seal(f"exit sensor {entity_id} fired")
 
         self._transition_to_checking(f"exit sensor {entity_id}")
+
+    @callback
+    def _handle_override_trigger_event(self, event: Event) -> None:
+        """Handle override trigger event (physical button press).
+
+        Supports both HA event entities (event_type attribute) and
+        legacy Z2M action sensors (state value).
+        """
+        new_state: State | None = event.data.get("new_state")
+        if not new_state:
+            return
+
+        action = self.config.override_trigger_action
+
+        # Event entities: action is in event_type attribute
+        # Action sensors: action is the state value
+        event_type = new_state.attributes.get("event_type", "")
+        matched = event_type == action or new_state.state == action
+        if not matched:
+            return
+
+        entity_id = self.config.override_trigger_entity
+
+        if self._state.state in (OccupancyState.OCCUPIED, OccupancyState.CHECKING):
+            new = OccupancyState.VACANT
+        else:
+            new = OccupancyState.OCCUPIED
+
+        _LOGGER.info(
+            "Room %s: override trigger %s fired (%s), %s → %s",
+            self.config.room_id,
+            entity_id,
+            action,
+            self._state.state,
+            new,
+        )
+        self.set_state(new, f"override trigger {entity_id} ({action})")
 
     # ------------------------------------------------------------------
     # Door seal logic

@@ -189,6 +189,8 @@ export interface VirtualSensorConfig {
   presence_affects: boolean;
   door_blocks_vacancy: boolean;
   door_open_resets_checking: boolean;
+  override_trigger_entity: string;
+  override_trigger_action: string;
   occupied_threshold: number;
   vacant_threshold: number;
 }

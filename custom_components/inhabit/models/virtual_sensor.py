@@ -169,6 +169,10 @@ class VirtualSensorConfig:
     door_blocks_vacancy: bool = True  # Deprecated: use door_seals_room
     door_open_resets_checking: bool = True  # Deprecated: kept for backward compat
 
+    # Override trigger — physical button that toggles occupancy
+    override_trigger_entity: str = ""  # e.g. event.hue_wall_switch
+    override_trigger_action: str = ""  # e.g. on_press
+
     # Confidence thresholds
     occupied_threshold: float = 0.5  # Minimum confidence to be OCCUPIED
     vacant_threshold: float = 0.1  # Maximum confidence to be VACANT
@@ -202,6 +206,8 @@ class VirtualSensorConfig:
             "door_seals_room": self.door_seals_room,
             "seal_max_duration": self.seal_max_duration,
             "long_stay": self.long_stay,
+            "override_trigger_entity": self.override_trigger_entity,
+            "override_trigger_action": self.override_trigger_action,
             # Legacy fields kept for backward compatibility
             "door_blocks_vacancy": self.door_seals_room,
             "door_open_resets_checking": self.door_open_resets_checking,
@@ -243,6 +249,8 @@ class VirtualSensorConfig:
             door_seals_room=door_seals_room,
             seal_max_duration=int(data.get("seal_max_duration", 14400)),
             long_stay=data.get("long_stay", False),
+            override_trigger_entity=data.get("override_trigger_entity", ""),
+            override_trigger_action=data.get("override_trigger_action", ""),
             door_blocks_vacancy=door_seals_room,
             door_open_resets_checking=data.get("door_open_resets_checking", True),
             occupied_threshold=float(data.get("occupied_threshold", 0.5)),

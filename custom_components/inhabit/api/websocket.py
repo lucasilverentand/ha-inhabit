@@ -2327,6 +2327,8 @@ def ws_sensor_config_get(
         vol.Optional("door_seals_room"): bool,
         vol.Optional("seal_max_duration"): int,
         vol.Optional("long_stay"): bool,
+        vol.Optional("override_trigger_entity"): str,
+        vol.Optional("override_trigger_action"): str,
         vol.Optional("door_blocks_vacancy"): bool,  # Legacy, maps to door_seals_room
         vol.Optional("door_open_resets_checking"): bool,  # Legacy
         vol.Optional("occupied_threshold"): vol.Coerce(float),
@@ -2389,6 +2391,10 @@ def ws_sensor_config_update(
         config.seal_max_duration = msg["seal_max_duration"]
     if "long_stay" in msg:
         config.long_stay = msg["long_stay"]
+    if "override_trigger_entity" in msg:
+        config.override_trigger_entity = msg["override_trigger_entity"]
+    if "override_trigger_action" in msg:
+        config.override_trigger_action = msg["override_trigger_action"]
     # Legacy field: map to door_seals_room
     if "door_blocks_vacancy" in msg and "door_seals_room" not in msg:
         config.door_seals_room = msg["door_blocks_vacancy"]
