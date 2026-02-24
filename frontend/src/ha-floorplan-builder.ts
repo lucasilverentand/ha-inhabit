@@ -109,7 +109,6 @@ export class HaFloorplanBuilder extends LitElement {
       height: 100%;
       background: var(--primary-background-color);
       color: var(--primary-text-color);
-      --toolbar-height: var(--header-height, 48px);
     }
 
     .container {
@@ -126,7 +125,7 @@ export class HaFloorplanBuilder extends LitElement {
     }
 
     fpb-toolbar {
-      height: var(--toolbar-height);
+      flex-shrink: 0;
     }
 
     .canvas-container {

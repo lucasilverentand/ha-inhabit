@@ -32,3 +32,9 @@ Thumbs.db
 
 # Home Assistant
 .storage/
+
+# Playwright / E2E
+e2e/.auth/
+e2e/node_modules/
+playwright-report/
+test-results/
