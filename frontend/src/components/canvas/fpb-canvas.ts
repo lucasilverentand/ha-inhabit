@@ -90,6 +90,10 @@ export class FpbCanvas extends LitElement {
   @state()
   private _isPanning = false;
 
+  /** Space key held — forces pan-only mode. */
+  @state()
+  private _spaceHeld = false;
+
   @state()
   private _panStart: Coordinates = { x: 0, y: 0 };
 
@@ -171,6 +175,10 @@ export class FpbCanvas extends LitElement {
   private _focusedRoomId: string | null = null;
 
   private _viewBoxAnimation: number | null = null;
+
+  /** Window-level keydown/keyup handlers for space-to-pan. */
+  private _onSpaceDown?: (e: KeyboardEvent) => void;
+  private _onSpaceUp?: (e: KeyboardEvent) => void;
 
   @state()
   private _pendingDevice: { position: Coordinates } | null = null;
@@ -274,6 +282,14 @@ export class FpbCanvas extends LitElement {
     }
 
     svg.view-mode.panning {
+      cursor: grabbing;
+    }
+
+    svg.space-pan {
+      cursor: grab;
+    }
+
+    svg.space-pan.panning {
       cursor: grabbing;
     }
 
@@ -1177,6 +1193,25 @@ export class FpbCanvas extends LitElement {
 
     this._loadHaAreas();
 
+    // Space-to-pan: listen on window so it works even when SVG isn't focused
+    this._onSpaceDown = (e: KeyboardEvent) => {
+      if (e.code === "Space" && !e.repeat && !(e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement)) {
+        e.preventDefault();
+        this._spaceHeld = true;
+      }
+    };
+    this._onSpaceUp = (e: KeyboardEvent) => {
+      if (e.code === "Space") {
+        this._spaceHeld = false;
+        // If we were panning via space, release it
+        if (this._isPanning) {
+          this._isPanning = false;
+        }
+      }
+    };
+    window.addEventListener("keydown", this._onSpaceDown);
+    window.addEventListener("keyup", this._onSpaceUp);
+
     // Observe container resizes to keep zoom/pan calculations accurate
     this._resizeObserver = new ResizeObserver(() => {
       // Re-fit the current floor on significant resize
@@ -1203,6 +1238,11 @@ export class FpbCanvas extends LitElement {
       clearTimeout(this._blinkTimer);
       this._blinkTimer = null;
     }
+
+    // Clean up space-to-pan listeners
+    if (this._onSpaceDown) window.removeEventListener("keydown", this._onSpaceDown);
+    if (this._onSpaceUp) window.removeEventListener("keyup", this._onSpaceUp);
+    this._spaceHeld = false;
 
     // Clean up resize observer
     this._resizeObserver?.disconnect();
@@ -1256,6 +1296,15 @@ export class FpbCanvas extends LitElement {
 
     // Middle button always pans
     if (e.button === 1) {
+      this._cancelViewBoxAnimation();
+      this._isPanning = true;
+      this._panStart = { x: e.clientX, y: e.clientY };
+      this._svg?.setPointerCapture(e.pointerId);
+      return;
+    }
+
+    // Space held — force pan regardless of mode/tool
+    if (this._spaceHeld && e.button === 0) {
       this._cancelViewBoxAnimation();
       this._isPanning = true;
       this._panStart = { x: e.clientX, y: e.clientY };
@@ -6342,6 +6391,7 @@ export class FpbCanvas extends LitElement {
     const mode = this._canvasMode;
     const svgClasses = [
       this._isPanning ? "panning" : "",
+      this._spaceHeld ? "space-pan" : "",
       activeTool.value === "select" ? "select-tool" : "",
       mode === "viewing" ? "view-mode" : "",
       `mode-${mode}`,
