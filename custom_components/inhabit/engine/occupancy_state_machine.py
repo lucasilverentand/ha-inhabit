@@ -64,7 +64,7 @@ class OccupancyStateMachine:
         self,
         hass: HomeAssistant,
         config: VirtualSensorConfig,
-        on_state_change: Callable[[OccupancyStateData], None],
+        on_state_change: Callable[[OccupancyStateData, str], None],
         can_go_vacant: Callable[[str], bool] | None = None,
         is_occupied_by_children: Callable[[str], bool] | None = None,
     ) -> None:
@@ -73,7 +73,8 @@ class OccupancyStateMachine:
         Args:
             hass: Home Assistant instance.
             config: Virtual sensor configuration.
-            on_state_change: Callback for state changes.
+            on_state_change: Callback for state changes. Receives the state
+                data and a reason string describing what caused the change.
             can_go_vacant: Optional house-level guard callback. Returns False
                 to block vacancy (e.g. house is sealed and this is the last
                 occupied room).
@@ -995,4 +996,4 @@ class OccupancyStateMachine:
         }
         self._state.transition_reason = reason
         self._state.previous_state = previous_state
-        self._on_state_change(self._state)
+        self._on_state_change(self._state, reason)

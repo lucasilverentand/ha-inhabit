@@ -19,6 +19,7 @@ from ..models.virtual_sensor import (
     OccupancyStateData,
     VirtualSensorConfig,
 )
+from .feedback_controller import FeedbackController
 from .house_occupancy_guard import HouseOccupancyGuard
 from .mmwave_target_processor import SIGNAL_MMWAVE_TARGETS_UPDATED
 from .occupancy_state_machine import OccupancyStateMachine
@@ -53,6 +54,7 @@ class VirtualSensorEngine:
         self._store = store
         self._state_machines: dict[str, OccupancyStateMachine] = {}
         self._house_guard = HouseOccupancyGuard(hass, store)
+        self._feedback_controller = FeedbackController(hass)
         self._running = False
         self._unsub_mmwave: Callable[[], None] | None = None
 
@@ -77,6 +79,11 @@ class VirtualSensorEngine:
         """Get the house occupancy guard."""
         return self._house_guard
 
+    @property
+    def feedback_controller(self) -> FeedbackController:
+        """Get the feedback controller."""
+        return self._feedback_controller
+
     async def async_start(self) -> None:
         """Start the engine and create state machines for all configured rooms."""
         if self._running:
@@ -87,6 +94,9 @@ class VirtualSensorEngine:
 
         # Load persisted occupancy history
         await self._load_history()
+
+        # Load feedback data
+        self._feedback_controller.load_data(self._store.get_feedback_data())
 
         # Start house guard first (discovers exterior doors)
         await self._house_guard.async_start()
@@ -141,6 +151,9 @@ class VirtualSensorEngine:
             self._unsub_mmwave()
             self._unsub_mmwave = None
         self._mmwave_target_keys_per_region.clear()
+
+        # Save feedback data before stopping
+        self._store.save_feedback_data(self._feedback_controller.save_data())
 
         # Stop all state machines
         for _room_id, machine in list(self._state_machines.items()):
@@ -444,7 +457,9 @@ class VirtualSensorEngine:
         machine = OccupancyStateMachine(
             self.hass,
             config,
-            lambda state, room_id=config.room_id: self._on_state_change(room_id, state),
+            lambda state, reason, room_id=config.room_id: self._on_state_change(
+                room_id, state, reason
+            ),
             can_go_vacant=self._house_guard.can_room_go_vacant,
             is_occupied_by_children=self._is_occupied_by_children,
         )
@@ -495,14 +510,17 @@ class VirtualSensorEngine:
         await self._create_state_machine(config)
 
     @callback
-    def _on_state_change(self, room_id: str, state: OccupancyStateData) -> None:
+    def _on_state_change(
+        self, room_id: str, state: OccupancyStateData, reason: str = ""
+    ) -> None:
         """Handle state change from a state machine."""
         _LOGGER.debug(
-            "Room %s state changed: %s (confidence: %.2f, sealed: %s)",
+            "Room %s state changed: %s (confidence: %.2f, sealed: %s, reason: %s)",
             room_id,
             state.state,
             state.confidence,
             state.sealed,
+            reason,
         )
 
         # Record history entry
@@ -523,6 +541,33 @@ class VirtualSensorEngine:
             duration_seconds=duration,
         )
         self._occupancy_history.append(entry)
+
+        # Record override events for feedback learning
+        if "manual override" in reason or "override trigger" in reason:
+            # Determine the previous state from the transition
+            # The state machine has already transitioned, so we infer the previous
+            # state from the override direction
+            machine = self._state_machines.get(room_id)
+            if machine:
+                # For manual overrides, the previous state was the opposite direction
+                # We can determine it from the new state:
+                # - If new state is VACANT, previous was OCCUPIED or CHECKING
+                # - If new state is OCCUPIED, previous was VACANT
+                if state.state == OccupancyState.VACANT:
+                    previous_state = OccupancyState.OCCUPIED
+                elif state.state == OccupancyState.OCCUPIED:
+                    previous_state = OccupancyState.VACANT
+                else:
+                    previous_state = OccupancyState.OCCUPIED
+
+                self._feedback_controller.record_override(
+                    room_id=room_id,
+                    previous_state=previous_state,
+                    new_state=state.state,
+                    confidence=state.confidence,
+                    seal_probability=0.0,
+                    contributing_sensors=list(state.contributing_sensors),
+                )
 
         # Update house guard
         self._house_guard.on_room_state_changed(room_id, state.state)

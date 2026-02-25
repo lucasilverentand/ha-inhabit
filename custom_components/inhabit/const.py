@@ -71,6 +71,7 @@ ATTR_HOUSE_SEALED: Final = "house_sealed"
 # Events
 EVENT_CHECKING_STARTED: Final = f"{DOMAIN}_checking_started"
 EVENT_CHECKING_RESOLVED: Final = f"{DOMAIN}_checking_resolved"
+EVENT_OVERRIDE_RECORDED: Final = f"{DOMAIN}_override_recorded"
 
 # Layer names for frontend
 LAYER_BACKGROUND: Final = "background"

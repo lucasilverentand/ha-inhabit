@@ -686,8 +686,7 @@ class FloorPlanStore:
             return True
         return False
 
-    # ==================== Timeout History ====================
-
+    # ==================== Timeout History =============
     def get_timeout_history(self) -> dict[str, list[dict]]:
         """Get all timeout history records."""
         return self._data.get("timeout_history", {})
@@ -727,6 +726,17 @@ class FloorPlanStore:
     def save_occupancy_history(self, entries: list[dict[str, Any]]) -> None:
         """Save occupancy history entries."""
         self._data["occupancy_history"] = entries
+        self.async_delay_save()
+
+    # ==================== Feedback Data ====================
+
+    def get_feedback_data(self) -> dict[str, Any]:
+        """Get feedback controller data."""
+        return self._data.get("feedback_data", {})
+
+    def save_feedback_data(self, data: dict[str, Any]) -> None:
+        """Save feedback controller data."""
+        self._data["feedback_data"] = data
         self.async_delay_save()
 
     # ==================== Utilities ====================
