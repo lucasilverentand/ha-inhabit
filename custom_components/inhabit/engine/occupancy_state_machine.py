@@ -16,6 +16,7 @@ from homeassistant.helpers.event import (
 
 from ..const import OccupancyState
 from ..models.virtual_sensor import OccupancyStateData, VirtualSensorConfig
+from .adaptive_timeout import AdaptiveTimeoutManager, TimeOfDayProfile
 from .presence_aggregator import PresenceAggregator
 
 if TYPE_CHECKING:
@@ -84,6 +85,19 @@ class OccupancyStateMachine:
         self._checking_timer: Callable[[], None] | None = None
         self._seal_expiry_timer: Callable[[], None] | None = None
         self._running = False
+        self._occupied_since: datetime | None = None
+
+        # Adaptive timeout manager
+        self._timeout_manager = AdaptiveTimeoutManager(
+            hass=hass,
+            room_id=config.room_id,
+            base_checking_timeout=config.checking_timeout,
+            base_motion_timeout=config.motion_timeout,
+            time_of_day_profiles=[
+                TimeOfDayProfile(**p) for p in config.time_of_day_profiles
+            ],
+            adaptive_enabled=config.adaptive_timeouts,
+        )
 
         # Presence aggregator for weighted temporal-decay probability
         self._aggregator = PresenceAggregator(
@@ -103,6 +117,11 @@ class OccupancyStateMachine:
     def is_occupied(self) -> bool:
         """Check if room is considered occupied."""
         return self._state.state in (OccupancyState.OCCUPIED, OccupancyState.CHECKING)
+
+    @property
+    def timeout_manager(self) -> AdaptiveTimeoutManager:
+        """Get the adaptive timeout manager."""
+        return self._timeout_manager
 
     async def async_start(self) -> None:
         """Start the state machine and subscribe to sensors."""
@@ -597,6 +616,7 @@ class OccupancyStateMachine:
         self._state.state = OccupancyState.OCCUPIED
         self._state.checking_started_at = None
         self._state.confidence = self._calculate_confidence()
+        self._occupied_since = datetime.now()
 
         # Evaluate seal on entering OCCUPIED
         self._evaluate_seal(reason)
@@ -660,12 +680,21 @@ class OccupancyStateMachine:
         self._cancel_checking_timer()
         self._cancel_seal_expiry_timer()
         old_state = self._state.state
+
+        # Record session for adaptive learning
+        if self._occupied_since is not None:
+            self._timeout_manager.record_occupancy_session(
+                started_at=self._occupied_since,
+                ended_at=datetime.now(),
+            )
+
         self._state.state = OccupancyState.VACANT
         self._state.checking_started_at = None
         self._state.confidence = 0.0
         self._state.contributing_sensors = []
         self._state.sealed = False
         self._state.sealed_since = None
+        self._occupied_since = None
 
         _LOGGER.info(
             "Room %s: %s → VACANT (%s)",
@@ -742,6 +771,8 @@ class OccupancyStateMachine:
         """Start the checking state timeout timer."""
         self._cancel_checking_timer()
 
+        effective_timeout = self._timeout_manager.get_effective_checking_timeout()
+
         @callback
         def _checking_timeout(_now: Any) -> None:
             self._checking_timer = None
@@ -750,7 +781,7 @@ class OccupancyStateMachine:
 
         self._checking_timer = async_call_later(
             self.hass,
-            self.config.checking_timeout,
+            effective_timeout,
             _checking_timeout,
         )
 

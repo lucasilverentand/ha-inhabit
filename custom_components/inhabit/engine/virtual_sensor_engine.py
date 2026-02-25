@@ -75,6 +75,9 @@ class VirtualSensorEngine:
             if config.enabled:
                 await self._create_state_machine(config)
 
+        # Load persisted timeout histories
+        self._load_timeout_histories()
+
         _LOGGER.info(
             "Virtual sensor engine started with %d state machines",
             len(self._state_machines),
@@ -87,6 +90,9 @@ class VirtualSensorEngine:
 
         _LOGGER.info("Stopping virtual sensor engine")
         self._running = False
+
+        # Save timeout histories before stopping
+        self._save_timeout_histories()
 
         # Stop all state machines
         for _room_id, machine in list(self._state_machines.items()):
@@ -244,6 +250,41 @@ class VirtualSensorEngine:
                     OccupancyState.OCCUPIED,
                     f"child zone {zone_id} occupied",
                 )
+
+    # ------------------------------------------------------------------
+    # Timeout history persistence
+    # ------------------------------------------------------------------
+
+    def _save_timeout_histories(self) -> None:
+        """Save all timeout histories to the store for persistence."""
+        timeout_history: dict[str, list[dict]] = {}
+
+        for room_id, machine in self._state_machines.items():
+            records = machine.timeout_manager.get_session_history()
+            if records:
+                timeout_history[room_id] = [r.to_dict() for r in records]
+
+        self._store.save_timeout_history(timeout_history)
+        _LOGGER.debug(
+            "Saved timeout histories for %d rooms", len(timeout_history)
+        )
+
+    def _load_timeout_histories(self) -> None:
+        """Load timeout histories from the store and distribute to managers."""
+        timeout_history = self._store.get_timeout_history()
+        if not timeout_history:
+            return
+
+        loaded_count = 0
+        for room_id, records in timeout_history.items():
+            machine = self._state_machines.get(room_id)
+            if machine and records:
+                machine.timeout_manager.load_session_history(records)
+                loaded_count += 1
+
+        _LOGGER.debug(
+            "Loaded timeout histories for %d rooms", loaded_count
+        )
 
     # ------------------------------------------------------------------
     # State machine lifecycle
