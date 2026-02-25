@@ -27,6 +27,7 @@ DEFAULT_MOTION_TIMEOUT: Final = 120
 DEFAULT_PRESENCE_TIMEOUT: Final = 300
 DEFAULT_SEAL_MAX_DURATION: Final = 14400  # 4 hours
 DEFAULT_LONG_STAY_SEAL_MAX_DURATION: Final = 28800  # 8 hours
+DEFAULT_SEAL_HALF_LIFE: Final = 3600  # 1 hour
 DEFAULT_HOUSE_GUARD_MAX_DURATION: Final = 86400  # 24 hours
 
 
@@ -64,6 +65,7 @@ ATTR_LAST_PRESENCE_AT: Final = "last_presence_at"
 ATTR_CONTRIBUTING_SENSORS: Final = "contributing_sensors"
 ATTR_SEALED: Final = "sealed"
 ATTR_SEALED_SINCE: Final = "sealed_since"
+ATTR_SEAL_PROBABILITY: Final = "seal_probability"
 ATTR_HOUSE_SEALED: Final = "house_sealed"
 
 # Layer names for frontend

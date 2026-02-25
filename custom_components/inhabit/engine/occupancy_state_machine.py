@@ -1,4 +1,4 @@
-"""Door-seal-aware occupancy state machine."""
+"""Door-seal-aware occupancy state machine with probabilistic seal decay."""
 
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ from ..const import OccupancyState
 from ..models.virtual_sensor import OccupancyStateData, VirtualSensorConfig
 from .adaptive_timeout import AdaptiveTimeoutManager, TimeOfDayProfile
 from .presence_aggregator import PresenceAggregator
+from .seal_probability import SealProbabilityTracker
 
 if TYPE_CHECKING:
     from homeassistant.core import Event
@@ -27,24 +28,27 @@ _LOGGER = logging.getLogger(__name__)
 
 class OccupancyStateMachine:
     """
-    State machine for room occupancy with door-seal logic.
+    State machine for room occupancy with probabilistic door-seal logic.
 
     States:
         VACANT: Room is unoccupied
         OCCUPIED: Room is occupied (motion or presence detected)
         CHECKING: Motion cleared, waiting to confirm vacancy
 
-    Door Seal:
+    Door Seal (Probabilistic Decay):
         A room is "sealed" when someone was detected inside and ALL doors
-        have remained closed since that detection.  A sealed room cannot
-        transition to VACANT because the occupant physically cannot have
-        left.  The seal is broken when any door opens, any door sensor
-        becomes unavailable, or the safety-valve timer expires.
+        have remained closed since that detection.  Instead of a binary
+        sealed/not-sealed, the probability that someone is still inside
+        decays exponentially over time: p = 0.5^(t / half_life).
+        The seal blocks vacancy transitions as long as p > threshold (0.1).
+        The seal is immediately broken when any door opens or any door
+        sensor becomes unavailable.  A hard max_duration safety valve
+        ensures probability reaches 0.0 even without decay.
 
     Long-Stay Zones:
         Zones marked long_stay (couch, bed, dining table) get a longer
-        seal expiry so mmWave dropouts during extended sitting/sleeping
-        don't cause false vacancy.
+        half-life (2 hours vs 1 hour) so mmWave dropouts during extended
+        sitting/sleeping don't cause false vacancy.
 
     Hold-Until-Exit (bed/couch mode):
         When hold_until_exit is True, the zone stays OCCUPIED after
@@ -83,7 +87,6 @@ class OccupancyStateMachine:
         self._state = OccupancyStateData(state=OccupancyState.VACANT)
         self._unsub_state_listeners: list[Callable[[], None]] = []
         self._checking_timer: Callable[[], None] | None = None
-        self._seal_expiry_timer: Callable[[], None] | None = None
         self._running = False
         self._occupied_since: datetime | None = None
 
@@ -106,6 +109,13 @@ class OccupancyStateMachine:
             presence_bindings=config.presence_sensors,
             motion_decay_seconds=float(config.motion_timeout),
             presence_decay_seconds=float(config.presence_timeout),
+        )
+
+        # Probabilistic seal tracker (replaces boolean seal + expiry timer)
+        self._seal_tracker = SealProbabilityTracker(
+            half_life_seconds=float(config.effective_seal_half_life),
+            vacancy_threshold=0.1,
+            _max_duration=float(config.effective_seal_max_duration),
         )
 
     @property
@@ -189,7 +199,6 @@ class OccupancyStateMachine:
         )
 
         self._cancel_checking_timer()
-        self._cancel_seal_expiry_timer()
 
         for unsub in self._unsub_state_listeners:
             try:
@@ -229,8 +238,10 @@ class OccupancyStateMachine:
             # VACANT
             self._state.checking_started_at = None
             self._break_seal("manual override to VACANT")
+            self._seal_tracker.reset()
             self._cancel_checking_timer()
             self._state.confidence = 0.0
+            self._state.seal_probability = 0.0
             self._state.contributing_sensors = []
 
         _LOGGER.info(
@@ -369,7 +380,7 @@ class OccupancyStateMachine:
                 entity_id,
                 new_state.state,
             )
-            if self._state.sealed:
+            if self._seal_tracker.is_sealed:
                 self._break_seal(f"door sensor {entity_id} unavailable")
                 if (
                     self._state.state == OccupancyState.OCCUPIED
@@ -382,17 +393,18 @@ class OccupancyStateMachine:
 
         is_open = self._is_sensor_active(new_state, binding.inverted)
         _LOGGER.debug(
-            "Room %s door event: %s = %s (open=%s, sealed=%s)",
+            "Room %s door event: %s = %s (open=%s, sealed=%s, probability=%.2f)",
             self.config.room_id,
             entity_id,
             new_state.state,
             is_open,
-            self._state.sealed,
+            self._seal_tracker.is_sealed,
+            self._seal_tracker.probability,
         )
 
         if is_open:
             # Door opened — break the seal
-            if self._state.sealed:
+            if self._seal_tracker.is_sealed:
                 self._break_seal(f"door {entity_id} opened")
 
                 # If sensors are already clear, transition to CHECKING now
@@ -449,7 +461,7 @@ class OccupancyStateMachine:
 
         # Break seal if active (exit sensor overrides the seal — the
         # person is provably no longer in the zone)
-        if self._state.sealed:
+        if self._seal_tracker.is_sealed:
             self._break_seal(f"exit sensor {entity_id} fired")
 
         self._transition_to_checking(f"exit sensor {entity_id}")
@@ -511,23 +523,26 @@ class OccupancyStateMachine:
         if not self.config.door_seals_room:
             return
 
-        self._state.sealed = True
-        self._state.sealed_since = datetime.now()
+        self._seal_tracker.establish()
+        self._sync_seal_state()
         self._state.seal_broken_at = None
         self._snapshot_door_states()
-        self._start_seal_expiry_timer()
         _LOGGER.info(
-            "Room %s: seal established (%s)", self.config.room_id, reason
+            "Room %s: seal established (%s, probability=%.2f)",
+            self.config.room_id,
+            reason,
+            self._seal_tracker.probability,
         )
 
     def _break_seal(self, reason: str) -> None:
         """Break the door seal on the room."""
-        if not self._state.sealed:
+        if not self._seal_tracker.is_sealed:
             return
 
+        self._seal_tracker.break_seal()
         self._state.sealed = False
+        self._state.seal_probability = 0.0
         self._state.seal_broken_at = datetime.now()
-        self._cancel_seal_expiry_timer()
         _LOGGER.info(
             "Room %s: seal broken (%s)", self.config.room_id, reason
         )
@@ -545,37 +560,11 @@ class OccupancyStateMachine:
                 states[binding.entity_id] = True  # Treat unknown as "open"
         self._state.door_states_at_detection = states
 
-    def _start_seal_expiry_timer(self) -> None:
-        """Start the safety-valve timer that forces seal expiry."""
-        self._cancel_seal_expiry_timer()
-
-        duration = self.config.effective_seal_max_duration
-
-        @callback
-        def _seal_expired(_now: Any) -> None:
-            self._seal_expiry_timer = None
-            if self._state.sealed:
-                _LOGGER.info(
-                    "Room %s: seal expired after %ds (safety valve)",
-                    self.config.room_id,
-                    duration,
-                )
-                self._break_seal(f"expired after {duration}s")
-                if (
-                    self._state.state == OccupancyState.OCCUPIED
-                    and not self._any_sensor_active()
-                ):
-                    self._transition_to_checking("seal expired, sensors clear")
-
-        self._seal_expiry_timer = async_call_later(
-            self.hass, duration, _seal_expired
-        )
-
-    def _cancel_seal_expiry_timer(self) -> None:
-        """Cancel the seal expiry timer."""
-        if self._seal_expiry_timer:
-            self._seal_expiry_timer()
-            self._seal_expiry_timer = None
+    def _sync_seal_state(self) -> None:
+        """Sync _state fields from the seal tracker for backward compatibility."""
+        self._state.sealed = self._seal_tracker.is_effective
+        self._state.seal_probability = self._seal_tracker.probability
+        self._state.sealed_since = self._seal_tracker.sealed_since
 
     # ------------------------------------------------------------------
     # State transitions
@@ -591,11 +580,12 @@ class OccupancyStateMachine:
         if self._state.state == OccupancyState.OCCUPIED:
             # Already occupied — update confidence and re-evaluate seal
             self._state.confidence = self._calculate_confidence()
-            if not self._state.sealed and self.config.door_seals_room:
+            if not self._seal_tracker.is_sealed and self.config.door_seals_room:
                 self._evaluate_seal(f"re-detection: {reason}")
-            # Reset seal expiry timer on new activity
-            if self._state.sealed:
-                self._start_seal_expiry_timer()
+            # Re-establish seal on new activity (resets decay timer)
+            if self._seal_tracker.is_sealed:
+                self._seal_tracker.establish()
+                self._sync_seal_state()
             return
 
         # Threshold gate: require physical activity OR sufficient probability
@@ -622,12 +612,13 @@ class OccupancyStateMachine:
         self._evaluate_seal(reason)
 
         _LOGGER.info(
-            "Room %s: %s → OCCUPIED (%s, sealed=%s, confidence=%.2f)",
+            "Room %s: %s → OCCUPIED (%s, sealed=%s, confidence=%.2f, seal_p=%.2f)",
             self.config.room_id,
             old_state,
             reason,
-            self._state.sealed,
+            self._seal_tracker.is_sealed,
             self._state.confidence,
+            self._seal_tracker.probability,
         )
         self._notify_state_change()
 
@@ -649,12 +640,12 @@ class OccupancyStateMachine:
 
     def _transition_to_vacant(self, reason: str) -> None:
         """Transition to VACANT state."""
-        # Room-level seal check
-        if self._state.sealed:
+        # Room-level seal check (probabilistic)
+        if self._seal_tracker.is_effective:
             _LOGGER.debug(
-                "Room %s: vacancy blocked by door seal (sealed since %s)",
+                "Room %s: vacancy blocked by seal (probability=%.2f)",
                 self.config.room_id,
-                self._state.sealed_since,
+                self._seal_tracker.probability,
             )
             return
 
@@ -678,7 +669,7 @@ class OccupancyStateMachine:
             return
 
         self._cancel_checking_timer()
-        self._cancel_seal_expiry_timer()
+        self._seal_tracker.reset()
         old_state = self._state.state
 
         # Record session for adaptive learning
@@ -693,6 +684,7 @@ class OccupancyStateMachine:
         self._state.confidence = 0.0
         self._state.contributing_sensors = []
         self._state.sealed = False
+        self._state.seal_probability = 0.0
         self._state.sealed_since = None
         self._occupied_since = None
 
@@ -739,11 +731,13 @@ class OccupancyStateMachine:
             )
             return
 
-        # All sensors clear — but if sealed, stay OCCUPIED
-        if self._state.sealed:
+        # All sensors clear — but if seal is still effective, stay OCCUPIED
+        if self._seal_tracker.is_effective:
             _LOGGER.debug(
-                "Room %s: all sensors clear but room is sealed, staying OCCUPIED",
+                "Room %s: all sensors clear but room is sealed "
+                "(probability=%.2f), staying OCCUPIED",
                 self.config.room_id,
+                self._seal_tracker.probability,
             )
             return
 
