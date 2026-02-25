@@ -3770,7 +3770,7 @@ function ue(e,t){return(t,i,o)=>((e,t,i)=>(i.configurable=!0,i.enumerable=!0,Ref
           />
         </div>
       </div>
-    `}}e([pe({attribute:!1})],fi.prototype,"hass",void 0),e([pe({type:String})],fi.prototype,"placementId",void 0),e([pe({type:String})],fi.prototype,"deviceType",void 0),e([ge()],fi.prototype,"_rebinding",void 0),customElements.define("fpb-device-panel",fi);class _i extends le{constructor(){super(...arguments),this.narrow=!1,this._floorPlans=[],this._loading=!0,this._error=null,this._floorCount=1,this._haAreas=[],this._focusedRoomId=null,this._occupancyPanelTarget=null,this._devicePanelTarget=null,this._cleanupEffects=[]}static{this.styles=r`
+    `}}e([pe({attribute:!1})],fi.prototype,"hass",void 0),e([pe({type:String})],fi.prototype,"placementId",void 0),e([pe({type:String})],fi.prototype,"deviceType",void 0),e([ge()],fi.prototype,"_rebinding",void 0),customElements.define("fpb-device-panel",fi);class _i extends le{constructor(){super(...arguments),this.narrow=!1,this._floorPlans=[],this._loading=!0,this._error=null,this._floorCount=1,this._haAreas=[],this._focusedRoomId=null,this._occupancyPanelTarget=null,this._devicePanelTarget=null,this._editorMode=!1,this._cleanupEffects=[]}get _isAdmin(){return this.hass?.user?.is_admin??!1}static{this.styles=r`
     :host {
       display: flex;
       flex-direction: column;
@@ -3943,7 +3943,57 @@ function ue(e,t){return(t,i,o)=>((e,t,i)=>(i.configurable=!0,i.enumerable=!0,Ref
       z-index: 100;
       scrollbar-width: thin;
     }
-  `}connectedCallback(){var e;super.connectedCallback(),We.value=null,Fe.value=null,Re.value="walls",Oe.value="select",Be.value={type:"none",ids:[]},Ue.value={x:0,y:0,width:1e3,height:800},Ze.value=10,He.value=!0,je.value=!0,Ve.value=[{id:"background",name:"Background",visible:!0,locked:!1,opacity:1},{id:"structure",name:"Structure",visible:!0,locked:!1,opacity:1},{id:"furniture",name:"Furniture",visible:!0,locked:!1,opacity:1},{id:"devices",name:"Devices",visible:!0,locked:!1,opacity:1},{id:"coverage",name:"Coverage",visible:!0,locked:!1,opacity:.5},{id:"labels",name:"Labels",visible:!0,locked:!1,opacity:1},{id:"automation",name:"Automation",visible:!0,locked:!1,opacity:.7}],qe.value=[],Ke.value=[],Ye.value=[],Xe.value=new Map,Ge.value=null,Je.value=null,Qe.value=null,et.value=[],tt.value=[],it.value=!1,Ne._reloadFloorData=null,Re.value="walls",ti(),e=()=>this._reloadCurrentFloor(),Ne._reloadFloorData=e,this._loadFloorPlans(),this._loadHaAreas(),this._cleanupEffects.push(Te(()=>{this._focusedRoomId=Ge.value}),Te(()=>{this._occupancyPanelTarget=Je.value}),Te(()=>{this._devicePanelTarget=Qe.value}),Te(()=>{Fe.value,this.requestUpdate()}))}disconnectedCallback(){super.disconnectedCallback(),this._cleanupEffects.forEach(e=>e()),this._cleanupEffects=[]}async _loadHaAreas(){if(this.hass)try{const e=await this.hass.callWS({type:"config/area_registry/list"});this._haAreas=e}catch(e){console.error("Error loading HA areas:",e)}}async _reloadCurrentFloor(){if(!this.hass)return;const e=We.value;if(e)try{const t=await this.hass.callWS({type:"inhabit/floor_plans/list"});this._floorPlans=t;const i=t.find(t=>t.id===e.id);if(i){We.value=i;const e=Fe.value?.id;if(e){const t=i.floors.find(t=>t.id===e);t?Fe.value=t:i.floors.length>0&&(Fe.value=i.floors[0])}else i.floors.length>0&&(Fe.value=i.floors[0]);await this._loadDevicePlacements(i.id)}}catch(e){console.error("Error reloading floor data:",e)}}_detectFloorConflicts(e){const t=new Map;for(const i of e.floors){const e=Rt(i.nodes,i.edges);e.length>0&&(t.set(i.id,e),console.warn(`[inhabit] Detected ${e.length} constraint conflict(s) on floor "${i.id}":`,e.map(e=>`${e.edgeId} (${e.type})`)))}Xe.value=t}updated(e){e.has("hass")&&this.hass&&this._updateEntityStates()}async _loadFloorPlans(){if(!this.hass)return this._loading=!1,void(this._error="Home Assistant connection not available");try{this._loading=!0,this._error=null;const e=await this.hass.callWS({type:"inhabit/floor_plans/list"});this._floorPlans=e,e.length>0&&(We.value=e[0],e[0].floors.length>0&&(Fe.value=e[0].floors[0],Ze.value=e[0].grid_size),this._detectFloorConflicts(e[0]),await this._loadDevicePlacements(e[0].id)),this._loading=!1}catch(e){this._loading=!1,this._error=`Failed to load floor plans: ${e instanceof Error?e.message:e}`,console.error("Error loading floor plans:",e)}}async _loadDevicePlacements(e){if(this.hass)try{const[t,i,o,n]=await Promise.all([this.hass.callWS({type:"inhabit/lights/list",floor_plan_id:e}),this.hass.callWS({type:"inhabit/switches/list",floor_plan_id:e}),this.hass.callWS({type:"inhabit/buttons/list",floor_plan_id:e}),this.hass.callWS({type:"inhabit/mmwave/list",floor_plan_id:e})]);qe.value=t,Ke.value=i,Ye.value=o,et.value=n}catch(e){console.error("Error loading device placements:",e)}}_updateEntityStates(){this.requestUpdate()}async _initializeFloors(e){if(this.hass)try{const t=await this.hass.callWS({type:"inhabit/floor_plans/create",name:"Home",unit:"cm",grid_size:10});t.floors=[];for(let i=0;i<e;i++){const e=await this.hass.callWS({type:"inhabit/floors/add",floor_plan_id:t.id,name:`Floor ${i+1}`,level:i});t.floors.push(e)}this._floorPlans=[t],We.value=t,Fe.value=t.floors[0],Ze.value=t.grid_size}catch(e){console.error("Error creating floors:",e),alert(`Failed to create floors: ${e instanceof Error?e.message:e}`)}}async _addFloor(){if(!this.hass)return;const e=We.value;if(!e)return;const t=prompt("Floor name:",`Floor ${e.floors.length+1}`);if(t)try{const i=await this.hass.callWS({type:"inhabit/floors/add",floor_plan_id:e.id,name:t,level:e.floors.length}),o={...e,floors:[...e.floors,i]};this._floorPlans=this._floorPlans.map(t=>t.id===e.id?o:t),We.value=o,Fe.value=i}catch(e){console.error("Error adding floor:",e),alert(`Failed to add floor: ${e instanceof Error?e.message:e}`)}}async _deleteFloor(e){if(!this.hass)return;const t=We.value;if(t)try{await this.hass.callWS({type:"inhabit/floors/delete",floor_plan_id:t.id,floor_id:e});const i=t.floors.filter(t=>t.id!==e),o={...t,floors:i};this._floorPlans=this._floorPlans.map(e=>e.id===t.id?o:e),We.value=o,Fe.value?.id===e&&(ti(),Fe.value=i.length>0?i[0]:null)}catch(e){console.error("Error deleting floor:",e),alert(`Failed to delete floor: ${e instanceof Error?e.message:e}`)}}async _renameFloor(e,t){if(!this.hass)return;const i=We.value;if(i)try{await this.hass.callWS({type:"inhabit/floors/update",floor_plan_id:i.id,floor_id:e,name:t});const o=i.floors.map(i=>i.id===e?{...i,name:t}:i),n={...i,floors:o};this._floorPlans=this._floorPlans.map(e=>e.id===i.id?n:e),We.value=n,Fe.value?.id===e&&(Fe.value={...Fe.value,name:t})}catch(e){console.error("Error renaming floor:",e)}}_openImportExport(){const e=this.shadowRoot?.querySelector("fpb-import-export-dialog");e?.show()}async _handleFloorsImported(e){const{floorPlan:t,switchTo:i}=e.detail;this._floorPlans=this._floorPlans.map(e=>e.id===t.id?t:e),We.value=t,i&&(ti(),Fe.value=i),await this._loadDevicePlacements(t.id)}_handleFloorSelect(e){const t=We.value;if(t){const i=t.floors.find(t=>t.id===e);i&&(Fe.value?.id!==i.id&&(ti(),Ge.value=null),Fe.value=i)}}_handleRoomChipClick(e){null===e?(null===Ge.value&&(Ge.value="__reset__"),Ge.value=null,Je.value=null):Ge.value===e?Ge.value=null:Ge.value=e}_renderRoomChips(){const e=Fe.value;if(!e||0===e.rooms.length)return null;const t=We.value?.unit,i=e=>{switch(t){case"cm":return e/1e4;case"m":default:return e;case"in":return 64516e-8*e;case"ft":return.092903*e}},o=[...e.rooms].sort((e,t)=>{const o=i(Math.abs(lt(e.polygon))),n=i(Math.abs(lt(t.polygon)));return o===n?e.name.localeCompare(t.name):n-o});return H`
+
+    .viewer-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 16px;
+      height: var(--header-height, 48px);
+      background: var(--card-background-color, #fff);
+      border-bottom: 1px solid var(--divider-color, #e0e0e0);
+    }
+
+    .viewer-toolbar h1 {
+      margin: 0;
+      font-size: 16px;
+      font-weight: 500;
+      flex: 1;
+    }
+
+    .floor-select {
+      padding: 4px 8px;
+      border: 1px solid var(--divider-color, #e0e0e0);
+      border-radius: 8px;
+      background: var(--primary-background-color);
+      color: var(--primary-text-color);
+      font-size: 14px;
+    }
+
+    .edit-toggle {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 12px;
+      border: 1px solid var(--divider-color, #e0e0e0);
+      border-radius: 8px;
+      background: var(--primary-background-color);
+      color: var(--primary-text-color);
+      font-size: 13px;
+      cursor: pointer;
+      transition: background 0.2s, border-color 0.2s, color 0.2s;
+    }
+
+    .edit-toggle:hover {
+      background: var(--secondary-background-color, #f0f0f0);
+    }
+
+    .edit-toggle.active {
+      background: var(--primary-color, #03a9f4);
+      color: var(--text-primary-color, #fff);
+      border-color: var(--primary-color, #03a9f4);
+    }
+  `}connectedCallback(){var e;super.connectedCallback(),We.value=null,Fe.value=null,Re.value="walls",Oe.value="select",Be.value={type:"none",ids:[]},Ue.value={x:0,y:0,width:1e3,height:800},Ze.value=10,He.value=!0,je.value=!0,Ve.value=[{id:"background",name:"Background",visible:!0,locked:!1,opacity:1},{id:"structure",name:"Structure",visible:!0,locked:!1,opacity:1},{id:"furniture",name:"Furniture",visible:!0,locked:!1,opacity:1},{id:"devices",name:"Devices",visible:!0,locked:!1,opacity:1},{id:"coverage",name:"Coverage",visible:!0,locked:!1,opacity:.5},{id:"labels",name:"Labels",visible:!0,locked:!1,opacity:1},{id:"automation",name:"Automation",visible:!0,locked:!1,opacity:.7}],qe.value=[],Ke.value=[],Ye.value=[],Xe.value=new Map,Ge.value=null,Je.value=null,Qe.value=null,et.value=[],tt.value=[],it.value=!1,Ne._reloadFloorData=null,this._applyMode(),e=()=>this._reloadCurrentFloor(),Ne._reloadFloorData=e,this._loadFloorPlans(),this._loadHaAreas(),this._cleanupEffects.push(Te(()=>{this._focusedRoomId=Ge.value}),Te(()=>{this._occupancyPanelTarget=Je.value}),Te(()=>{this._devicePanelTarget=Qe.value}),Te(()=>{Fe.value,this.requestUpdate()}))}disconnectedCallback(){super.disconnectedCallback(),this._cleanupEffects.forEach(e=>e()),this._cleanupEffects=[]}_applyMode(){this._editorMode?(Re.value="walls",ti()):(Re.value="viewing",Oe.value="select",Be.value={type:"none",ids:[]},je.value=!1,Je.value=null,Qe.value=null)}_toggleEditorMode(){this._editorMode=!this._editorMode,this._applyMode()}async _loadHaAreas(){if(this.hass)try{const e=await this.hass.callWS({type:"config/area_registry/list"});this._haAreas=e}catch(e){console.error("Error loading HA areas:",e)}}async _reloadCurrentFloor(){if(!this.hass)return;const e=We.value;if(e)try{const t=await this.hass.callWS({type:"inhabit/floor_plans/list"});this._floorPlans=t;const i=t.find(t=>t.id===e.id);if(i){We.value=i;const e=Fe.value?.id;if(e){const t=i.floors.find(t=>t.id===e);t?Fe.value=t:i.floors.length>0&&(Fe.value=i.floors[0])}else i.floors.length>0&&(Fe.value=i.floors[0]);await this._loadDevicePlacements(i.id)}}catch(e){console.error("Error reloading floor data:",e)}}_detectFloorConflicts(e){const t=new Map;for(const i of e.floors){const e=Rt(i.nodes,i.edges);e.length>0&&(t.set(i.id,e),console.warn(`[inhabit] Detected ${e.length} constraint conflict(s) on floor "${i.id}":`,e.map(e=>`${e.edgeId} (${e.type})`)))}Xe.value=t}updated(e){e.has("hass")&&this.hass&&this._updateEntityStates()}async _loadFloorPlans(){if(!this.hass)return this._loading=!1,void(this._error="Home Assistant connection not available");try{this._loading=!0,this._error=null;const e=await this.hass.callWS({type:"inhabit/floor_plans/list"});this._floorPlans=e,e.length>0&&(We.value=e[0],e[0].floors.length>0&&(Fe.value=e[0].floors[0],Ze.value=e[0].grid_size),this._detectFloorConflicts(e[0]),await this._loadDevicePlacements(e[0].id)),this._loading=!1}catch(e){this._loading=!1,this._error=`Failed to load floor plans: ${e instanceof Error?e.message:e}`,console.error("Error loading floor plans:",e)}}async _loadDevicePlacements(e){if(this.hass)try{const[t,i,o,n]=await Promise.all([this.hass.callWS({type:"inhabit/lights/list",floor_plan_id:e}),this.hass.callWS({type:"inhabit/switches/list",floor_plan_id:e}),this.hass.callWS({type:"inhabit/buttons/list",floor_plan_id:e}),this.hass.callWS({type:"inhabit/mmwave/list",floor_plan_id:e})]);qe.value=t,Ke.value=i,Ye.value=o,et.value=n}catch(e){console.error("Error loading device placements:",e)}}_updateEntityStates(){this.requestUpdate()}async _initializeFloors(e){if(this.hass)try{const t=await this.hass.callWS({type:"inhabit/floor_plans/create",name:"Home",unit:"cm",grid_size:10});t.floors=[];for(let i=0;i<e;i++){const e=await this.hass.callWS({type:"inhabit/floors/add",floor_plan_id:t.id,name:`Floor ${i+1}`,level:i});t.floors.push(e)}this._floorPlans=[t],We.value=t,Fe.value=t.floors[0],Ze.value=t.grid_size}catch(e){console.error("Error creating floors:",e),alert(`Failed to create floors: ${e instanceof Error?e.message:e}`)}}async _addFloor(){if(!this.hass)return;const e=We.value;if(!e)return;const t=prompt("Floor name:",`Floor ${e.floors.length+1}`);if(t)try{const i=await this.hass.callWS({type:"inhabit/floors/add",floor_plan_id:e.id,name:t,level:e.floors.length}),o={...e,floors:[...e.floors,i]};this._floorPlans=this._floorPlans.map(t=>t.id===e.id?o:t),We.value=o,Fe.value=i}catch(e){console.error("Error adding floor:",e),alert(`Failed to add floor: ${e instanceof Error?e.message:e}`)}}async _deleteFloor(e){if(!this.hass)return;const t=We.value;if(t)try{await this.hass.callWS({type:"inhabit/floors/delete",floor_plan_id:t.id,floor_id:e});const i=t.floors.filter(t=>t.id!==e),o={...t,floors:i};this._floorPlans=this._floorPlans.map(e=>e.id===t.id?o:e),We.value=o,Fe.value?.id===e&&(ti(),Fe.value=i.length>0?i[0]:null)}catch(e){console.error("Error deleting floor:",e),alert(`Failed to delete floor: ${e instanceof Error?e.message:e}`)}}async _renameFloor(e,t){if(!this.hass)return;const i=We.value;if(i)try{await this.hass.callWS({type:"inhabit/floors/update",floor_plan_id:i.id,floor_id:e,name:t});const o=i.floors.map(i=>i.id===e?{...i,name:t}:i),n={...i,floors:o};this._floorPlans=this._floorPlans.map(e=>e.id===i.id?n:e),We.value=n,Fe.value?.id===e&&(Fe.value={...Fe.value,name:t})}catch(e){console.error("Error renaming floor:",e)}}_openImportExport(){const e=this.shadowRoot?.querySelector("fpb-import-export-dialog");e?.show()}async _handleFloorsImported(e){const{floorPlan:t,switchTo:i}=e.detail;this._floorPlans=this._floorPlans.map(e=>e.id===t.id?t:e),We.value=t,i&&(ti(),Fe.value=i),await this._loadDevicePlacements(t.id)}_handleFloorSelect(e){const t=We.value;if(t){const i=t.floors.find(t=>t.id===e);i&&(Fe.value?.id!==i.id&&(ti(),Ge.value=null),Fe.value=i)}}_handleFloorChange(e){const t=e.target;this._handleFloorSelect(t.value)}_handleRoomChipClick(e){null===e?(null===Ge.value&&(Ge.value="__reset__"),Ge.value=null,Je.value=null):Ge.value===e?Ge.value=null:Ge.value=e}_renderRoomChips(){const e=Fe.value;if(!e||0===e.rooms.length)return null;const t=We.value?.unit,i=e=>{switch(t){case"cm":return e/1e4;case"m":default:return e;case"in":return 64516e-8*e;case"ft":return.092903*e}},o=[...e.rooms].sort((e,t)=>{const o=i(Math.abs(lt(e.polygon))),n=i(Math.abs(lt(t.polygon)));return o===n?e.name.localeCompare(t.name):n-o});return H`
       <div class="room-chips-bar">
         <button
           class="room-chip ${null===this._focusedRoomId?"active":""}"
@@ -3962,10 +4012,36 @@ function ue(e,t){return(t,i,o)=>((e,t,i)=>(i.configurable=!0,i.enumerable=!0,Ref
             </button>
           `})}
       </div>
+    `}_renderViewerToolbar(){const e=We.value,t=e?.floors??[],i=Fe.value?.id;return H`
+      <div class="viewer-toolbar">
+        <ha-icon icon="mdi:floor-plan"></ha-icon>
+        <h1>${e?.name??"Floorplan"}</h1>
+        ${t.length>1?H`
+              <select
+                class="floor-select"
+                .value=${i??""}
+                @change=${this._handleFloorChange}
+              >
+                ${t.map(e=>H`<option value=${e.id} ?selected=${e.id===i}>
+                      ${e.name}
+                    </option>`)}
+              </select>
+            `:null}
+        ${this._isAdmin?H`
+              <button
+                class="edit-toggle ${this._editorMode?"active":""}"
+                @click=${this._toggleEditorMode}
+                title=${this._editorMode?"Exit editor":"Edit floor plan"}
+              >
+                <ha-icon icon=${this._editorMode?"mdi:close":"mdi:pencil"} style="--mdc-icon-size: 18px;"></ha-icon>
+                <span>${this._editorMode?"Done":"Edit"}</span>
+              </button>
+            `:null}
+      </div>
     `}render(){return this._loading?H`
         <div class="loading">
           <ha-circular-progress active></ha-circular-progress>
-          <p>Loading floor plans...</p>
+          <p>Loading floor plan...</p>
         </div>
       `:this._error?H`
         <div class="error">
@@ -3973,7 +4049,7 @@ function ue(e,t){return(t,i,o)=>((e,t,i)=>(i.configurable=!0,i.enumerable=!0,Ref
           <p>${this._error}</p>
           <button @click=${this._loadFloorPlans}>Retry</button>
         </div>
-      `:0===this._floorPlans.length?H`
+      `:0===this._floorPlans.length?this._isAdmin?H`
         <div class="empty-state">
           <ha-icon icon="mdi:floor-plan" style="--mdc-icon-size: 64px;"></ha-icon>
           <h2>Welcome to Inhabit</h2>
@@ -3994,45 +4070,58 @@ function ue(e,t){return(t,i,o)=>((e,t,i)=>(i.configurable=!0,i.enumerable=!0,Ref
           </div>
         </div>
       `:H`
-      <div class="container">
-        <div class="main-area">
-          <fpb-toolbar
-            .hass=${this.hass}
-            .floorPlans=${this._floorPlans}
-            @floor-select=${e=>this._handleFloorSelect(e.detail.id)}
-            @add-floor=${this._addFloor}
-            @delete-floor=${e=>this._deleteFloor(e.detail.id)}
-            @rename-floor=${e=>this._renameFloor(e.detail.id,e.detail.name)}
-            @open-import-export=${this._openImportExport}
-          ></fpb-toolbar>
+          <div class="empty-state">
+            <ha-icon icon="mdi:floor-plan" style="--mdc-icon-size: 64px;"></ha-icon>
+            <h2>No Floor Plans</h2>
+            <p>Ask an administrator to create a floor plan.</p>
+          </div>
+        `:this._editorMode?H`
+        <div class="container">
+          <div class="main-area">
+            <fpb-toolbar
+              .hass=${this.hass}
+              .floorPlans=${this._floorPlans}
+              @floor-select=${e=>this._handleFloorSelect(e.detail.id)}
+              @add-floor=${this._addFloor}
+              @delete-floor=${e=>this._deleteFloor(e.detail.id)}
+              @rename-floor=${e=>this._renameFloor(e.detail.id,e.detail.name)}
+              @open-import-export=${this._openImportExport}
+              @exit-editor=${this._toggleEditorMode}
+            ></fpb-toolbar>
 
-          ${this._renderRoomChips()}
+            ${this._renderRoomChips()}
 
-          <div class="canvas-container">
-            <fpb-canvas .hass=${this.hass}></fpb-canvas>
-            ${this._occupancyPanelTarget?H`
-              <fpb-occupancy-panel
-                class="floating-panel"
-                .hass=${this.hass}
-                .targetId=${this._occupancyPanelTarget.id}
-                .targetName=${this._occupancyPanelTarget.name}
-                .targetType=${this._occupancyPanelTarget.type}
-                @close-panel=${()=>{Je.value=null,Ge.value=null}}
-              ></fpb-occupancy-panel>
-            `:null}
-            ${this._devicePanelTarget?H`
-              <fpb-device-panel
-                class="floating-panel"
-                .hass=${this.hass}
-                .placementId=${this._devicePanelTarget.id}
-                .deviceType=${this._devicePanelTarget.type}
-              ></fpb-device-panel>
-            `:null}
+            <div class="canvas-container">
+              <fpb-canvas .hass=${this.hass}></fpb-canvas>
+              ${this._occupancyPanelTarget?H`
+                <fpb-occupancy-panel
+                  class="floating-panel"
+                  .hass=${this.hass}
+                  .targetId=${this._occupancyPanelTarget.id}
+                  .targetName=${this._occupancyPanelTarget.name}
+                  .targetType=${this._occupancyPanelTarget.type}
+                  @close-panel=${()=>{Je.value=null,Ge.value=null}}
+                ></fpb-occupancy-panel>
+              `:null}
+              ${this._devicePanelTarget?H`
+                <fpb-device-panel
+                  class="floating-panel"
+                  .hass=${this.hass}
+                  .placementId=${this._devicePanelTarget.id}
+                  .deviceType=${this._devicePanelTarget.type}
+                ></fpb-device-panel>
+              `:null}
+            </div>
           </div>
         </div>
+        <fpb-import-export-dialog
+          .hass=${this.hass}
+          @floors-imported=${this._handleFloorsImported}
+        ></fpb-import-export-dialog>
+      `:H`
+      ${this._renderViewerToolbar()}
+      ${this._renderRoomChips()}
+      <div class="canvas-container">
+        <fpb-canvas .hass=${this.hass}></fpb-canvas>
       </div>
-      <fpb-import-export-dialog
-        .hass=${this.hass}
-        @floors-imported=${this._handleFloorsImported}
-      ></fpb-import-export-dialog>
-    `}}e([pe({attribute:!1})],_i.prototype,"hass",void 0),e([pe({type:Boolean})],_i.prototype,"narrow",void 0),e([ge()],_i.prototype,"_floorPlans",void 0),e([ge()],_i.prototype,"_loading",void 0),e([ge()],_i.prototype,"_error",void 0),e([ge()],_i.prototype,"_floorCount",void 0),e([ge()],_i.prototype,"_haAreas",void 0),e([ge()],_i.prototype,"_focusedRoomId",void 0),e([ge()],_i.prototype,"_occupancyPanelTarget",void 0),e([ge()],_i.prototype,"_devicePanelTarget",void 0),customElements.define("ha-floorplan-builder",_i);export{_i as HaFloorplanBuilder};
+    `}}e([pe({attribute:!1})],_i.prototype,"hass",void 0),e([pe({type:Boolean})],_i.prototype,"narrow",void 0),e([ge()],_i.prototype,"_floorPlans",void 0),e([ge()],_i.prototype,"_loading",void 0),e([ge()],_i.prototype,"_error",void 0),e([ge()],_i.prototype,"_floorCount",void 0),e([ge()],_i.prototype,"_haAreas",void 0),e([ge()],_i.prototype,"_focusedRoomId",void 0),e([ge()],_i.prototype,"_occupancyPanelTarget",void 0),e([ge()],_i.prototype,"_devicePanelTarget",void 0),e([ge()],_i.prototype,"_editorMode",void 0),customElements.define("ha-floorplan-panel",_i);export{_i as HaFloorplanPanel};

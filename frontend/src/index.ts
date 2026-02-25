@@ -1,18 +1,18 @@
 /**
- * Inhabit Floor Plan Builder - Panel Entry Point
+ * Inhabit Floorplan Panel - Entry Point
  */
 
-import { HaFloorplanBuilder } from "./ha-floorplan-builder";
+import { HaFloorplanPanel } from "./ha-floorplan-panel";
 
 // Register the custom element
-customElements.define("ha-floorplan-builder", HaFloorplanBuilder);
+customElements.define("ha-floorplan-panel", HaFloorplanPanel);
 
 // Export for module usage
-export { HaFloorplanBuilder };
+export { HaFloorplanPanel };
 
 // Declare the custom element for TypeScript
 declare global {
   interface HTMLElementTagNameMap {
-    "ha-floorplan-builder": HaFloorplanBuilder;
+    "ha-floorplan-panel": HaFloorplanPanel;
   }
 }

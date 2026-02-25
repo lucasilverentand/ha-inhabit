@@ -1,5 +1,5 @@
 /**
- * Main Floor Plan Builder Panel Component
+ * Unified Floorplan Panel – viewer by default, editor mode for admins.
  */
 
 import { LitElement, html, css, PropertyValues } from "lit";
@@ -57,7 +57,10 @@ import {
   currentFloorPlan,
   currentFloor,
   canvasMode,
+  activeTool,
+  selection,
   gridSize,
+  showGrid,
   lightPlacements,
   switchPlacements,
   buttonPlacements,
@@ -72,7 +75,7 @@ import {
 
 import { effect } from "@preact/signals-core";
 
-export class HaFloorplanBuilder extends LitElement {
+export class HaFloorplanPanel extends LitElement {
   @property({ attribute: false })
   hass?: HomeAssistant;
 
@@ -103,7 +106,14 @@ export class HaFloorplanBuilder extends LitElement {
   @state()
   private _devicePanelTarget: { id: string; type: "light" | "switch" | "mmwave" | "button" } | null = null;
 
+  @state()
+  private _editorMode = false;
+
   private _cleanupEffects: (() => void)[] = [];
+
+  private get _isAdmin(): boolean {
+    return this.hass?.user?.is_admin ?? false;
+  }
 
   static override styles = css`
     :host {
@@ -278,14 +288,62 @@ export class HaFloorplanBuilder extends LitElement {
       z-index: 100;
       scrollbar-width: thin;
     }
+
+    .viewer-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 16px;
+      height: var(--header-height, 48px);
+      background: var(--card-background-color, #fff);
+      border-bottom: 1px solid var(--divider-color, #e0e0e0);
+    }
+
+    .viewer-toolbar h1 {
+      margin: 0;
+      font-size: 16px;
+      font-weight: 500;
+      flex: 1;
+    }
+
+    .floor-select {
+      padding: 4px 8px;
+      border: 1px solid var(--divider-color, #e0e0e0);
+      border-radius: 8px;
+      background: var(--primary-background-color);
+      color: var(--primary-text-color);
+      font-size: 14px;
+    }
+
+    .edit-toggle {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 12px;
+      border: 1px solid var(--divider-color, #e0e0e0);
+      border-radius: 8px;
+      background: var(--primary-background-color);
+      color: var(--primary-text-color);
+      font-size: 13px;
+      cursor: pointer;
+      transition: background 0.2s, border-color 0.2s, color 0.2s;
+    }
+
+    .edit-toggle:hover {
+      background: var(--secondary-background-color, #f0f0f0);
+    }
+
+    .edit-toggle.active {
+      background: var(--primary-color, #03a9f4);
+      color: var(--text-primary-color, #fff);
+      border-color: var(--primary-color, #03a9f4);
+    }
   `;
 
   override connectedCallback(): void {
     super.connectedCallback();
-    // Reset all shared signals so stale state from the viewer doesn't bleed in
     resetSignals();
-    canvasMode.value = "walls";
-    clearHistory();
+    this._applyMode();
     setReloadFunction(() => this._reloadCurrentFloor());
     this._loadFloorPlans();
     this._loadHaAreas();
@@ -301,7 +359,6 @@ export class HaFloorplanBuilder extends LitElement {
         this._devicePanelTarget = devicePanelTarget.value;
       }),
       effect(() => {
-        // Track floor changes to re-render chips bar when rooms change
         void currentFloor.value;
         this.requestUpdate();
       })
@@ -312,6 +369,25 @@ export class HaFloorplanBuilder extends LitElement {
     super.disconnectedCallback();
     this._cleanupEffects.forEach(cleanup => cleanup());
     this._cleanupEffects = [];
+  }
+
+  private _applyMode(): void {
+    if (this._editorMode) {
+      canvasMode.value = "walls";
+      clearHistory();
+    } else {
+      canvasMode.value = "viewing";
+      activeTool.value = "select";
+      selection.value = { type: "none", ids: [] };
+      showGrid.value = false;
+      occupancyPanelTarget.value = null;
+      devicePanelTarget.value = null;
+    }
+  }
+
+  private _toggleEditorMode(): void {
+    this._editorMode = !this._editorMode;
+    this._applyMode();
   }
 
   private async _loadHaAreas(): Promise<void> {
@@ -333,19 +409,16 @@ export class HaFloorplanBuilder extends LitElement {
     if (!fp) return;
 
     try {
-      // Reload all floor plans to get fresh data
       const result = await this.hass.callWS<FloorPlan[]>({
         type: "inhabit/floor_plans/list",
       });
 
       this._floorPlans = result;
 
-      // Find and update the current floor plan
       const updatedFp = result.find(p => p.id === fp.id);
       if (updatedFp) {
         currentFloorPlan.value = updatedFp;
 
-        // Find and update the current floor
         const currentFloorId = currentFloor.value?.id;
         if (currentFloorId) {
           const updatedFloor = updatedFp.floors.find(f => f.id === currentFloorId);
@@ -358,7 +431,6 @@ export class HaFloorplanBuilder extends LitElement {
           currentFloor.value = updatedFp.floors[0];
         }
 
-        // Reload device placements
         await this._loadDevicePlacements(updatedFp.id);
       }
     } catch (err) {
@@ -366,11 +438,6 @@ export class HaFloorplanBuilder extends LitElement {
     }
   }
 
-  /**
-   * Detect constraint violations on all floors and surface them via the
-   * constraintConflicts signal. The user sees amber highlights on the
-   * canvas and decides what to fix — no silent mutation of constraints.
-   */
   private _detectFloorConflicts(floorPlan: FloorPlan): void {
     const conflicts = new Map<string, ConstraintViolation[]>();
     for (const floor of floorPlan.floors) {
@@ -388,7 +455,6 @@ export class HaFloorplanBuilder extends LitElement {
 
   override updated(changedProps: PropertyValues): void {
     if (changedProps.has("hass") && this.hass) {
-      // Update entity states in device placements
       this._updateEntityStates();
     }
   }
@@ -410,7 +476,6 @@ export class HaFloorplanBuilder extends LitElement {
 
       this._floorPlans = result;
 
-      // Select first floor plan if available
       if (result.length > 0) {
         currentFloorPlan.value = result[0];
         if (result[0].floors.length > 0) {
@@ -418,10 +483,7 @@ export class HaFloorplanBuilder extends LitElement {
           gridSize.value = result[0].grid_size;
         }
 
-        // Detect constraint conflicts on initial load (highlight, don't auto-fix)
         this._detectFloorConflicts(result[0]);
-
-        // Load device placements
         await this._loadDevicePlacements(result[0].id);
       }
 
@@ -465,8 +527,6 @@ export class HaFloorplanBuilder extends LitElement {
   }
 
   private _updateEntityStates(): void {
-    // This would update real-time entity states
-    // Triggered when hass object changes
     this.requestUpdate();
   }
 
@@ -474,7 +534,6 @@ export class HaFloorplanBuilder extends LitElement {
     if (!this.hass) return;
 
     try {
-      // Create one floor plan (the "home")
       const result = await this.hass.callWS<FloorPlan>({
         type: "inhabit/floor_plans/create",
         name: "Home",
@@ -484,7 +543,6 @@ export class HaFloorplanBuilder extends LitElement {
 
       result.floors = [];
 
-      // Create N floors inside
       for (let i = 0; i < count; i++) {
         const floor = await this.hass.callWS<Floor>({
           type: "inhabit/floors/add",
@@ -550,7 +608,6 @@ export class HaFloorplanBuilder extends LitElement {
       this._floorPlans = this._floorPlans.map(p => p.id === fp.id ? updatedFp : p);
       currentFloorPlan.value = updatedFp;
 
-      // Switch to another floor or clear
       if (currentFloor.value?.id === floorId) {
         clearHistory();
         currentFloor.value = updatedFloors.length > 0 ? updatedFloors[0] : null;
@@ -603,7 +660,6 @@ export class HaFloorplanBuilder extends LitElement {
       clearHistory();
       currentFloor.value = switchTo;
     }
-    // Reload device placements since import may have added new ones
     await this._loadDevicePlacements(floorPlan.id);
   }
 
@@ -621,17 +677,19 @@ export class HaFloorplanBuilder extends LitElement {
     }
   }
 
+  private _handleFloorChange(e: Event): void {
+    const select = e.target as HTMLSelectElement;
+    this._handleFloorSelect(select.value);
+  }
+
   private _handleRoomChipClick(roomId: string | null): void {
     if (roomId === null) {
-      // "All" — always reset and animate to floor
-      // Use sentinel to force signal change even if already null
       if (focusedRoomId.value === null) {
         focusedRoomId.value = "__reset__";
       }
       focusedRoomId.value = null;
       occupancyPanelTarget.value = null;
     } else if (focusedRoomId.value === roomId) {
-      // Toggle off if clicking same chip
       focusedRoomId.value = null;
     } else {
       focusedRoomId.value = roomId;
@@ -696,12 +754,53 @@ export class HaFloorplanBuilder extends LitElement {
     `;
   }
 
+  private _renderViewerToolbar() {
+    const fp = currentFloorPlan.value;
+    const floors = fp?.floors ?? [];
+    const activeFloorId = currentFloor.value?.id;
+
+    return html`
+      <div class="viewer-toolbar">
+        <ha-icon icon="mdi:floor-plan"></ha-icon>
+        <h1>${fp?.name ?? "Floorplan"}</h1>
+        ${floors.length > 1
+          ? html`
+              <select
+                class="floor-select"
+                .value=${activeFloorId ?? ""}
+                @change=${this._handleFloorChange}
+              >
+                ${floors.map(
+                  (f) =>
+                    html`<option value=${f.id} ?selected=${f.id === activeFloorId}>
+                      ${f.name}
+                    </option>`,
+                )}
+              </select>
+            `
+          : null}
+        ${this._isAdmin
+          ? html`
+              <button
+                class="edit-toggle ${this._editorMode ? "active" : ""}"
+                @click=${this._toggleEditorMode}
+                title=${this._editorMode ? "Exit editor" : "Edit floor plan"}
+              >
+                <ha-icon icon=${this._editorMode ? "mdi:close" : "mdi:pencil"} style="--mdc-icon-size: 18px;"></ha-icon>
+                <span>${this._editorMode ? "Done" : "Edit"}</span>
+              </button>
+            `
+          : null}
+      </div>
+    `;
+  }
+
   override render() {
     if (this._loading) {
       return html`
         <div class="loading">
           <ha-circular-progress active></ha-circular-progress>
-          <p>Loading floor plans...</p>
+          <p>Loading floor plan...</p>
         </div>
       `;
     }
@@ -717,6 +816,16 @@ export class HaFloorplanBuilder extends LitElement {
     }
 
     if (this._floorPlans.length === 0) {
+      if (!this._isAdmin) {
+        return html`
+          <div class="empty-state">
+            <ha-icon icon="mdi:floor-plan" style="--mdc-icon-size: 64px;"></ha-icon>
+            <h2>No Floor Plans</h2>
+            <p>Ask an administrator to create a floor plan.</p>
+          </div>
+        `;
+      }
+
       return html`
         <div class="empty-state">
           <ha-icon icon="mdi:floor-plan" style="--mdc-icon-size: 64px;"></ha-icon>
@@ -743,51 +852,63 @@ export class HaFloorplanBuilder extends LitElement {
       `;
     }
 
-    return html`
-      <div class="container">
-        <div class="main-area">
-          <fpb-toolbar
-            .hass=${this.hass}
-            .floorPlans=${this._floorPlans}
-            @floor-select=${(e: CustomEvent) =>
-              this._handleFloorSelect(e.detail.id)}
-            @add-floor=${this._addFloor}
-            @delete-floor=${(e: CustomEvent) =>
-              this._deleteFloor(e.detail.id)}
-            @rename-floor=${(e: CustomEvent) =>
-              this._renameFloor(e.detail.id, e.detail.name)}
-            @open-import-export=${this._openImportExport}
-          ></fpb-toolbar>
+    if (this._editorMode) {
+      return html`
+        <div class="container">
+          <div class="main-area">
+            <fpb-toolbar
+              .hass=${this.hass}
+              .floorPlans=${this._floorPlans}
+              @floor-select=${(e: CustomEvent) =>
+                this._handleFloorSelect(e.detail.id)}
+              @add-floor=${this._addFloor}
+              @delete-floor=${(e: CustomEvent) =>
+                this._deleteFloor(e.detail.id)}
+              @rename-floor=${(e: CustomEvent) =>
+                this._renameFloor(e.detail.id, e.detail.name)}
+              @open-import-export=${this._openImportExport}
+              @exit-editor=${this._toggleEditorMode}
+            ></fpb-toolbar>
 
-          ${this._renderRoomChips()}
+            ${this._renderRoomChips()}
 
-          <div class="canvas-container">
-            <fpb-canvas .hass=${this.hass}></fpb-canvas>
-            ${this._occupancyPanelTarget ? html`
-              <fpb-occupancy-panel
-                class="floating-panel"
-                .hass=${this.hass}
-                .targetId=${this._occupancyPanelTarget.id}
-                .targetName=${this._occupancyPanelTarget.name}
-                .targetType=${this._occupancyPanelTarget.type}
-                @close-panel=${() => { occupancyPanelTarget.value = null; focusedRoomId.value = null; }}
-              ></fpb-occupancy-panel>
-            ` : null}
-            ${this._devicePanelTarget ? html`
-              <fpb-device-panel
-                class="floating-panel"
-                .hass=${this.hass}
-                .placementId=${this._devicePanelTarget.id}
-                .deviceType=${this._devicePanelTarget.type}
-              ></fpb-device-panel>
-            ` : null}
+            <div class="canvas-container">
+              <fpb-canvas .hass=${this.hass}></fpb-canvas>
+              ${this._occupancyPanelTarget ? html`
+                <fpb-occupancy-panel
+                  class="floating-panel"
+                  .hass=${this.hass}
+                  .targetId=${this._occupancyPanelTarget.id}
+                  .targetName=${this._occupancyPanelTarget.name}
+                  .targetType=${this._occupancyPanelTarget.type}
+                  @close-panel=${() => { occupancyPanelTarget.value = null; focusedRoomId.value = null; }}
+                ></fpb-occupancy-panel>
+              ` : null}
+              ${this._devicePanelTarget ? html`
+                <fpb-device-panel
+                  class="floating-panel"
+                  .hass=${this.hass}
+                  .placementId=${this._devicePanelTarget.id}
+                  .deviceType=${this._devicePanelTarget.type}
+                ></fpb-device-panel>
+              ` : null}
+            </div>
           </div>
         </div>
+        <fpb-import-export-dialog
+          .hass=${this.hass}
+          @floors-imported=${this._handleFloorsImported}
+        ></fpb-import-export-dialog>
+      `;
+    }
+
+    // Viewer mode (default)
+    return html`
+      ${this._renderViewerToolbar()}
+      ${this._renderRoomChips()}
+      <div class="canvas-container">
+        <fpb-canvas .hass=${this.hass}></fpb-canvas>
       </div>
-      <fpb-import-export-dialog
-        .hass=${this.hass}
-        @floors-imported=${this._handleFloorsImported}
-      ></fpb-import-export-dialog>
     `;
   }
 }
