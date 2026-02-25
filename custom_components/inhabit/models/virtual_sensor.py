@@ -173,6 +173,10 @@ class VirtualSensorConfig:
     occupied_threshold: float = 0.5  # Minimum confidence to be OCCUPIED
     vacant_threshold: float = 0.1  # Maximum confidence to be VACANT
 
+    # Adaptive timeout settings
+    time_of_day_profiles: list[dict[str, Any]] = field(default_factory=list)
+    adaptive_timeouts: bool = False
+
     @property
     def effective_seal_max_duration(self) -> int:
         """Get effective seal max duration, accounting for long-stay zones."""
@@ -207,6 +211,8 @@ class VirtualSensorConfig:
             "door_open_resets_checking": self.door_open_resets_checking,
             "occupied_threshold": self.occupied_threshold,
             "vacant_threshold": self.vacant_threshold,
+            "time_of_day_profiles": self.time_of_day_profiles,
+            "adaptive_timeouts": self.adaptive_timeouts,
         }
 
     @classmethod
@@ -247,6 +253,8 @@ class VirtualSensorConfig:
             door_open_resets_checking=data.get("door_open_resets_checking", True),
             occupied_threshold=float(data.get("occupied_threshold", 0.5)),
             vacant_threshold=float(data.get("vacant_threshold", 0.1)),
+            time_of_day_profiles=data.get("time_of_day_profiles", []),
+            adaptive_timeouts=data.get("adaptive_timeouts", False),
         )
 
     def get_all_sensor_entity_ids(self) -> list[str]:

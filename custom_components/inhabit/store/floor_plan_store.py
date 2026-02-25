@@ -635,6 +635,22 @@ class FloorPlanStore:
             return True
         return False
 
+    # ==================== Timeout History ====================
+
+    def get_timeout_history(self) -> dict[str, list[dict]]:
+        """Get all timeout history records."""
+        return self._data.get("timeout_history", {})
+
+    def save_timeout_history(self, history: dict[str, list[dict]]) -> None:
+        """Save timeout history records.
+
+        Args:
+            history: Dict mapping room_id to list of serialized
+                OccupancyDurationRecord dicts.
+        """
+        self._data["timeout_history"] = history
+        self.async_delay_save()
+
     # ==================== Utilities ====================
 
     def _generate_id(self) -> str:
