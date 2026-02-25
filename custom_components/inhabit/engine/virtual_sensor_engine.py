@@ -6,14 +6,21 @@ import logging
 from typing import TYPE_CHECKING
 
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.dispatcher import async_dispatcher_send
+from homeassistant.helpers.dispatcher import (
+    async_dispatcher_connect,
+    async_dispatcher_send,
+)
 
 from ..const import DOMAIN, OccupancyState
 from ..models.virtual_sensor import OccupancyStateData, VirtualSensorConfig
 from .house_occupancy_guard import HouseOccupancyGuard
+from .mmwave_target_processor import SIGNAL_MMWAVE_TARGETS_UPDATED
 from .occupancy_state_machine import OccupancyStateMachine
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from ..models.floor_plan import Coordinates
     from ..store.floor_plan_store import FloorPlanStore
 
 _LOGGER = logging.getLogger(__name__)
@@ -41,6 +48,10 @@ class VirtualSensorEngine:
         self._state_machines: dict[str, OccupancyStateMachine] = {}
         self._house_guard = HouseOccupancyGuard(hass, store)
         self._running = False
+        self._unsub_mmwave: Callable[[], None] | None = None
+
+        # Per-region target tracking: {region_id: set of "placement_id:target_index" keys}
+        self._mmwave_target_keys_per_region: dict[str, set[str]] = {}
 
         # Parent-child zone mapping: parent_room_id → set of zone_ids
         self._parent_zones: dict[str, set[str]] = {}
@@ -69,6 +80,13 @@ class VirtualSensorEngine:
         # Resolve parent_room_id for zones with occupies_parent
         self._resolve_zone_parents()
 
+        # Subscribe to mmWave target updates
+        self._unsub_mmwave = async_dispatcher_connect(
+            self.hass,
+            SIGNAL_MMWAVE_TARGETS_UPDATED,
+            self._handle_mmwave_target_update,
+        )
+
         # Load all sensor configs and create state machines
         configs = self._store.get_all_sensor_configs()
         for config in configs:
@@ -87,6 +105,12 @@ class VirtualSensorEngine:
 
         _LOGGER.info("Stopping virtual sensor engine")
         self._running = False
+
+        # Unsubscribe from mmWave target updates
+        if self._unsub_mmwave:
+            self._unsub_mmwave()
+            self._unsub_mmwave = None
+        self._mmwave_target_keys_per_region.clear()
 
         # Stop all state machines
         for _room_id, machine in list(self._state_machines.items()):
@@ -244,6 +268,70 @@ class VirtualSensorEngine:
                     OccupancyState.OCCUPIED,
                     f"child zone {zone_id} occupied",
                 )
+
+    # ------------------------------------------------------------------
+    # mmWave spatial presence
+    # ------------------------------------------------------------------
+
+    @callback
+    def _handle_mmwave_target_update(
+        self,
+        placement_id: str,
+        target_index: int,
+        world_pos: Coordinates,
+        region_id: str | None,
+    ) -> None:
+        """Handle an mmWave target position update from MmwaveTargetProcessor.
+
+        Tracks which targets are in which regions and feeds the target count
+        into each region's state machine via update_spatial_presence().
+        """
+        target_key = f"{placement_id}:{target_index}"
+
+        # Find the old region this target was in (if any)
+        old_region: str | None = None
+        for rid, target_keys in self._mmwave_target_keys_per_region.items():
+            if target_key in target_keys:
+                old_region = rid
+                break
+
+        if old_region == region_id:
+            # Target stayed in the same region — nothing to do
+            return
+
+        # Remove target from old region
+        if old_region:
+            self._mmwave_target_keys_per_region[old_region].discard(target_key)
+            old_count = len(self._mmwave_target_keys_per_region[old_region])
+            if old_count == 0:
+                del self._mmwave_target_keys_per_region[old_region]
+            self._route_spatial_presence(old_region, old_count)
+
+        # Add target to new region
+        if region_id:
+            self._mmwave_target_keys_per_region.setdefault(region_id, set()).add(
+                target_key
+            )
+            new_count = len(self._mmwave_target_keys_per_region[region_id])
+            self._route_spatial_presence(region_id, new_count)
+
+    def _route_spatial_presence(self, region_id: str, target_count: int) -> None:
+        """Route a spatial presence update to the correct state machine.
+
+        Only affects rooms/zones with presence_affects enabled.
+        """
+        config = self._store.get_sensor_config(region_id)
+        if not config or not config.enabled or not config.presence_affects:
+            return
+
+        machine = self._state_machines.get(region_id)
+        if not machine:
+            return
+
+        machine.update_spatial_presence(target_count)
+        _LOGGER.debug(
+            "Routed spatial presence to %s: %d targets", region_id, target_count
+        )
 
     # ------------------------------------------------------------------
     # State machine lifecycle
