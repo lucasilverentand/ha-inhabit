@@ -24,6 +24,7 @@ from .api import http as http_api
 from .api import services
 from .api import websocket as ws_api
 from .const import DOMAIN
+from .engine.mmwave_target_processor import MmwaveTargetProcessor
 from .engine.simulated_target_processor import SimulatedTargetProcessor
 from .engine.virtual_sensor_engine import VirtualSensorEngine
 from .seed import async_seed_demo_house
@@ -91,6 +92,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Initialize virtual sensor engine
     sensor_engine = VirtualSensorEngine(hass, floor_plan_store)
 
+    # Initialize mmWave target processor
+    mmwave_processor = MmwaveTargetProcessor(hass, floor_plan_store)
+
     # Initialize simulated target processor
     sim_processor = SimulatedTargetProcessor(hass, floor_plan_store, sensor_engine)
 
@@ -99,6 +103,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "store": floor_plan_store,
         "image_store": image_store,
         "sensor_engine": sensor_engine,
+        "mmwave_processor": mmwave_processor,
         "sim_processor": sim_processor,
         "entry": entry,
     }
@@ -179,6 +184,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Start the sensor engine
     await sensor_engine.async_start()
 
+    # Start mmWave target processor (after sensor engine, so subscriptions are ready)
+    await mmwave_processor.async_start()
+
     _LOGGER.info("Inhabit Floor Plan Builder setup complete")
     return True
 
@@ -186,6 +194,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     _LOGGER.info("Unloading Inhabit Floor Plan Builder")
+
+    # Stop mmWave target processor
+    mmwave_processor: MmwaveTargetProcessor = hass.data[DOMAIN]["mmwave_processor"]
+    await mmwave_processor.async_stop()
 
     # Clear simulated targets
     sim_processor: SimulatedTargetProcessor = hass.data[DOMAIN]["sim_processor"]

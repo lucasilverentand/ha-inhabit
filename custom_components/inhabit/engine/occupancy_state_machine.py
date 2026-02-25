@@ -254,6 +254,30 @@ class OccupancyStateMachine:
         self._notify_state_change()
 
     # ------------------------------------------------------------------
+    # Spatial presence (mmWave)
+    # ------------------------------------------------------------------
+
+    def update_spatial_presence(self, target_count: int, source: str = "mmwave") -> None:
+        """Update occupancy based on spatial presence targets (e.g., mmWave).
+
+        Spatial presence is treated as a high-confidence signal (weight=2.0)
+        fed into the contributing sensors list as a virtual presence reading.
+        """
+        is_active = target_count > 0
+        virtual_entity = f"_spatial_{source}_{self.config.room_id}"
+
+        # Update contributing sensors
+        self._update_contributing_sensors(virtual_entity, add=is_active)
+
+        if is_active:
+            self._state.last_presence_at = datetime.now()
+            self._transition_to_occupied(
+                f"spatial presence: {target_count} targets from {source}"
+            )
+        else:
+            self._check_all_sensors_clear()
+
+    # ------------------------------------------------------------------
     # Initial state evaluation
     # ------------------------------------------------------------------
 
@@ -790,11 +814,17 @@ class OccupancyStateMachine:
     # ------------------------------------------------------------------
 
     def _any_sensor_active(self) -> bool:
-        """Check if any motion sensor is currently active."""
+        """Check if any motion sensor or spatial presence source is active."""
         for binding in self.config.motion_sensors:
             state = self.hass.states.get(binding.entity_id)
             if state and self._is_sensor_active(state, binding.inverted):
                 return True
+
+        # Spatial presence virtual entities are tracked in contributing_sensors
+        for sensor_id in self._state.contributing_sensors:
+            if sensor_id.startswith("_spatial_"):
+                return True
+
         return False
 
     def _any_presence_sensor_active(self) -> bool:
