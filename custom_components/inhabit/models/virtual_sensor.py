@@ -27,6 +27,9 @@ class OccupancyStateData:
     seal_broken_at: datetime | None = None
     door_states_at_detection: dict[str, bool] = field(default_factory=dict)
 
+    # Sensor reliability scores (entity_id -> 0.0-1.0 reliability)
+    sensor_reliability: dict[str, float] = field(default_factory=dict)
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return {
@@ -55,6 +58,7 @@ class OccupancyStateData:
                 self.seal_broken_at.isoformat() if self.seal_broken_at else None
             ),
             "door_states_at_detection": self.door_states_at_detection,
+            "sensor_reliability": self.sensor_reliability,
         }
 
     @classmethod
@@ -96,6 +100,7 @@ class OccupancyStateData:
                 else None
             ),
             door_states_at_detection=data.get("door_states_at_detection", {}),
+            sensor_reliability=data.get("sensor_reliability", {}),
         )
 
 

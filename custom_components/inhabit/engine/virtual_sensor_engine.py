@@ -75,6 +75,9 @@ class VirtualSensorEngine:
             if config.enabled:
                 await self._create_state_machine(config)
 
+        # Load persisted sensor reliability data
+        self._load_reliability_data()
+
         _LOGGER.info(
             "Virtual sensor engine started with %d state machines",
             len(self._state_machines),
@@ -86,6 +89,10 @@ class VirtualSensorEngine:
             return
 
         _LOGGER.info("Stopping virtual sensor engine")
+
+        # Save sensor reliability data before stopping
+        self._save_reliability_data()
+
         self._running = False
 
         # Stop all state machines
@@ -244,6 +251,41 @@ class VirtualSensorEngine:
                     OccupancyState.OCCUPIED,
                     f"child zone {zone_id} occupied",
                 )
+
+    # ------------------------------------------------------------------
+    # Sensor reliability persistence
+    # ------------------------------------------------------------------
+
+    def _load_reliability_data(self) -> None:
+        """Load persisted reliability data and distribute to state machines."""
+        reliability_data = self._store.get_sensor_reliability()
+        if not reliability_data:
+            return
+
+        for room_id, sensor_records in reliability_data.items():
+            machine = self._state_machines.get(room_id)
+            if machine:
+                machine.reliability_tracker.load_records(sensor_records)
+                _LOGGER.debug(
+                    "Loaded reliability data for room %s (%d sensors)",
+                    room_id,
+                    len(sensor_records),
+                )
+
+    def _save_reliability_data(self) -> None:
+        """Save reliability data from all state machines to the store."""
+        reliability_data: dict[str, dict] = {}
+
+        for room_id, machine in self._state_machines.items():
+            records = machine.reliability_tracker.save_records()
+            if records:
+                reliability_data[room_id] = records
+
+        if reliability_data:
+            self._store.save_sensor_reliability(reliability_data)
+            _LOGGER.debug(
+                "Saved reliability data for %d rooms", len(reliability_data)
+            )
 
     # ------------------------------------------------------------------
     # State machine lifecycle

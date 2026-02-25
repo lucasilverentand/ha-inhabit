@@ -16,6 +16,7 @@ from homeassistant.helpers.event import (
 
 from ..const import OccupancyState
 from ..models.virtual_sensor import OccupancyStateData, VirtualSensorConfig
+from .sensor_reliability import SensorReliabilityTracker
 
 if TYPE_CHECKING:
     from homeassistant.core import Event
@@ -83,6 +84,12 @@ class OccupancyStateMachine:
         self._checking_timer: Callable[[], None] | None = None
         self._seal_expiry_timer: Callable[[], None] | None = None
         self._running = False
+        self._reliability_tracker = SensorReliabilityTracker()
+
+        # Build entity_id -> binding lookup for quick weight access
+        self._motion_binding_map: dict[str, Any] = {
+            b.entity_id: b for b in config.motion_sensors
+        }
 
     @property
     def state(self) -> OccupancyStateData:
@@ -93,6 +100,11 @@ class OccupancyStateMachine:
     def is_occupied(self) -> bool:
         """Check if room is considered occupied."""
         return self._state.state in (OccupancyState.OCCUPIED, OccupancyState.CHECKING)
+
+    @property
+    def reliability_tracker(self) -> SensorReliabilityTracker:
+        """Get the sensor reliability tracker."""
+        return self._reliability_tracker
 
     async def async_start(self) -> None:
         """Start the state machine and subscribe to sensors."""
@@ -232,6 +244,12 @@ class OccupancyStateMachine:
             new_state.state,
             is_active,
         )
+
+        # Feed the reliability tracker
+        if is_active:
+            self._reliability_tracker.on_sensor_activation(entity_id)
+        else:
+            self._reliability_tracker.on_sensor_deactivation(entity_id)
 
         if is_active:
             self._state.last_motion_at = datetime.now()
@@ -713,9 +731,12 @@ class OccupancyStateMachine:
         active_weight = 0.0
 
         for binding in self.config.motion_sensors:
-            total_weight += binding.weight
+            effective_weight = self._reliability_tracker.get_effective_weight(
+                binding.entity_id, binding.weight
+            )
+            total_weight += effective_weight
             if binding.entity_id in self._state.contributing_sensors:
-                active_weight += binding.weight
+                active_weight += effective_weight
 
         if total_weight == 0:
             return 0.5 if self._state.contributing_sensors else 0.0
@@ -724,4 +745,9 @@ class OccupancyStateMachine:
 
     def _notify_state_change(self) -> None:
         """Notify listeners of state change."""
+        # Update sensor reliability data in state
+        self._state.sensor_reliability = {
+            entity_id: self._reliability_tracker.get_reliability(entity_id)
+            for entity_id in self._state.contributing_sensors
+        }
         self._on_state_change(self._state)
