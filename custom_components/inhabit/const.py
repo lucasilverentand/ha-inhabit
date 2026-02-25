@@ -65,6 +65,10 @@ ATTR_SEALED: Final = "sealed"
 ATTR_SEALED_SINCE: Final = "sealed_since"
 ATTR_HOUSE_SEALED: Final = "house_sealed"
 
+# Events
+EVENT_CHECKING_STARTED: Final = f"{DOMAIN}_checking_started"
+EVENT_CHECKING_RESOLVED: Final = f"{DOMAIN}_checking_resolved"
+
 # Layer names for frontend
 LAYER_BACKGROUND: Final = "background"
 LAYER_STRUCTURE: Final = "structure"

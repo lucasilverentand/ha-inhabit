@@ -635,6 +635,17 @@ class FloorPlanStore:
             return True
         return False
 
+    # ==================== Occupancy History ====================
+
+    def get_occupancy_history(self) -> list[dict[str, Any]]:
+        """Get raw occupancy history entries."""
+        return self._data.get("occupancy_history", [])
+
+    def save_occupancy_history(self, entries: list[dict[str, Any]]) -> None:
+        """Save occupancy history entries."""
+        self._data["occupancy_history"] = entries
+        self.async_delay_save()
+
     # ==================== Utilities ====================
 
     def _generate_id(self) -> str:

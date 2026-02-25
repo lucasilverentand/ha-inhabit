@@ -3,13 +3,19 @@
 from __future__ import annotations
 
 import logging
+from collections import deque
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 
 from ..const import DOMAIN, OccupancyState
-from ..models.virtual_sensor import OccupancyStateData, VirtualSensorConfig
+from ..models.virtual_sensor import (
+    OccupancyHistoryEntry,
+    OccupancyStateData,
+    VirtualSensorConfig,
+)
 from .house_occupancy_guard import HouseOccupancyGuard
 from .occupancy_state_machine import OccupancyStateMachine
 
@@ -42,6 +48,11 @@ class VirtualSensorEngine:
         self._house_guard = HouseOccupancyGuard(hass, store)
         self._running = False
 
+        # Occupancy history tracking
+        self._occupancy_history: deque[OccupancyHistoryEntry] = deque(maxlen=2000)
+        # Tracks when each room last transitioned (for duration calculation)
+        self._last_transition_time: dict[str, datetime] = {}
+
         # Parent-child zone mapping: parent_room_id → set of zone_ids
         self._parent_zones: dict[str, set[str]] = {}
 
@@ -62,6 +73,9 @@ class VirtualSensorEngine:
 
         self._running = True
         _LOGGER.info("Starting virtual sensor engine")
+
+        # Load persisted occupancy history
+        await self._load_history()
 
         # Start house guard first (discovers exterior doors)
         await self._house_guard.async_start()
@@ -88,12 +102,16 @@ class VirtualSensorEngine:
         _LOGGER.info("Stopping virtual sensor engine")
         self._running = False
 
+        # Persist occupancy history before stopping
+        await self._save_history()
+
         # Stop all state machines
         for _room_id, machine in list(self._state_machines.items()):
             await machine.async_stop()
 
         self._state_machines.clear()
         self._parent_zones.clear()
+        self._last_transition_time.clear()
 
         # Stop house guard
         await self._house_guard.async_stop()
@@ -317,6 +335,25 @@ class VirtualSensorEngine:
             state.sealed,
         )
 
+        # Record history entry
+        now = datetime.now()
+        duration: float | None = None
+        last_time = self._last_transition_time.get(room_id)
+        if last_time is not None:
+            duration = (now - last_time).total_seconds()
+        self._last_transition_time[room_id] = now
+
+        entry = OccupancyHistoryEntry(
+            room_id=room_id,
+            state=state.state,
+            timestamp=now.isoformat(),
+            reason=state.transition_reason,
+            confidence=state.confidence,
+            previous_state=state.previous_state,
+            duration_seconds=duration,
+        )
+        self._occupancy_history.append(entry)
+
         # Update house guard
         self._house_guard.on_room_state_changed(room_id, state.state)
 
@@ -330,3 +367,39 @@ class VirtualSensorEngine:
             room_id,
             state,
         )
+
+    def get_occupancy_history(
+        self, room_id: str | None = None, limit: int = 100
+    ) -> list[OccupancyHistoryEntry]:
+        """Get occupancy history, optionally filtered by room."""
+        entries = list(self._occupancy_history)
+        if room_id:
+            entries = [e for e in entries if e.room_id == room_id]
+        return entries[-limit:]
+
+    async def _load_history(self) -> None:
+        """Load occupancy history from the store."""
+        raw = self._store.get_occupancy_history()
+        if not raw:
+            return
+
+        cutoff = datetime.now() - timedelta(days=7)
+        for item in raw:
+            try:
+                entry = OccupancyHistoryEntry.from_dict(item)
+                # Prune entries older than 7 days
+                ts = datetime.fromisoformat(entry.timestamp)
+                if ts >= cutoff:
+                    self._occupancy_history.append(entry)
+            except (ValueError, KeyError):
+                _LOGGER.debug("Skipping invalid history entry: %s", item)
+
+        _LOGGER.debug(
+            "Loaded %d occupancy history entries", len(self._occupancy_history)
+        )
+
+    async def _save_history(self) -> None:
+        """Save occupancy history to the store."""
+        entries = [e.to_dict() for e in self._occupancy_history]
+        self._store.save_occupancy_history(entries)
+        _LOGGER.debug("Saved %d occupancy history entries", len(entries))
