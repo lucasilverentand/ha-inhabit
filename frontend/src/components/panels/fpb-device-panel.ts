@@ -3,7 +3,7 @@
  * a selected light, switch, or mmWave placement.
  */
 
-import { LitElement, html, css } from "lit";
+import { LitElement, html, css, nothing } from "lit";
 import { property, state } from "lit/decorators.js";
 import type {
   HomeAssistant,
@@ -20,6 +20,7 @@ import {
   devicePanelTarget,
   selection,
 } from "../../stores/signals";
+import "../shared/fpb-entity-picker";
 
 export class FpbDevicePanel extends LitElement {
   @property({ attribute: false })
@@ -30,9 +31,6 @@ export class FpbDevicePanel extends LitElement {
 
   @property({ type: String })
   deviceType: "light" | "switch" | "mmwave" | "button" = "light";
-
-  @state()
-  private _entitySearch = "";
 
   @state()
   private _rebinding = false;
@@ -135,55 +133,6 @@ export class FpbDevicePanel extends LitElement {
       background: var(--secondary-background-color);
     }
 
-    .entity-search {
-      width: 100%;
-      padding: 8px 12px;
-      border: 1px solid var(--divider-color, #e0e0e0);
-      border-radius: 8px;
-      background: var(--primary-background-color);
-      color: var(--primary-text-color);
-      font-size: 13px;
-      box-sizing: border-box;
-    }
-
-    .entity-list {
-      max-height: 200px;
-      overflow-y: auto;
-      display: flex;
-      flex-direction: column;
-      gap: 2px;
-    }
-
-    .entity-option {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 6px 12px;
-      border: none;
-      background: none;
-      cursor: pointer;
-      border-radius: 6px;
-      font-size: 13px;
-      color: var(--primary-text-color);
-      text-align: left;
-    }
-
-    .entity-option:hover {
-      background: var(--secondary-background-color);
-    }
-
-    .entity-option .friendly-name {
-      flex: 1;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    .entity-option .entity-id-small {
-      color: var(--secondary-text-color);
-      font-size: 11px;
-    }
-
     .slider-row {
       display: flex;
       flex-direction: column;
@@ -232,23 +181,21 @@ export class FpbDevicePanel extends LitElement {
     }
   }
 
-  private _getFilteredEntities(): Array<{ entity_id: string; friendly_name: string }> {
-    if (!this.hass) return [];
-    const domain = this.deviceType === "mmwave" ? "" : `${this.deviceType}.`;
-    const search = this._entitySearch.toLowerCase();
+  private _getPickerDomains(): string[] {
+    if (this.deviceType === "mmwave") return [];
+    return [this.deviceType];
+  }
 
-    return Object.keys(this.hass.states)
-      .filter(eid => {
-        if (domain && !eid.startsWith(domain)) return false;
-        if (!search) return true;
-        const name = String(this.hass!.states[eid].attributes?.friendly_name ?? "");
-        return eid.toLowerCase().includes(search) || name.toLowerCase().includes(search);
-      })
-      .slice(0, 50)
-      .map(eid => ({
-        entity_id: eid,
-        friendly_name: String(this.hass!.states[eid].attributes?.friendly_name ?? eid),
-      }));
+  private _getExcludedEntityIds(): string[] {
+    if (this.deviceType === "light") {
+      return lightPlacements.value.filter(p => p.id !== this.placementId).map(p => p.entity_id);
+    } else if (this.deviceType === "switch") {
+      return switchPlacements.value.filter(p => p.id !== this.placementId).map(p => p.entity_id);
+    } else if (this.deviceType === "button") {
+      return buttonPlacements.value.filter(p => p.id !== this.placementId).map(p => p.entity_id);
+    } else {
+      return mmwavePlacements.value.filter(p => p.id !== this.placementId && p.entity_id).map(p => p.entity_id!);
+    }
   }
 
   private async _rebindEntity(newEntityId: string): Promise<void> {
@@ -292,7 +239,6 @@ export class FpbDevicePanel extends LitElement {
         );
       }
       this._rebinding = false;
-      this._entitySearch = "";
       this.requestUpdate();
     } catch (err) {
       console.error("Failed to rebind entity:", err);
@@ -402,30 +348,24 @@ export class FpbDevicePanel extends LitElement {
         <!-- Entity binding -->
         <div class="section">
           <div class="section-title">Entity</div>
+          <div class="entity-row">
+            <ha-icon icon=${this._getIcon()} style="--mdc-icon-size: 18px;"></ha-icon>
+            <span class="entity-id">${friendlyName}</span>
+            <button class="rebind-btn" @click=${() => { this._rebinding = true; }}>Change</button>
+          </div>
           ${this._rebinding ? html`
-            <input
-              class="entity-search"
-              type="text"
+            <fpb-entity-picker
+              .hass=${this.hass}
+              .domains=${this._getPickerDomains()}
+              .exclude=${this._getExcludedEntityIds()}
+              title="Select ${this._getTitle()} Entity"
               placeholder="Search entities..."
-              .value=${this._entitySearch}
-              @input=${(e: Event) => { this._entitySearch = (e.target as HTMLInputElement).value; this.requestUpdate(); }}
-              @keydown=${(e: KeyboardEvent) => { if (e.key === "Escape") { this._rebinding = false; this._entitySearch = ""; } }}
-            />
-            <div class="entity-list">
-              ${this._getFilteredEntities().map(ent => html`
-                <button class="entity-option" @click=${() => this._rebindEntity(ent.entity_id)}>
-                  <span class="friendly-name">${ent.friendly_name}</span>
-                  <span class="entity-id-small">${ent.entity_id}</span>
-                </button>
-              `)}
-            </div>
-          ` : html`
-            <div class="entity-row">
-              <ha-icon icon=${this._getIcon()} style="--mdc-icon-size: 18px;"></ha-icon>
-              <span class="entity-id">${friendlyName}</span>
-              <button class="rebind-btn" @click=${() => { this._rebinding = true; }}>Change</button>
-            </div>
-          `}
+              @entities-confirmed=${(e: CustomEvent) => {
+                this._rebindEntity(e.detail.entityIds[0]);
+              }}
+              @picker-closed=${() => { this._rebinding = false; }}
+            ></fpb-entity-picker>
+          ` : nothing}
         </div>
 
         ${this.deviceType === "mmwave" ? this._renderMmwaveSettings(placement as MmwavePlacement) : null}

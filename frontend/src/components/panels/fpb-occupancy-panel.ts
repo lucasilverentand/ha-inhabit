@@ -11,6 +11,7 @@ import type {
   OccupancyStateData,
   SensorBinding,
 } from "../../types";
+import "../shared/fpb-entity-picker";
 
 export class FpbOccupancyPanel extends LitElement {
   @property({ attribute: false })
@@ -33,6 +34,9 @@ export class FpbOccupancyPanel extends LitElement {
 
   @state()
   private _loading = true;
+
+  @state()
+  private _activePicker: "motion" | "door" | "override" | null = null;
 
   private _pollTimer?: number;
 
@@ -168,29 +172,19 @@ export class FpbOccupancyPanel extends LitElement {
       background: none;
       border: none;
       cursor: pointer;
-      padding: 2px;
-      color: var(--error-color, #f44336);
-      font-size: 16px;
+      padding: 4px;
+      border-radius: 6px;
+      color: var(--secondary-text-color, #999);
       line-height: 1;
+      --mdc-icon-size: 16px;
+      transition: color 0.15s;
     }
 
-    .add-sensor-row {
-      display: flex;
-      gap: 8px;
-      align-items: center;
+    .sensor-item .remove-btn:hover {
+      color: var(--error-color, #f44336);
     }
 
-    .add-sensor-row input {
-      flex: 1;
-      padding: 6px 10px;
-      border: 1px solid var(--divider-color, #e0e0e0);
-      border-radius: 8px;
-      font-size: 13px;
-      background: var(--primary-background-color);
-      color: var(--primary-text-color);
-    }
-
-    .add-sensor-row button {
+    .add-btn {
       padding: 6px 12px;
       background: var(--primary-color);
       color: var(--text-primary-color);
@@ -199,6 +193,22 @@ export class FpbOccupancyPanel extends LitElement {
       cursor: pointer;
       font-size: 13px;
       white-space: nowrap;
+      align-self: flex-start;
+    }
+
+    .add-btn:hover {
+      opacity: 0.9;
+    }
+
+    .action-input {
+      width: 100%;
+      padding: 8px 12px;
+      border: 1px solid var(--divider-color, #e0e0e0);
+      border-radius: 8px;
+      background: var(--primary-background-color);
+      color: var(--primary-text-color);
+      font-size: 13px;
+      box-sizing: border-box;
     }
 
     .status-section {
@@ -329,16 +339,19 @@ export class FpbOccupancyPanel extends LitElement {
     }
   }
 
-  private async _addSensor(type: "motion" | "presence" | "door", entityId: string): Promise<void> {
-    if (!this._config || !entityId) return;
+  private async _addSensors(type: "motion" | "door", entityIds: string[]): Promise<void> {
+    if (!this._config || entityIds.length === 0) return;
     const key = `${type}_sensors` as const;
     const existing = this._config[key] as SensorBinding[];
-    if (existing.some(s => s.entity_id === entityId)) return;
-    const updated = [...existing, { entity_id: entityId, sensor_type: type, weight: 1.0, inverted: false }];
-    await this._updateConfig({ [key]: updated });
+    const existingIds = new Set(existing.map(s => s.entity_id));
+    const newBindings = entityIds
+      .filter(eid => eid && !existingIds.has(eid))
+      .map(eid => ({ entity_id: eid, sensor_type: type, weight: 1.0, inverted: false }));
+    if (newBindings.length === 0) return;
+    await this._updateConfig({ [key]: [...existing, ...newBindings] });
   }
 
-  private async _removeSensor(type: "motion" | "presence" | "door", entityId: string): Promise<void> {
+  private async _removeSensor(type: "motion" | "door", entityId: string): Promise<void> {
     if (!this._config) return;
     const key = `${type}_sensors` as const;
     const existing = this._config[key] as SensorBinding[];
@@ -346,41 +359,53 @@ export class FpbOccupancyPanel extends LitElement {
     await this._updateConfig({ [key]: updated });
   }
 
-  private _renderSensorSection(title: string, type: "motion" | "presence" | "door", sensors: SensorBinding[]) {
-    const inputId = `add-${type}-input`;
+  private _getEntityName(entityId: string): string {
+    if (!this.hass?.states[entityId]) return entityId;
+    return String(this.hass.states[entityId].attributes?.friendly_name ?? entityId);
+  }
+
+  /** All entity IDs currently bound (for the picker's exclude list). */
+  private _getAllBoundEntityIds(): string[] {
+    if (!this._config) return [];
+    const ids: string[] = [];
+    for (const s of this._config.motion_sensors) ids.push(s.entity_id);
+    for (const s of this._config.door_sensors) ids.push(s.entity_id);
+    if (this._config.override_trigger_entity) ids.push(this._config.override_trigger_entity);
+    return ids;
+  }
+
+  private _renderSensorSection(title: string, type: "motion" | "door", sensors: SensorBinding[]) {
+    const icon = type === "motion" ? "mdi:motion-sensor" : "mdi:door";
     return html`
       <div class="section">
         <div class="section-title">${title}</div>
         <div class="sensor-list">
           ${sensors.map(s => html`
             <div class="sensor-item">
-              <ha-icon icon=${type === "motion" ? "mdi:motion-sensor" : type === "presence" ? "mdi:account-eye" : "mdi:door"} style="--mdc-icon-size: 18px;"></ha-icon>
-              <span class="entity-id">${s.entity_id}</span>
-              <button class="remove-btn" @click=${() => this._removeSensor(type, s.entity_id)}>x</button>
+              <ha-icon icon=${icon} style="--mdc-icon-size: 18px;"></ha-icon>
+              <span class="entity-id">${this._getEntityName(s.entity_id)}</span>
+              <button class="remove-btn" @click=${() => this._removeSensor(type, s.entity_id)}><ha-icon icon="mdi:trash-can-outline"></ha-icon></button>
             </div>
           `)}
         </div>
-        <div class="add-sensor-row">
-          <input
-            id=${inputId}
-            type="text"
-            placeholder="binary_sensor.xxx"
-            @keydown=${(e: KeyboardEvent) => {
-              if (e.key === "Enter") {
-                const input = e.target as HTMLInputElement;
-                this._addSensor(type, input.value.trim());
-                input.value = "";
-              }
+        <button class="add-btn" @click=${() => { this._activePicker = type; }}>
+          Add ${type} sensor
+        </button>
+        ${this._activePicker === type ? html`
+          <fpb-entity-picker
+            .hass=${this.hass}
+            .domains=${["binary_sensor"]}
+            .exclude=${this._getAllBoundEntityIds()}
+            .multi=${true}
+            title="Add ${title}"
+            placeholder="Search ${type} sensors..."
+            @entities-confirmed=${(e: CustomEvent) => {
+              this._addSensors(type, e.detail.entityIds);
+              this._activePicker = null;
             }}
-          />
-          <button @click=${() => {
-            const input = this.shadowRoot?.querySelector(`#${inputId}`) as HTMLInputElement;
-            if (input) {
-              this._addSensor(type, input.value.trim());
-              input.value = "";
-            }
-          }}>Add</button>
-        </div>
+            @picker-closed=${() => { this._activePicker = null; }}
+          ></fpb-entity-picker>
+        ` : nothing}
       </div>
     `;
   }
@@ -516,31 +541,49 @@ export class FpbOccupancyPanel extends LitElement {
             <!-- Override Trigger -->
             <div class="section">
               <div class="section-title">Override Trigger</div>
-              <div class="add-sensor-row">
-                <input
-                  id="override-entity-input"
-                  type="text"
-                  placeholder="event.wall_switch"
-                  .value=${this._config.override_trigger_entity ?? ""}
-                  @change=${(e: Event) => this._updateConfig({ override_trigger_entity: (e.target as HTMLInputElement).value.trim() })}
-                />
-              </div>
-              <div class="add-sensor-row">
-                <input
-                  id="override-action-input"
-                  type="text"
-                  placeholder="on_press"
-                  .value=${this._config.override_trigger_action ?? ""}
-                  @change=${(e: Event) => this._updateConfig({ override_trigger_action: (e.target as HTMLInputElement).value.trim() })}
-                />
-              </div>
-              ${this._config.override_trigger_entity && this._config.override_trigger_action ? html`
+              ${this._config.override_trigger_entity ? html`
                 <div class="sensor-item">
                   <ha-icon icon="mdi:gesture-tap-button" style="--mdc-icon-size: 18px;"></ha-icon>
-                  <span class="entity-id">${this._config.override_trigger_entity} (${this._config.override_trigger_action})</span>
-                  <button class="remove-btn" @click=${() => this._updateConfig({ override_trigger_entity: "", override_trigger_action: "" })}>x</button>
+                  <span class="entity-id">
+                    ${this._getEntityName(this._config.override_trigger_entity)}
+                    ${this._config.override_trigger_action ? html` <span style="color: var(--secondary-text-color)">(${this._config.override_trigger_action})</span>` : nothing}
+                  </span>
+                  <button class="remove-btn" @click=${() => {
+                    this._updateConfig({ override_trigger_entity: "", override_trigger_action: "" });
+                  }}><ha-icon icon="mdi:trash-can-outline"></ha-icon></button>
                 </div>
-              ` : nothing}
+                <div style="display: flex; flex-direction: column; gap: 4px;">
+                  <label style="font-size: 12px; color: var(--secondary-text-color);">Action (optional)</label>
+                  <input
+                    class="action-input"
+                    type="text"
+                    placeholder="e.g. on_press, single, toggle"
+                    .value=${this._config.override_trigger_action ?? ""}
+                    @change=${(e: Event) => this._updateConfig({ override_trigger_action: (e.target as HTMLInputElement).value.trim() })}
+                  />
+                </div>
+              ` : html`
+                <button class="add-btn" @click=${() => { this._activePicker = "override"; }}>
+                  Select entity
+                </button>
+                <div style="font-size: 12px; color: var(--secondary-text-color);">
+                  Pick a button, switch, or event entity to toggle occupancy
+                </div>
+                ${this._activePicker === "override" ? html`
+                  <fpb-entity-picker
+                    .hass=${this.hass}
+                    .domains=${["button", "input_button", "event", "switch", "input_boolean"]}
+                    .exclude=${this._getAllBoundEntityIds()}
+                    title="Select Override Trigger"
+                    placeholder="Search buttons, switches, events..."
+                    @entities-confirmed=${(e: CustomEvent) => {
+                      this._updateConfig({ override_trigger_entity: e.detail.entityIds[0] });
+                      this._activePicker = null;
+                    }}
+                    @picker-closed=${() => { this._activePicker = null; }}
+                  ></fpb-entity-picker>
+                ` : nothing}
+              `}
             </div>
 
             <!-- Thresholds -->
