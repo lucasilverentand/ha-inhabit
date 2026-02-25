@@ -686,6 +686,17 @@ class FloorPlanStore:
             return True
         return False
 
+    # ==================== False Vacancy Data ====================
+
+    def get_false_vacancy_data(self) -> dict:
+        """Get persisted false vacancy detector data."""
+        return self._data.get("false_vacancy_data", {})
+
+    def save_false_vacancy_data(self, data: dict) -> None:
+        """Save false vacancy detector data."""
+        self._data["false_vacancy_data"] = data
+        self.async_delay_save()
+
     # ==================== Timeout History =============
     def get_timeout_history(self) -> dict[str, list[dict]]:
         """Get all timeout history records."""

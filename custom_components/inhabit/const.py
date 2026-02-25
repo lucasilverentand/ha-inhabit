@@ -91,3 +91,6 @@ LAYERS: Final = [
     LAYER_LABELS,
     LAYER_AUTOMATION,
 ]
+
+# Events
+EVENT_FALSE_VACANCY_DETECTED: Final = f"{DOMAIN}_false_vacancy_detected"

@@ -19,6 +19,7 @@ from ..models.virtual_sensor import (
     OccupancyStateData,
     VirtualSensorConfig,
 )
+from .false_vacancy_detector import FalseVacancyDetector
 from .feedback_controller import FeedbackController
 from .house_occupancy_guard import HouseOccupancyGuard
 from .mmwave_target_processor import SIGNAL_MMWAVE_TARGETS_UPDATED
@@ -54,6 +55,8 @@ class VirtualSensorEngine:
         self._store = store
         self._state_machines: dict[str, OccupancyStateMachine] = {}
         self._house_guard = HouseOccupancyGuard(hass, store)
+        self._false_vacancy_detector = FalseVacancyDetector(hass)
+        self._previous_states: dict[str, str] = {}  # room_id -> previous state
         self._feedback_controller = FeedbackController(hass)
         self._running = False
         self._unsub_mmwave: Callable[[], None] | None = None
@@ -80,6 +83,11 @@ class VirtualSensorEngine:
         return self._house_guard
 
     @property
+    def false_vacancy_detector(self) -> FalseVacancyDetector:
+        """Get the false vacancy detector."""
+        return self._false_vacancy_detector
+
+    @property
     def feedback_controller(self) -> FeedbackController:
         """Get the feedback controller."""
         return self._feedback_controller
@@ -101,6 +109,11 @@ class VirtualSensorEngine:
         # Start house guard first (discovers exterior doors)
         await self._house_guard.async_start()
 
+        # Load persisted false vacancy data
+        self._false_vacancy_detector.load_data(
+            self._store.get_false_vacancy_data()
+        )
+
         # Resolve parent_room_id for zones with occupies_parent
         self._resolve_zone_parents()
 
@@ -116,6 +129,12 @@ class VirtualSensorEngine:
         for config in configs:
             if config.enabled:
                 await self._create_state_machine(config)
+
+        # Apply persisted false vacancy bumps to state machines
+        for room_id, machine in self._state_machines.items():
+            bump = self._false_vacancy_detector.get_checking_timeout_bump(room_id)
+            if bump > 0:
+                machine.checking_timeout_bump = bump
 
         # Load persisted timeout histories
         self._load_timeout_histories()
@@ -139,6 +158,11 @@ class VirtualSensorEngine:
         self._save_reliability_data()
 
         self._running = False
+
+        # Persist false vacancy data before stopping
+        self._store.save_false_vacancy_data(
+            self._false_vacancy_detector.save_data()
+        )
 
         # Save timeout histories before stopping
         self._save_timeout_histories()
@@ -522,6 +546,25 @@ class VirtualSensorEngine:
             state.sealed,
             reason,
         )
+
+        # False vacancy detection
+        previous_state = self._previous_states.get(room_id)
+        machine = self._state_machines.get(room_id)
+        checking_timeout = machine.config.checking_timeout if machine else 30
+
+        fv_event = self._false_vacancy_detector.on_state_change(
+            room_id=room_id,
+            new_state=state.state,
+            previous_state=previous_state,
+            checking_timeout=checking_timeout,
+        )
+
+        if fv_event and machine:
+            machine.checking_timeout_bump = (
+                self._false_vacancy_detector.get_checking_timeout_bump(room_id)
+            )
+
+        self._previous_states[room_id] = state.state
 
         # Record history entry
         now = datetime.now()

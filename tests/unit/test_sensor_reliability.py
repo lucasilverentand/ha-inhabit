@@ -377,7 +377,7 @@ class TestSensorReliabilityInStateMachine:
         """Track state changes."""
         changes = []
 
-        def on_change(state):
+        def on_change(state, reason=""):
             changes.append(state)
 
         return changes, on_change

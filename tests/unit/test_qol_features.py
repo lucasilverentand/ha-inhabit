@@ -90,7 +90,7 @@ def state_changes():
     """Track state changes."""
     changes = []
 
-    def on_change(state: OccupancyStateData):
+    def on_change(state: OccupancyStateData, reason: str = ""):
         changes.append(
             {
                 "state": state.state,

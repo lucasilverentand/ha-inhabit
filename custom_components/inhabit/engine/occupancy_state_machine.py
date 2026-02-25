@@ -82,61 +82,62 @@ class OccupancyStateMachine:
                 child zone with occupies_parent is currently occupied.
         """
         self.hass = hass
-        self.config = config
+        self._config = config
         self._on_state_change = on_state_change
         self._can_go_vacant = can_go_vacant
         self._is_occupied_by_children = is_occupied_by_children
         self._state = OccupancyStateData(state=OccupancyState.VACANT)
         self._unsub_state_listeners: list[Callable[[], None]] = []
         self._checking_timer: Callable[[], None] | None = None
+        self._checking_timeout_bump: int = 0
         self._running = False
         self._occupied_since: datetime | None = None
+        self._sensor_last_triggered: dict[str, datetime] = {}
+
+        # Presence aggregator for weighted temporal-decay probability
+        self._aggregator = PresenceAggregator(
+            hass,
+            config.motion_sensors,
+            config.presence_sensors,
+        )
 
         # Adaptive timeout manager
         self._timeout_manager = AdaptiveTimeoutManager(
             hass=hass,
             room_id=config.room_id,
             base_checking_timeout=config.checking_timeout,
-            base_motion_timeout=config.motion_timeout,
-            time_of_day_profiles=[
-                TimeOfDayProfile(**p) for p in config.time_of_day_profiles
-            ],
-            adaptive_enabled=config.adaptive_timeouts,
+            base_motion_timeout=getattr(config, "motion_timeout", 120),
+            time_of_day_profiles=getattr(config, "time_of_day_profiles", None),
+            adaptive_enabled=getattr(config, "adaptive_timeout", False),
         )
 
-        # Presence aggregator for weighted temporal-decay probability
-        self._aggregator = PresenceAggregator(
-            hass=hass,
-            motion_bindings=config.motion_sensors,
-            presence_bindings=config.presence_sensors,
-            motion_decay_seconds=float(config.motion_timeout),
-            presence_decay_seconds=float(config.presence_timeout),
-        )
-
-        # Probabilistic seal tracker (replaces boolean seal + expiry timer)
+        # Probabilistic seal tracker
         self._seal_tracker = SealProbabilityTracker(
             half_life_seconds=float(config.effective_seal_half_life),
-            vacancy_threshold=0.1,
+            vacancy_threshold=getattr(config, "seal_vacancy_threshold", 0.1),
             _max_duration=float(config.effective_seal_max_duration),
         )
 
         # Sensor reliability tracker
         self._reliability_tracker = SensorReliabilityTracker()
 
-        # Build entity_id -> binding lookup for quick weight access
-        self._motion_binding_map: dict[str, Any] = {
-            b.entity_id: b for b in config.motion_sensors
-        }
-
     @property
     def state(self) -> OccupancyStateData:
-        """Get current state."""
+        """Get current state data."""
         return self._state
+
+    @property
+    def config(self) -> VirtualSensorConfig:
+        """Get sensor configuration."""
+        return self._config
 
     @property
     def is_occupied(self) -> bool:
         """Check if room is considered occupied."""
-        return self._state.state in (OccupancyState.OCCUPIED, OccupancyState.CHECKING)
+        return self._state.state in (
+            OccupancyState.OCCUPIED,
+            OccupancyState.CHECKING,
+        )
 
     @property
     def timeout_manager(self) -> AdaptiveTimeoutManager:
@@ -147,6 +148,16 @@ class OccupancyStateMachine:
     def reliability_tracker(self) -> SensorReliabilityTracker:
         """Get the sensor reliability tracker."""
         return self._reliability_tracker
+
+    @property
+    def checking_timeout_bump(self) -> int:
+        """Get the current checking timeout bump (added by false vacancy detector)."""
+        return self._checking_timeout_bump
+
+    @checking_timeout_bump.setter
+    def checking_timeout_bump(self, value: int) -> None:
+        """Set the checking timeout bump."""
+        self._checking_timeout_bump = value
 
     async def async_start(self) -> None:
         """Start the state machine and subscribe to sensors."""
@@ -688,7 +699,7 @@ class OccupancyStateMachine:
         self._state.checking_started_at = datetime.now()
         self._start_checking_timer()
 
-        effective_timeout = self.config.checking_timeout
+        effective_timeout = self._timeout_manager.get_effective_checking_timeout() + self._checking_timeout_bump
         self.hass.bus.async_fire(
             EVENT_CHECKING_STARTED,
             {
@@ -843,8 +854,10 @@ class OccupancyStateMachine:
     def _start_checking_timer(self) -> None:
         """Start the checking state timeout timer."""
         self._cancel_checking_timer()
-
-        effective_timeout = self._timeout_manager.get_effective_checking_timeout()
+        effective_timeout = (
+            self._timeout_manager.get_effective_checking_timeout()
+            + self._checking_timeout_bump
+        )
 
         @callback
         def _checking_timeout(_now: Any) -> None:
