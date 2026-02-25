@@ -10,6 +10,44 @@ from ..const import OccupancyState
 
 
 @dataclass
+class OccupancyHistoryEntry:
+    """Record of a state transition."""
+
+    room_id: str
+    state: str
+    timestamp: str  # ISO format
+    reason: str
+    confidence: float
+    previous_state: str | None = None
+    duration_seconds: float | None = None  # Duration in previous state
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary."""
+        return {
+            "room_id": self.room_id,
+            "state": self.state,
+            "timestamp": self.timestamp,
+            "reason": self.reason,
+            "confidence": self.confidence,
+            "previous_state": self.previous_state,
+            "duration_seconds": self.duration_seconds,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> OccupancyHistoryEntry:
+        """Create from dictionary."""
+        return cls(
+            room_id=data.get("room_id", ""),
+            state=data.get("state", ""),
+            timestamp=data.get("timestamp", ""),
+            reason=data.get("reason", ""),
+            confidence=float(data.get("confidence", 0.0)),
+            previous_state=data.get("previous_state"),
+            duration_seconds=data.get("duration_seconds"),
+        )
+
+
+@dataclass
 class OccupancyStateData:
     """Current state data for an occupancy state machine."""
 
@@ -20,6 +58,10 @@ class OccupancyStateData:
     last_door_event_at: datetime | None = None
     checking_started_at: datetime | None = None
     contributing_sensors: list[str] = field(default_factory=list)
+
+    # Transition metadata (set before each callback)
+    transition_reason: str = ""
+    previous_state: str | None = None
 
     # Door seal state
     sealed: bool = False

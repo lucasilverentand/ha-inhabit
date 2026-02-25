@@ -14,7 +14,7 @@ from homeassistant.helpers.event import (
     async_track_state_change_event,
 )
 
-from ..const import OccupancyState
+from ..const import EVENT_CHECKING_RESOLVED, EVENT_CHECKING_STARTED, OccupancyState
 from ..models.virtual_sensor import OccupancyStateData, VirtualSensorConfig
 from .adaptive_timeout import AdaptiveTimeoutManager, TimeOfDayProfile
 from .presence_aggregator import PresenceAggregator
@@ -265,7 +265,7 @@ class OccupancyStateMachine:
             new_state,
             reason,
         )
-        self._notify_state_change()
+        self._notify_state_change(reason, old_state)
 
     # ------------------------------------------------------------------
     # Spatial presence (mmWave)
@@ -652,6 +652,17 @@ class OccupancyStateMachine:
         self._state.confidence = self._calculate_confidence()
         self._occupied_since = datetime.now()
 
+        # Fire checking_resolved event when re-occupying from CHECKING
+        if old_state == OccupancyState.CHECKING:
+            self.hass.bus.async_fire(
+                EVENT_CHECKING_RESOLVED,
+                {
+                    "room_id": self.config.room_id,
+                    "floor_plan_id": self.config.floor_plan_id,
+                    "result": "occupied",
+                },
+            )
+
         # Evaluate seal on entering OCCUPIED
         self._evaluate_seal(reason)
 
@@ -664,23 +675,35 @@ class OccupancyStateMachine:
             self._state.confidence,
             self._seal_tracker.probability,
         )
-        self._notify_state_change()
+        self._notify_state_change(reason, old_state)
 
     def _transition_to_checking(self, reason: str) -> None:
         """Transition to CHECKING state."""
         if self._state.state != OccupancyState.OCCUPIED:
             return
 
+        old_state = self._state.state
         self._state.state = OccupancyState.CHECKING
         self._state.checking_started_at = datetime.now()
         self._start_checking_timer()
+
+        effective_timeout = self.config.checking_timeout
+        self.hass.bus.async_fire(
+            EVENT_CHECKING_STARTED,
+            {
+                "room_id": self.config.room_id,
+                "floor_plan_id": self.config.floor_plan_id,
+                "reason": reason,
+                "checking_timeout": effective_timeout,
+            },
+        )
 
         _LOGGER.info(
             "Room %s: OCCUPIED → CHECKING (%s)",
             self.config.room_id,
             reason,
         )
-        self._notify_state_change()
+        self._notify_state_change(reason, old_state)
 
     def _transition_to_vacant(self, reason: str) -> None:
         """Transition to VACANT state."""
@@ -732,13 +755,24 @@ class OccupancyStateMachine:
         self._state.sealed_since = None
         self._occupied_since = None
 
+        # Fire checking_resolved event when going vacant from CHECKING
+        if old_state == OccupancyState.CHECKING:
+            self.hass.bus.async_fire(
+                EVENT_CHECKING_RESOLVED,
+                {
+                    "room_id": self.config.room_id,
+                    "floor_plan_id": self.config.floor_plan_id,
+                    "result": "vacant",
+                },
+            )
+
         _LOGGER.info(
             "Room %s: %s → VACANT (%s)",
             self.config.room_id,
             old_state,
             reason,
         )
-        self._notify_state_change()
+        self._notify_state_change(reason, old_state)
 
     def _check_all_sensors_clear(self) -> None:
         """Check if all sensors are clear and handle the transition.
@@ -950,11 +984,15 @@ class OccupancyStateMachine:
         # Blend: aggregator is primary, reliability adjusts it
         return max(aggregator_probability, reliability_confidence)
 
-    def _notify_state_change(self) -> None:
+    def _notify_state_change(
+        self, reason: str = "", previous_state: str | None = None
+    ) -> None:
         """Notify listeners of state change."""
         # Update sensor reliability data in state
         self._state.sensor_reliability = {
             entity_id: self._reliability_tracker.get_reliability(entity_id)
             for entity_id in self._state.contributing_sensors
         }
+        self._state.transition_reason = reason
+        self._state.previous_state = previous_state
         self._on_state_change(self._state)

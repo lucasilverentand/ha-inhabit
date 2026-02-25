@@ -124,6 +124,7 @@ def async_register_websocket_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_rules_update)
     websocket_api.async_register_command(hass, ws_rules_delete)
     websocket_api.async_register_command(hass, ws_occupancy_states)
+    websocket_api.async_register_command(hass, ws_occupancy_history)
     websocket_api.async_register_command(hass, ws_mmwave_place)
     websocket_api.async_register_command(hass, ws_mmwave_update)
     websocket_api.async_register_command(hass, ws_mmwave_delete)
@@ -2592,6 +2593,30 @@ def ws_occupancy_states(
     connection.send_result(
         msg["id"],
         {room_id: state.to_dict() for room_id, state in states.items()},
+    )
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{WS_PREFIX}/occupancy_history",
+        vol.Optional("room_id"): str,
+        vol.Optional("limit", default=100): int,
+    }
+)
+@callback
+def ws_occupancy_history(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Get occupancy history, optionally filtered by room_id."""
+    sensor_engine = hass.data[DOMAIN]["sensor_engine"]
+    room_id = msg.get("room_id")
+    limit = msg.get("limit", 100)
+    history = sensor_engine.get_occupancy_history(room_id=room_id, limit=limit)
+    connection.send_result(
+        msg["id"],
+        {"history": [e.to_dict() for e in history]},
     )
 
 
