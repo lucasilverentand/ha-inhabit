@@ -50,6 +50,16 @@ class PresenceAggregator:
         self.motion_decay_seconds = motion_decay_seconds
         self.presence_decay_seconds = presence_decay_seconds
         self._readings: dict[str, SensorReading] = {}
+        self._prior: float = 0.5  # Default prior (no bias)
+        self._prior_weight: float = 0.15  # Weight of prior in blending
+
+    def set_prior(self, value: float) -> None:
+        """Set the occupancy prior probability (0.0 to 1.0).
+
+        The prior is blended into get_presence_probability():
+            result = sensor_prob * (1 - prior_weight) + prior * prior_weight
+        """
+        self._prior = max(0.0, min(1.0, value))
 
     def update_reading(
         self,
@@ -99,9 +109,12 @@ class PresenceAggregator:
                 active_weight += effective_weight
 
         if total_weight == 0:
-            return 0.0
+            sensor_prob = 0.0
+        else:
+            sensor_prob = active_weight / total_weight
 
-        return active_weight / total_weight
+        # Blend with prior
+        return sensor_prob * (1 - self._prior_weight) + self._prior * self._prior_weight
 
     def get_active_sensors(self) -> list[str]:
         """Get list of currently active sensor entity IDs."""

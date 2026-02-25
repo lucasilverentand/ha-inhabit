@@ -73,6 +73,9 @@ class OccupancyStateData:
     # Sensor reliability scores (entity_id -> 0.0-1.0 reliability)
     sensor_reliability: dict[str, float] = field(default_factory=dict)
 
+    # Per-sensor diagnostics (entity_id -> diagnostic record dict)
+    sensor_diagnostics: dict[str, dict] = field(default_factory=dict)
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return {
@@ -103,6 +106,7 @@ class OccupancyStateData:
             "seal_probability": self.seal_probability,
             "door_states_at_detection": self.door_states_at_detection,
             "sensor_reliability": self.sensor_reliability,
+            "sensor_diagnostics": self.sensor_diagnostics,
         }
 
     @classmethod
@@ -146,6 +150,7 @@ class OccupancyStateData:
             seal_probability=float(data.get("seal_probability", 0.0)),
             door_states_at_detection=data.get("door_states_at_detection", {}),
             sensor_reliability=data.get("sensor_reliability", {}),
+            sensor_diagnostics=data.get("sensor_diagnostics", {}),
         )
 
 
@@ -195,6 +200,7 @@ class VirtualSensorConfig:
     motion_sensors: list[SensorBinding] = field(default_factory=list)
     presence_sensors: list[SensorBinding] = field(default_factory=list)
     door_sensors: list[SensorBinding] = field(default_factory=list)
+    hint_sensors: list[SensorBinding] = field(default_factory=list)
 
     # Spatial presence detection
     presence_affects: bool = False  # Spatial presence targets affect this room/zone
@@ -266,6 +272,7 @@ class VirtualSensorConfig:
             "motion_sensors": [s.to_dict() for s in self.motion_sensors],
             "presence_sensors": [s.to_dict() for s in self.presence_sensors],
             "door_sensors": [s.to_dict() for s in self.door_sensors],
+            "hint_sensors": [s.to_dict() for s in self.hint_sensors],
             "exit_sensors": [s.to_dict() for s in self.exit_sensors],
             "hold_until_exit": self.hold_until_exit,
             "occupies_parent": self.occupies_parent,
@@ -309,6 +316,9 @@ class VirtualSensorConfig:
             ],
             door_sensors=[
                 SensorBinding.from_dict(s) for s in data.get("door_sensors", [])
+            ],
+            hint_sensors=[
+                SensorBinding.from_dict(s) for s in data.get("hint_sensors", [])
             ],
             exit_sensors=[
                 SensorBinding.from_dict(s) for s in data.get("exit_sensors", [])

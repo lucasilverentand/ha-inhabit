@@ -372,7 +372,7 @@ class TestTemporalDecay:
     def test_decayed_reading_has_low_probability(
         self, mock_hass, config_with_presence, state_changes
     ):
-        """After the full decay period, the reading is ignored."""
+        """After the full decay period, the reading contributes nothing (only prior remains)."""
         machine, changes = _make_machine(mock_hass, config_with_presence, state_changes)
 
         # Manually create an old reading (older than motion_decay_seconds=120)
@@ -388,8 +388,9 @@ class TestTemporalDecay:
         )
 
         probability = machine._aggregator.get_presence_probability()
-        # Reading is older than decay_seconds (120s), so it's fully decayed
-        assert probability == 0.0
+        # Reading is older than decay_seconds (120s), so sensor_prob = 0.0
+        # But prior blends in: 0.0 * 0.85 + 0.5 * 0.15 = 0.075
+        assert probability == pytest.approx(0.075)
 
     def test_half_decayed_reading_has_reduced_probability(
         self, mock_hass, config_with_presence, state_changes
@@ -463,7 +464,8 @@ class TestAggregatorCleanup:
         await machine.async_stop()
 
         assert len(machine._aggregator._readings) == 0
-        assert machine._aggregator.get_presence_probability() == 0.0
+        # With no readings, only the prior contributes (default 0.5 * 0.15 = 0.075)
+        assert machine._aggregator.get_presence_probability() == pytest.approx(0.075)
 
     @pytest.mark.asyncio
     async def test_aggregator_cleared_after_start_stop_cycle(
@@ -516,11 +518,12 @@ class TestAggregatorInitialization:
 class TestConfidenceFromAggregator:
     """Test that confidence is now derived from the aggregator."""
 
-    def test_confidence_zero_with_no_readings(self, mock_hass, config_with_presence, state_changes):
-        """Confidence is 0.0 when aggregator has no readings."""
+    def test_confidence_low_with_no_readings(self, mock_hass, config_with_presence, state_changes):
+        """Confidence is low (prior only) when aggregator has no readings."""
         machine, changes = _make_machine(mock_hass, config_with_presence, state_changes)
 
-        assert machine._calculate_confidence() == 0.0
+        # With no readings, only the prior contributes: 0.5 * 0.15 = 0.075
+        assert machine._calculate_confidence() == pytest.approx(0.075)
 
     def test_confidence_matches_aggregator_probability(
         self, mock_hass, config_with_presence, state_changes

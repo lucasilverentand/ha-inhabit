@@ -19,7 +19,8 @@ from ..models.virtual_sensor import OccupancyStateData, VirtualSensorConfig
 from .adaptive_timeout import AdaptiveTimeoutManager, TimeOfDayProfile
 from .presence_aggregator import PresenceAggregator
 from .seal_probability import SealProbabilityTracker
-from .sensor_reliability import SensorReliabilityTracker
+from .sensor_reliability import SensorCorrelationTracker, SensorReliabilityTracker
+from .soft_hint_processor import MAX_HINT_WEIGHT, SoftHintProcessor
 
 if TYPE_CHECKING:
     from homeassistant.core import Event
@@ -121,6 +122,9 @@ class OccupancyStateMachine:
         # Sensor reliability tracker
         self._reliability_tracker = SensorReliabilityTracker()
 
+        # Sensor correlation tracker (co-fires vs solo-fires)
+        self._correlation_tracker = SensorCorrelationTracker()
+
     @property
     def state(self) -> OccupancyStateData:
         """Get current state data."""
@@ -148,6 +152,11 @@ class OccupancyStateMachine:
     def reliability_tracker(self) -> SensorReliabilityTracker:
         """Get the sensor reliability tracker."""
         return self._reliability_tracker
+
+    @property
+    def correlation_tracker(self) -> SensorCorrelationTracker:
+        """Get the sensor correlation tracker."""
+        return self._correlation_tracker
 
     @property
     def checking_timeout_bump(self) -> int:
@@ -202,6 +211,15 @@ class OccupancyStateMachine:
                 self.hass,
                 binding.entity_id,
                 self._handle_exit_sensor_event,
+            )
+            self._unsub_state_listeners.append(unsub)
+
+        # Subscribe to hint sensors (soft signals)
+        for binding in self.config.hint_sensors:
+            unsub = async_track_state_change_event(
+                self.hass,
+                binding.entity_id,
+                self._handle_hint_event,
             )
             self._unsub_state_listeners.append(unsub)
 
@@ -369,11 +387,13 @@ class OccupancyStateMachine:
         # Feed the reliability tracker
         if is_active:
             self._reliability_tracker.on_sensor_activation(entity_id)
+            self._correlation_tracker.on_sensor_activation(entity_id)
         else:
             self._reliability_tracker.on_sensor_deactivation(entity_id)
 
         if is_active:
             self._state.last_motion_at = datetime.now()
+            self._sensor_last_triggered[entity_id] = datetime.now()
             self._update_contributing_sensors(entity_id, add=True)
             self._transition_to_occupied(f"motion from {entity_id}")
         else:
@@ -408,6 +428,7 @@ class OccupancyStateMachine:
 
         if is_active:
             self._state.last_presence_at = datetime.now()
+            self._sensor_last_triggered[entity_id] = datetime.now()
             self._update_contributing_sensors(entity_id, add=True)
             self._transition_to_occupied(f"presence from {entity_id}")
         else:
@@ -558,6 +579,92 @@ class OccupancyStateMachine:
             new,
         )
         self.set_state(new, f"override trigger {entity_id} ({action})")
+
+    @callback
+    def _handle_hint_event(self, event: Event) -> None:
+        """Handle a soft hint sensor state change.
+
+        Hints feed into the aggregator with capped weight. They can sustain
+        or boost confidence in an already-occupied room but CANNOT trigger
+        a transition to OCCUPIED on their own.
+        """
+        new_state: State | None = event.data.get("new_state")
+        if not new_state:
+            return
+
+        entity_id = event.data.get("entity_id", "")
+        binding = self._get_hint_binding(entity_id)
+        if not binding:
+            return
+
+        weight = self._compute_hint_weight(new_state, binding)
+
+        is_active = weight > 0.0
+        _LOGGER.debug(
+            "Room %s hint event: %s = %s (weight=%.3f, active=%s)",
+            self.config.room_id,
+            entity_id,
+            new_state.state,
+            weight,
+            is_active,
+        )
+
+        # Feed into aggregator with "hint" type — capped weight
+        self._aggregator.update_reading(
+            entity_id, is_active, "hint", min(weight, MAX_HINT_WEIGHT)
+        )
+
+        # Hints can sustain occupancy but never trigger it alone.
+        # If already occupied, re-evaluate confidence.
+        if self._state.state == OccupancyState.OCCUPIED:
+            self._state.confidence = self._calculate_confidence()
+
+    def _compute_hint_weight(self, state: State, binding: Any) -> float:
+        """Compute the hint weight from a sensor state.
+
+        The sensor_type on the binding determines which processor to use:
+        - 'light': process_light_state
+        - 'power': process_power_level
+        - 'co2': process_co2
+        - 'sound': process_sound_level
+        - default: simple on/off with binding.weight capped at MAX_HINT_WEIGHT
+        """
+        sensor_type = binding.sensor_type
+
+        if sensor_type == "light":
+            brightness = state.attributes.get("brightness") if hasattr(state, "attributes") else None
+            return SoftHintProcessor.process_light_state(state.state, brightness)
+        elif sensor_type == "power":
+            try:
+                power = float(state.state)
+            except (ValueError, TypeError):
+                return 0.0
+            return SoftHintProcessor.process_power_level(power)
+        elif sensor_type == "co2":
+            try:
+                co2 = float(state.state)
+            except (ValueError, TypeError):
+                return 0.0
+            return SoftHintProcessor.process_co2(co2)
+        elif sensor_type == "sound":
+            try:
+                db = float(state.state)
+            except (ValueError, TypeError):
+                return 0.0
+            return SoftHintProcessor.process_sound_level(db)
+        else:
+            # Generic on/off hint
+            is_on = state.state in (STATE_ON, "on", "detected", "open", "true", "1")
+            if binding.inverted:
+                is_on = not is_on
+            return min(binding.weight, MAX_HINT_WEIGHT) if is_on else 0.0
+
+    def _get_hint_binding(self, entity_id: str) -> Any:
+        """Get hint sensor binding by entity ID."""
+        for binding in self.config.hint_sensors:
+            if binding.entity_id == entity_id:
+                return binding
+        return None
 
     # ------------------------------------------------------------------
     # Door seal logic
@@ -986,6 +1093,13 @@ class OccupancyStateMachine:
             effective_weight = self._reliability_tracker.get_effective_weight(
                 binding.entity_id, binding.weight
             )
+            # Penalize sensors with high solo-fire rate (discount by up to 50%)
+            solo_rate = self._correlation_tracker.get_solo_fire_rate(
+                binding.entity_id
+            )
+            correlation_factor = 1.0 - (solo_rate * 0.5)
+            effective_weight *= correlation_factor
+
             total_weight += effective_weight
             if binding.entity_id in self._state.contributing_sensors:
                 active_weight += effective_weight
@@ -998,6 +1112,71 @@ class OccupancyStateMachine:
         # Blend: aggregator is primary, reliability adjusts it
         return max(aggregator_probability, reliability_confidence)
 
+    def _build_sensor_diagnostics(self) -> dict[str, dict]:
+        """Build per-sensor diagnostic records.
+
+        Returns a dict mapping entity_id to a diagnostic record with fields:
+        - active: bool
+        - base_weight: float
+        - effective_weight: float
+        - reliability: float
+        - sensor_type: str
+        - last_triggered: str | None (ISO timestamp)
+        """
+        diagnostics: dict[str, dict] = {}
+
+        for binding in self.config.motion_sensors:
+            eid = binding.entity_id
+            is_active = eid in self._state.contributing_sensors
+            reliability = self._reliability_tracker.get_reliability(eid)
+            effective_weight = self._reliability_tracker.get_effective_weight(
+                eid, binding.weight
+            )
+            last_triggered = self._sensor_last_triggered.get(eid)
+            diagnostics[eid] = {
+                "active": is_active,
+                "base_weight": binding.weight,
+                "effective_weight": effective_weight,
+                "reliability": reliability,
+                "sensor_type": "motion",
+                "last_triggered": (
+                    last_triggered.isoformat() if last_triggered else None
+                ),
+            }
+
+        for binding in self.config.presence_sensors:
+            eid = binding.entity_id
+            is_active = eid in self._state.contributing_sensors
+            reliability = self._reliability_tracker.get_reliability(eid)
+            effective_weight = self._reliability_tracker.get_effective_weight(
+                eid, binding.weight
+            )
+            last_triggered = self._sensor_last_triggered.get(eid)
+            diagnostics[eid] = {
+                "active": is_active,
+                "base_weight": binding.weight,
+                "effective_weight": effective_weight,
+                "reliability": reliability,
+                "sensor_type": "presence",
+                "last_triggered": (
+                    last_triggered.isoformat() if last_triggered else None
+                ),
+            }
+
+        for binding in self.config.hint_sensors:
+            eid = binding.entity_id
+            is_active = eid in self._state.contributing_sensors
+            diagnostics[eid] = {
+                "active": is_active,
+                "base_weight": binding.weight,
+                "effective_weight": min(binding.weight, MAX_HINT_WEIGHT),
+                "reliability": 1.0,
+                "sensor_type": "hint",
+                "last_triggered": None,
+            }
+
+        return diagnostics
+
     def _notify_state_change(
         self, reason: str = "", previous_state: str | None = None
     ) -> None:
@@ -1007,6 +1186,8 @@ class OccupancyStateMachine:
             entity_id: self._reliability_tracker.get_reliability(entity_id)
             for entity_id in self._state.contributing_sensors
         }
+        # Update per-sensor diagnostics
+        self._state.sensor_diagnostics = self._build_sensor_diagnostics()
         self._state.transition_reason = reason
         self._state.previous_state = previous_state
         self._on_state_change(self._state, reason)

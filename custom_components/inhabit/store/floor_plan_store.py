@@ -750,6 +750,17 @@ class FloorPlanStore:
         self._data["feedback_data"] = data
         self.async_delay_save()
 
+    # ==================== Pattern Priors ====================
+
+    def get_pattern_priors(self) -> dict[str, dict]:
+        """Get persisted pattern prior data."""
+        return dict(self._data.get("pattern_priors", {}))
+
+    def save_pattern_priors(self, data: dict[str, dict]) -> None:
+        """Save pattern prior data."""
+        self._data["pattern_priors"] = data
+        self.async_delay_save()
+
     # ==================== Utilities ====================
 
     def _generate_id(self) -> str:

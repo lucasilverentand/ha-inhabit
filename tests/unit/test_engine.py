@@ -399,7 +399,7 @@ class TestOccupancyStateMachineScenarios:
         )
 
         machine = OccupancyStateMachine(mock_hass, basic_config, lambda x, r="": None)
-        assert machine._calculate_confidence() == 0.0
+        assert machine._calculate_confidence() == pytest.approx(0.075)
 
     def test_confidence_with_sensors(self, mock_hass, basic_config):
         """Test confidence with contributing sensors (via aggregator)."""

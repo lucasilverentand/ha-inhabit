@@ -170,9 +170,10 @@ class TestPresenceAggregator:
         assert len(aggregator._readings) == 0
 
     def test_get_presence_probability_no_readings(self, aggregator):
-        """Test probability with no readings."""
+        """Test probability with no readings returns prior-blended baseline."""
         probability = aggregator.get_presence_probability()
-        assert probability == 0.0
+        # Default prior (0.5) * prior_weight (0.15) = 0.075
+        assert probability == pytest.approx(0.075)
 
     def test_get_presence_probability_all_active(self, aggregator):
         """Test probability with all sensors active."""
@@ -184,12 +185,13 @@ class TestPresenceAggregator:
         assert probability > 0.9
 
     def test_get_presence_probability_none_active(self, aggregator):
-        """Test probability with no sensors active."""
+        """Test probability with no sensors active returns prior-blended baseline."""
         aggregator.update_reading("binary_sensor.motion1", False, "motion", 1.0)
         aggregator.update_reading("binary_sensor.motion2", False, "motion", 1.0)
 
         probability = aggregator.get_presence_probability()
-        assert probability == 0.0
+        # sensor_prob = 0.0, default prior (0.5) * prior_weight (0.15) = 0.075
+        assert probability == pytest.approx(0.075)
 
     def test_get_presence_probability_half_active(self, aggregator):
         """Test probability with half sensors active."""

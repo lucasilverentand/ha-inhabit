@@ -67,6 +67,7 @@ ATTR_SEALED: Final = "sealed"
 ATTR_SEALED_SINCE: Final = "sealed_since"
 ATTR_SEAL_PROBABILITY: Final = "seal_probability"
 ATTR_HOUSE_SEALED: Final = "house_sealed"
+ATTR_SENSOR_DIAGNOSTICS: Final = "sensor_diagnostics"
 
 # Events
 EVENT_CHECKING_STARTED: Final = f"{DOMAIN}_checking_started"

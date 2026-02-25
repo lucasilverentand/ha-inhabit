@@ -243,8 +243,8 @@ class TestOccupancyStateMachineWithMocks:
         changes, on_change = state_changes
         machine = OccupancyStateMachine(mock_hass, basic_config, on_change)
 
-        # No aggregator readings
-        assert machine._calculate_confidence() == 0.0
+        # No aggregator readings — only prior contributes (0.5 * 0.15 = 0.075)
+        assert machine._calculate_confidence() == pytest.approx(0.075)
 
         # Add an active reading to the aggregator
         machine._aggregator.update_reading(

@@ -119,6 +119,148 @@ class RoomAdjustmentState:
         )
 
 
+@dataclass
+class ThresholdState:
+    """Per-room auto-tuned thresholds.
+
+    Thresholds are adjusted based on false positive / false negative
+    rates observed over time. Tuning only kicks in after a minimum
+    of 20 transitions to avoid premature adjustments.
+    """
+
+    room_id: str
+    occupied_threshold: float = 0.5
+    vacant_threshold: float = 0.1
+    false_positive_count: int = 0  # system said OCCUPIED, wrong
+    false_negative_count: int = 0  # system said VACANT, wrong
+    total_transitions: int = 0
+
+    @property
+    def false_positive_rate(self) -> float:
+        if self.total_transitions == 0:
+            return 0.0
+        return self.false_positive_count / self.total_transitions
+
+    @property
+    def false_negative_rate(self) -> float:
+        if self.total_transitions == 0:
+            return 0.0
+        return self.false_negative_count / self.total_transitions
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "room_id": self.room_id,
+            "occupied_threshold": self.occupied_threshold,
+            "vacant_threshold": self.vacant_threshold,
+            "false_positive_count": self.false_positive_count,
+            "false_negative_count": self.false_negative_count,
+            "total_transitions": self.total_transitions,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> ThresholdState:
+        return cls(
+            room_id=data.get("room_id", ""),
+            occupied_threshold=float(data.get("occupied_threshold", 0.5)),
+            vacant_threshold=float(data.get("vacant_threshold", 0.1)),
+            false_positive_count=int(data.get("false_positive_count", 0)),
+            false_negative_count=int(data.get("false_negative_count", 0)),
+            total_transitions=int(data.get("total_transitions", 0)),
+        )
+
+
+# Threshold tuning constants
+THRESHOLD_TUNING_MIN_TRANSITIONS = 20
+THRESHOLD_OCCUPIED_STEP = 0.02
+THRESHOLD_VACANT_STEP = 0.02
+
+# Seal accuracy tuning constants
+SEAL_ACCURACY_MIN_EVENTS = 10  # Minimum events before adjusting half-life
+SEAL_HALF_LIFE_ADJUST_FACTOR = 0.1  # 10% adjustment per tuning call
+
+
+@dataclass
+class SealAccuracyTracker:
+    """Tracks seal accuracy outcomes per room.
+
+    false_seal: The room was sealed but the user overrode to VACANT
+        (the seal kept someone falsely trapped as OCCUPIED).
+    false_break: The seal was broken and the room went VACANT, but
+        the user overrode back to OCCUPIED shortly after (the occupant
+        was still inside -- the seal should have held).
+    correct_seal: The seal correctly held occupancy (seal expired or
+        door opened and room naturally went vacant without override).
+    correct_break: The seal was correctly broken and the room went
+        vacant as expected.
+    """
+
+    room_id: str
+    false_seal_count: int = 0
+    false_break_count: int = 0
+    correct_seal_count: int = 0
+    correct_break_count: int = 0
+    adjusted_half_life: float | None = None  # None means use default
+
+    @property
+    def total_events(self) -> int:
+        """Total number of seal-related events."""
+        return (
+            self.false_seal_count
+            + self.false_break_count
+            + self.correct_seal_count
+            + self.correct_break_count
+        )
+
+    @property
+    def seal_accuracy(self) -> float:
+        """0.0-1.0 accuracy of seal decisions. New rooms return 1.0."""
+        if self.total_events == 0:
+            return 1.0
+        correct = self.correct_seal_count + self.correct_break_count
+        return correct / self.total_events
+
+    @property
+    def false_seal_rate(self) -> float:
+        """Rate of false seals (seal held when it shouldn't have)."""
+        if self.total_events == 0:
+            return 0.0
+        return self.false_seal_count / self.total_events
+
+    @property
+    def false_break_rate(self) -> float:
+        """Rate of false breaks (seal broken when it should have held)."""
+        if self.total_events == 0:
+            return 0.0
+        return self.false_break_count / self.total_events
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary."""
+        return {
+            "room_id": self.room_id,
+            "false_seal_count": self.false_seal_count,
+            "false_break_count": self.false_break_count,
+            "correct_seal_count": self.correct_seal_count,
+            "correct_break_count": self.correct_break_count,
+            "adjusted_half_life": self.adjusted_half_life,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> SealAccuracyTracker:
+        """Create from dictionary."""
+        return cls(
+            room_id=data.get("room_id", ""),
+            false_seal_count=int(data.get("false_seal_count", 0)),
+            false_break_count=int(data.get("false_break_count", 0)),
+            correct_seal_count=int(data.get("correct_seal_count", 0)),
+            correct_break_count=int(data.get("correct_break_count", 0)),
+            adjusted_half_life=(
+                float(data["adjusted_half_life"])
+                if data.get("adjusted_half_life") is not None
+                else None
+            ),
+        )
+
+
 class FeedbackController:
     """Central learning coordinator that records overrides and auto-tunes parameters.
 
@@ -138,6 +280,8 @@ class FeedbackController:
         self._hass = hass
         self._override_history: dict[str, deque[OverrideEvent]] = {}
         self._adjustment_states: dict[str, RoomAdjustmentState] = {}
+        self._threshold_states: dict[str, ThresholdState] = {}
+        self._seal_accuracy: dict[str, SealAccuracyTracker] = {}
 
     def record_override(
         self,
@@ -188,6 +332,22 @@ class FeedbackController:
             state.false_vacancy_count += 1
 
         self._apply_adjustments(event)
+
+        # Update threshold tuning state
+        ts = self._get_or_create_threshold_state(room_id)
+        if override_type == "false_occupancy":
+            ts.false_positive_count += 1
+        else:
+            ts.false_negative_count += 1
+        self.tune_thresholds(room_id)
+
+        # Update seal accuracy tracking
+        if override_type == "false_occupancy" and seal_probability > 0.0:
+            # Room was sealed and user overrode to VACANT -> false seal
+            self.record_seal_override(room_id)
+        elif override_type == "false_vacancy":
+            # Room went VACANT but user says OCCUPIED -> possible false break
+            self.record_seal_break_reoccupancy(room_id)
 
         # Fire event for external observability
         self._hass.bus.async_fire(
@@ -322,6 +482,194 @@ class FeedbackController:
         return self._adjustment_states[room_id]
 
     # ------------------------------------------------------------------
+    # Threshold auto-tuning
+    # ------------------------------------------------------------------
+
+    def _get_or_create_threshold_state(self, room_id: str) -> ThresholdState:
+        """Get or create a threshold state for a room."""
+        if room_id not in self._threshold_states:
+            self._threshold_states[room_id] = ThresholdState(room_id=room_id)
+        return self._threshold_states[room_id]
+
+    def get_threshold_state(self, room_id: str) -> ThresholdState | None:
+        """Get the current threshold state for a room."""
+        return self._threshold_states.get(room_id)
+
+    def record_transition(self, room_id: str) -> None:
+        """Record a normal transition for threshold tuning stats."""
+        ts = self._get_or_create_threshold_state(room_id)
+        ts.total_transitions += 1
+
+    def tune_thresholds(self, room_id: str) -> None:
+        """Auto-tune occupied/vacant thresholds based on override history.
+
+        Called after overrides or false vacancy detections.
+
+        - High false positive rate -> raise occupied_threshold (+0.02 per event)
+        - High false negative rate -> lower vacant_threshold (-0.02 per event)
+        - Minimum 20 transitions before tuning kicks in
+        - Thresholds clamped to safe bounds
+        """
+        ts = self._get_or_create_threshold_state(room_id)
+
+        if ts.total_transitions < THRESHOLD_TUNING_MIN_TRANSITIONS:
+            _LOGGER.debug(
+                "Room %s: threshold tuning skipped (%d transitions < %d min)",
+                room_id,
+                ts.total_transitions,
+                THRESHOLD_TUNING_MIN_TRANSITIONS,
+            )
+            return
+
+        # High false positive rate -> raise occupied_threshold
+        if ts.false_positive_count > 0:
+            ts.occupied_threshold = min(
+                MAX_OCCUPIED_THRESHOLD,
+                ts.occupied_threshold + THRESHOLD_OCCUPIED_STEP,
+            )
+            _LOGGER.debug(
+                "Room %s: raised occupied_threshold to %.3f (FP rate: %.3f)",
+                room_id,
+                ts.occupied_threshold,
+                ts.false_positive_rate,
+            )
+
+        # High false negative rate -> lower vacant_threshold
+        if ts.false_negative_count > 0:
+            ts.vacant_threshold = max(
+                MIN_VACANT_THRESHOLD,
+                ts.vacant_threshold - THRESHOLD_VACANT_STEP,
+            )
+            _LOGGER.debug(
+                "Room %s: lowered vacant_threshold to %.3f (FN rate: %.3f)",
+                room_id,
+                ts.vacant_threshold,
+                ts.false_negative_rate,
+            )
+
+    # ------------------------------------------------------------------
+    # Seal accuracy learning
+    # ------------------------------------------------------------------
+
+    def _get_or_create_seal_accuracy(self, room_id: str) -> SealAccuracyTracker:
+        """Get or create a seal accuracy tracker for a room."""
+        if room_id not in self._seal_accuracy:
+            self._seal_accuracy[room_id] = SealAccuracyTracker(room_id=room_id)
+        return self._seal_accuracy[room_id]
+
+    def record_seal_override(self, room_id: str) -> None:
+        """Record a false seal event (seal held but user says VACANT).
+
+        This means the seal was too aggressive -- the half-life should
+        be shortened so the seal decays faster.
+        """
+        tracker = self._get_or_create_seal_accuracy(room_id)
+        tracker.false_seal_count += 1
+        self._tune_seal_half_life(room_id)
+        _LOGGER.info(
+            "Room %s: false seal recorded (total: %d)",
+            room_id,
+            tracker.false_seal_count,
+        )
+
+    def record_seal_break_reoccupancy(self, room_id: str) -> None:
+        """Record a false break event (seal broke but person was still inside).
+
+        This means the seal broke too easily -- the half-life should
+        be lengthened so the seal decays more slowly.
+        """
+        tracker = self._get_or_create_seal_accuracy(room_id)
+        tracker.false_break_count += 1
+        self._tune_seal_half_life(room_id)
+        _LOGGER.info(
+            "Room %s: false break recorded (total: %d)",
+            room_id,
+            tracker.false_break_count,
+        )
+
+    def record_seal_correct(self, room_id: str, was_sealed: bool) -> None:
+        """Record a correct seal outcome.
+
+        Args:
+            room_id: Room identifier.
+            was_sealed: True if the room was sealed (correct_seal),
+                        False if the seal was correctly broken (correct_break).
+        """
+        tracker = self._get_or_create_seal_accuracy(room_id)
+        if was_sealed:
+            tracker.correct_seal_count += 1
+        else:
+            tracker.correct_break_count += 1
+
+    def get_seal_accuracy(self, room_id: str) -> SealAccuracyTracker | None:
+        """Get the seal accuracy tracker for a room."""
+        return self._seal_accuracy.get(room_id)
+
+    def get_adjusted_seal_half_life(
+        self, room_id: str, base_half_life: float
+    ) -> float:
+        """Get the adjusted seal half-life for a room.
+
+        Returns the learned half-life if available, otherwise base_half_life.
+        Always clamped to [MIN_SEAL_HALF_LIFE, MAX_SEAL_HALF_LIFE].
+        """
+        tracker = self._seal_accuracy.get(room_id)
+        if tracker and tracker.adjusted_half_life is not None:
+            return max(
+                MIN_SEAL_HALF_LIFE,
+                min(MAX_SEAL_HALF_LIFE, tracker.adjusted_half_life),
+            )
+        return max(
+            MIN_SEAL_HALF_LIFE,
+            min(MAX_SEAL_HALF_LIFE, base_half_life),
+        )
+
+    def _tune_seal_half_life(self, room_id: str) -> None:
+        """Auto-tune the seal half-life based on false seal/break rates.
+
+        - High false_seal_rate -> shorten half-life (seal decays faster)
+        - High false_break_rate -> lengthen half-life (seal holds longer)
+        - Minimum SEAL_ACCURACY_MIN_EVENTS before tuning kicks in
+        - Half-life clamped to [MIN_SEAL_HALF_LIFE, MAX_SEAL_HALF_LIFE]
+        """
+        tracker = self._get_or_create_seal_accuracy(room_id)
+
+        if tracker.total_events < SEAL_ACCURACY_MIN_EVENTS:
+            _LOGGER.debug(
+                "Room %s: seal tuning skipped (%d events < %d min)",
+                room_id,
+                tracker.total_events,
+                SEAL_ACCURACY_MIN_EVENTS,
+            )
+            return
+
+        # Start from current adjusted value or default (3600s = 1 hour)
+        current = tracker.adjusted_half_life if tracker.adjusted_half_life is not None else 3600.0
+
+        if tracker.false_seal_count > tracker.false_break_count:
+            # Too many false seals -> shorten half-life
+            current *= (1.0 - SEAL_HALF_LIFE_ADJUST_FACTOR)
+        elif tracker.false_break_count > tracker.false_seal_count:
+            # Too many false breaks -> lengthen half-life
+            current *= (1.0 + SEAL_HALF_LIFE_ADJUST_FACTOR)
+
+        # Clamp to bounds
+        tracker.adjusted_half_life = max(
+            float(MIN_SEAL_HALF_LIFE),
+            min(float(MAX_SEAL_HALF_LIFE), current),
+        )
+
+        _LOGGER.info(
+            "Room %s: seal half-life tuned to %.0fs (accuracy=%.2f, "
+            "false_seal=%d, false_break=%d)",
+            room_id,
+            tracker.adjusted_half_life,
+            tracker.seal_accuracy,
+            tracker.false_seal_count,
+            tracker.false_break_count,
+        )
+
+    # ------------------------------------------------------------------
     # Persistence
     # ------------------------------------------------------------------
 
@@ -336,6 +684,14 @@ class FeedbackController:
                 room_id: state.to_dict()
                 for room_id, state in self._adjustment_states.items()
             },
+            "threshold_states": {
+                room_id: state.to_dict()
+                for room_id, state in self._threshold_states.items()
+            },
+            "seal_accuracy": {
+                room_id: tracker.to_dict()
+                for room_id, tracker in self._seal_accuracy.items()
+            },
         }
 
     def load_data(self, data: dict[str, Any]) -> None:
@@ -347,4 +703,12 @@ class FeedbackController:
         for room_id, state_data in data.get("adjustment_states", {}).items():
             self._adjustment_states[room_id] = RoomAdjustmentState.from_dict(
                 state_data
+            )
+        for room_id, state_data in data.get("threshold_states", {}).items():
+            self._threshold_states[room_id] = ThresholdState.from_dict(
+                state_data
+            )
+        for room_id, tracker_data in data.get("seal_accuracy", {}).items():
+            self._seal_accuracy[room_id] = SealAccuracyTracker.from_dict(
+                tracker_data
             )

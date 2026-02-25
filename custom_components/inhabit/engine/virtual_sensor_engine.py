@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from collections import deque
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import (
@@ -20,9 +20,11 @@ from ..models.virtual_sensor import (
     VirtualSensorConfig,
 )
 from .false_vacancy_detector import FalseVacancyDetector
+from .pattern_prior import OccupancyPatternPrior
 from .feedback_controller import FeedbackController
 from .house_occupancy_guard import HouseOccupancyGuard
 from .mmwave_target_processor import SIGNAL_MMWAVE_TARGETS_UPDATED
+from .multi_room_reasoner import MultiRoomReasoner
 from .occupancy_state_machine import OccupancyStateMachine
 
 if TYPE_CHECKING:
@@ -58,6 +60,10 @@ class VirtualSensorEngine:
         self._false_vacancy_detector = FalseVacancyDetector(hass)
         self._previous_states: dict[str, str] = {}  # room_id -> previous state
         self._feedback_controller = FeedbackController(hass)
+        self._multi_room_reasoner = MultiRoomReasoner(
+            store=store,
+            force_vacant_callback=self._force_room_vacant,
+        )
         self._running = False
         self._unsub_mmwave: Callable[[], None] | None = None
 
@@ -71,6 +77,10 @@ class VirtualSensorEngine:
 
         # Parent-child zone mapping: parent_room_id → set of zone_ids
         self._parent_zones: dict[str, set[str]] = {}
+
+        # Pattern priors per room
+        self._pattern_priors: dict[str, OccupancyPatternPrior] = {}
+        self._unsub_pattern_update: Callable[[], None] | None = None
 
     @property
     def running(self) -> bool:
@@ -109,6 +119,9 @@ class VirtualSensorEngine:
         # Start house guard first (discovers exterior doors)
         await self._house_guard.async_start()
 
+        # Start multi-room reasoner
+        await self._multi_room_reasoner.async_start()
+
         # Load persisted false vacancy data
         self._false_vacancy_detector.load_data(
             self._store.get_false_vacancy_data()
@@ -142,6 +155,10 @@ class VirtualSensorEngine:
         # Load persisted sensor reliability data
         self._load_reliability_data()
 
+        # Load and start pattern priors
+        self._load_pattern_priors()
+        self._start_pattern_updates()
+
         _LOGGER.info(
             "Virtual sensor engine started with %d state machines",
             len(self._state_machines),
@@ -156,6 +173,10 @@ class VirtualSensorEngine:
 
         # Save sensor reliability data before stopping
         self._save_reliability_data()
+
+        # Stop pattern updates and save
+        self._stop_pattern_updates()
+        self._save_pattern_priors()
 
         self._running = False
 
@@ -186,6 +207,9 @@ class VirtualSensorEngine:
         self._state_machines.clear()
         self._parent_zones.clear()
         self._last_transition_time.clear()
+
+        # Stop multi-room reasoner
+        await self._multi_room_reasoner.async_stop()
 
         # Stop house guard
         await self._house_guard.async_stop()
@@ -337,6 +361,12 @@ class VirtualSensorEngine:
                     f"child zone {zone_id} occupied",
                 )
 
+    def _force_room_vacant(self, room_id: str, reason: str) -> None:
+        """Force a room to VACANT state (used by multi-room reasoner)."""
+        machine = self._state_machines.get(room_id)
+        if machine:
+            machine.set_state(OccupancyState.VACANT, reason)
+
     # ------------------------------------------------------------------
     # Timeout history persistence
     # ------------------------------------------------------------------
@@ -469,6 +499,65 @@ class VirtualSensorEngine:
             _LOGGER.debug(
                 "Saved reliability data for %d rooms", len(reliability_data)
             )
+
+    # ------------------------------------------------------------------
+    # Pattern priors
+    # ------------------------------------------------------------------
+
+    def _load_pattern_priors(self) -> None:
+        """Load persisted pattern prior data."""
+        data = self._store.get_pattern_priors()
+        for room_id, prior_data in data.items():
+            self._pattern_priors[room_id] = OccupancyPatternPrior.from_dict(
+                prior_data
+            )
+        if data:
+            _LOGGER.debug("Loaded pattern priors for %d rooms", len(data))
+
+    def _save_pattern_priors(self) -> None:
+        """Save pattern prior data to the store."""
+        data = {
+            room_id: prior.to_dict()
+            for room_id, prior in self._pattern_priors.items()
+        }
+        if data:
+            self._store.save_pattern_priors(data)
+            _LOGGER.debug("Saved pattern priors for %d rooms", len(data))
+
+    def _start_pattern_updates(self) -> None:
+        """Start periodic pattern prior updates (every 5 minutes)."""
+        from homeassistant.helpers.event import async_track_time_interval
+
+        self._unsub_pattern_update = async_track_time_interval(
+            self.hass,
+            self._update_pattern_priors,
+            timedelta(minutes=5),
+        )
+
+    def _stop_pattern_updates(self) -> None:
+        """Stop periodic pattern prior updates."""
+        if self._unsub_pattern_update:
+            self._unsub_pattern_update()
+            self._unsub_pattern_update = None
+
+    @callback
+    def _update_pattern_priors(self, _now: Any = None) -> None:
+        """Record current occupancy observations and update priors."""
+        now = datetime.now()
+
+        for room_id, machine in self._state_machines.items():
+            # Get or create prior
+            prior = self._pattern_priors.setdefault(
+                room_id, OccupancyPatternPrior(room_id=room_id)
+            )
+
+            # Record observation
+            is_occupied = machine.is_occupied
+            prior.record_observation(now, is_occupied)
+
+            # Update the aggregator's prior
+            prior_value = prior.get_prior(now)
+            machine._aggregator.set_prior(prior_value)
 
     # ------------------------------------------------------------------
     # State machine lifecycle
@@ -614,6 +703,14 @@ class VirtualSensorEngine:
 
         # Update house guard
         self._house_guard.on_room_state_changed(room_id, state.state)
+
+        # Multi-room reasoning
+        self._multi_room_reasoner.on_room_state_changed(
+            room_id=room_id,
+            old_state=previous_state or OccupancyState.VACANT,
+            new_state=state.state,
+            confidence=state.confidence,
+        )
 
         # Propagate zone occupancy to parent room
         self._propagate_to_parent(room_id, state.state)

@@ -23,6 +23,7 @@ from ..const import (
     ATTR_SEAL_PROBABILITY,
     ATTR_SEALED,
     ATTR_SEALED_SINCE,
+    ATTR_SENSOR_DIAGNOSTICS,
     ATTR_STATE_MACHINE_STATE,
     DOMAIN,
     OccupancyState,
@@ -202,6 +203,9 @@ class VirtualOccupancySensor(BinarySensorEntity):
 
         if self._state_data.sealed_since:
             attrs[ATTR_SEALED_SINCE] = self._state_data.sealed_since.isoformat()
+
+        if self._state_data.sensor_diagnostics:
+            attrs[ATTR_SENSOR_DIAGNOSTICS] = self._state_data.sensor_diagnostics
 
         return attrs
 
