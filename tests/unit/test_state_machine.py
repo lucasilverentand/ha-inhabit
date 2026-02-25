@@ -614,8 +614,10 @@ class TestDoorSealLogic:
             lambda hass, delay, cb: MagicMock(),
         ):
             machine._state.state = OccupancyState.OCCUPIED
+            # Use the seal tracker (not raw state) to establish the seal
+            machine._seal_tracker.establish()
             machine._state.sealed = True
-            machine._state.sealed_since = MagicMock()
+            machine._state.sealed_since = machine._seal_tracker.sealed_since
 
             machine._transition_to_vacant("checking timeout")
             # Should be blocked — still OCCUPIED

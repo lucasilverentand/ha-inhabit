@@ -2,13 +2,44 @@
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Generator
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-# Import homeassistant - it should be installed for tests
+# Mock homeassistant if not installed (allows running standalone tests)
+if "homeassistant" not in sys.modules:
+    sys.modules["homeassistant"] = MagicMock()
+    _core_mock = MagicMock()
+    # callback decorator must be a pass-through, not a MagicMock wrapper
+    _core_mock.callback = lambda fn: fn
+    sys.modules["homeassistant.core"] = _core_mock
+    _const_mock = MagicMock()
+    _const_mock.STATE_ON = "on"
+    _const_mock.STATE_OFF = "off"
+    _const_mock.STATE_UNAVAILABLE = "unavailable"
+    _const_mock.STATE_UNKNOWN = "unknown"
+    sys.modules["homeassistant.const"] = _const_mock
+    sys.modules["homeassistant.config_entries"] = MagicMock()
+    sys.modules["homeassistant.helpers"] = MagicMock()
+    sys.modules["homeassistant.helpers.storage"] = MagicMock()
+    sys.modules["homeassistant.helpers.event"] = MagicMock()
+    sys.modules["homeassistant.helpers.dispatcher"] = MagicMock()
+    sys.modules["homeassistant.helpers.entity"] = MagicMock()
+    sys.modules["homeassistant.helpers.entity_platform"] = MagicMock()
+    sys.modules["homeassistant.helpers.typing"] = MagicMock()
+    sys.modules["homeassistant.components"] = MagicMock()
+    sys.modules["homeassistant.components.frontend"] = MagicMock()
+    sys.modules["homeassistant.components.websocket_api"] = MagicMock()
+    sys.modules["homeassistant.components.http"] = MagicMock()
+    sys.modules["homeassistant.components.binary_sensor"] = MagicMock()
+    sys.modules["homeassistant.helpers.entity_registry"] = MagicMock()
+    sys.modules["voluptuous"] = MagicMock()
+    sys.modules["aiohttp"] = MagicMock()
+    sys.modules["aiohttp.web"] = MagicMock()
+
 from homeassistant.const import STATE_OFF
 
 from custom_components.inhabit.models.floor_plan import (

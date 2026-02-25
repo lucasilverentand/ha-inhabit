@@ -20,6 +20,7 @@ from ..const import (
     ATTR_CONTRIBUTING_SENSORS,
     ATTR_LAST_MOTION_AT,
     ATTR_LAST_PRESENCE_AT,
+    ATTR_SEAL_PROBABILITY,
     ATTR_SEALED,
     ATTR_SEALED_SINCE,
     ATTR_STATE_MACHINE_STATE,
@@ -190,6 +191,7 @@ class VirtualOccupancySensor(BinarySensorEntity):
             ATTR_CONFIDENCE: self._state_data.confidence,
             ATTR_CONTRIBUTING_SENSORS: self._state_data.contributing_sensors,
             ATTR_SEALED: self._state_data.sealed,
+            ATTR_SEAL_PROBABILITY: self._state_data.seal_probability,
         }
 
         if self._state_data.last_motion_at:

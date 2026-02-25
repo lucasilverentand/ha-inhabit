@@ -25,6 +25,7 @@ class OccupancyStateData:
     sealed: bool = False
     sealed_since: datetime | None = None
     seal_broken_at: datetime | None = None
+    seal_probability: float = 0.0
     door_states_at_detection: dict[str, bool] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -54,6 +55,7 @@ class OccupancyStateData:
             "seal_broken_at": (
                 self.seal_broken_at.isoformat() if self.seal_broken_at else None
             ),
+            "seal_probability": self.seal_probability,
             "door_states_at_detection": self.door_states_at_detection,
         }
 
@@ -95,6 +97,7 @@ class OccupancyStateData:
                 if data.get("seal_broken_at")
                 else None
             ),
+            seal_probability=float(data.get("seal_probability", 0.0)),
             door_states_at_detection=data.get("door_states_at_detection", {}),
         )
 
@@ -163,6 +166,7 @@ class VirtualSensorConfig:
     # Door seal logic
     door_seals_room: bool = True  # Enable door seal (closed doors prevent vacancy)
     seal_max_duration: int = 14400  # Max seconds a seal holds (safety valve, 4h default)
+    seal_half_life: int = 3600  # Half-life for seal probability decay (seconds)
     long_stay: bool = False  # Zone where occupants stay for hours (couch, bed, etc.)
 
     # Legacy door-aware logic (mapped to door_seals_room on load)
@@ -181,6 +185,19 @@ class VirtualSensorConfig:
         if self.long_stay and self.seal_max_duration == DEFAULT_SEAL_MAX_DURATION:
             return DEFAULT_LONG_STAY_SEAL_MAX_DURATION
         return self.seal_max_duration
+
+    @property
+    def effective_seal_half_life(self) -> int:
+        """Get effective seal half-life, accounting for long-stay zones.
+
+        Regular rooms: 3600s (1 hour)
+        Long-stay rooms: 7200s (2 hours), unless explicitly overridden
+        """
+        from ..const import DEFAULT_SEAL_HALF_LIFE
+
+        if self.long_stay and self.seal_half_life == DEFAULT_SEAL_HALF_LIFE:
+            return DEFAULT_SEAL_HALF_LIFE * 2  # 2 hours for long-stay
+        return self.seal_half_life
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
@@ -201,6 +218,7 @@ class VirtualSensorConfig:
             "presence_affects": self.presence_affects,
             "door_seals_room": self.door_seals_room,
             "seal_max_duration": self.seal_max_duration,
+            "seal_half_life": self.seal_half_life,
             "long_stay": self.long_stay,
             # Legacy fields kept for backward compatibility
             "door_blocks_vacancy": self.door_seals_room,
@@ -242,6 +260,7 @@ class VirtualSensorConfig:
             presence_affects=data.get("presence_affects", False),
             door_seals_room=door_seals_room,
             seal_max_duration=int(data.get("seal_max_duration", 14400)),
+            seal_half_life=int(data.get("seal_half_life", 3600)),
             long_stay=data.get("long_stay", False),
             door_blocks_vacancy=door_seals_room,
             door_open_resets_checking=data.get("door_open_resets_checking", True),
