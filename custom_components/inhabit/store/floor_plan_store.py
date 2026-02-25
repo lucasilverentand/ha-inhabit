@@ -635,6 +635,17 @@ class FloorPlanStore:
             return True
         return False
 
+    # ==================== Feedback Data ====================
+
+    def get_feedback_data(self) -> dict[str, Any]:
+        """Get feedback controller data."""
+        return self._data.get("feedback_data", {})
+
+    def save_feedback_data(self, data: dict[str, Any]) -> None:
+        """Save feedback controller data."""
+        self._data["feedback_data"] = data
+        self.async_delay_save()
+
     # ==================== Utilities ====================
 
     def _generate_id(self) -> str:

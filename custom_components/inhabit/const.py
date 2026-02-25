@@ -65,6 +65,9 @@ ATTR_SEALED: Final = "sealed"
 ATTR_SEALED_SINCE: Final = "sealed_since"
 ATTR_HOUSE_SEALED: Final = "house_sealed"
 
+# Events
+EVENT_OVERRIDE_RECORDED: Final = f"{DOMAIN}_override_recorded"
+
 # Layer names for frontend
 LAYER_BACKGROUND: Final = "background"
 LAYER_STRUCTURE: Final = "structure"

@@ -285,7 +285,7 @@ class TestOccupancyStateMachineScenarios:
             OccupancyStateMachine,
         )
 
-        machine = OccupancyStateMachine(mock_hass, basic_config, lambda x: None)
+        machine = OccupancyStateMachine(mock_hass, basic_config, lambda x, r="": None)
         assert machine.state.state == OccupancyState.VACANT
         assert machine.is_occupied is False
 
@@ -295,7 +295,7 @@ class TestOccupancyStateMachineScenarios:
             OccupancyStateMachine,
         )
 
-        machine = OccupancyStateMachine(mock_hass, basic_config, lambda x: None)
+        machine = OccupancyStateMachine(mock_hass, basic_config, lambda x, r="": None)
         machine.set_state(OccupancyState.OCCUPIED, "test")
         assert machine.is_occupied is True
 
@@ -305,7 +305,7 @@ class TestOccupancyStateMachineScenarios:
             OccupancyStateMachine,
         )
 
-        machine = OccupancyStateMachine(mock_hass, basic_config, lambda x: None)
+        machine = OccupancyStateMachine(mock_hass, basic_config, lambda x, r="": None)
         machine._state.state = OccupancyState.OCCUPIED
         machine._transition_to_checking("test")
         assert machine.state.state == OccupancyState.CHECKING
@@ -319,7 +319,7 @@ class TestOccupancyStateMachineScenarios:
 
         changes = []
 
-        def on_change(state):
+        def on_change(state, reason=""):
             changes.append(state.state)
 
         machine = OccupancyStateMachine(mock_hass, basic_config, on_change)
@@ -336,7 +336,7 @@ class TestOccupancyStateMachineScenarios:
 
         changes = []
 
-        def on_change(state):
+        def on_change(state, reason=""):
             changes.append(state.state)
 
         machine = OccupancyStateMachine(mock_hass, basic_config, on_change)
@@ -357,7 +357,7 @@ class TestOccupancyStateMachineScenarios:
             OccupancyStateMachine,
         )
 
-        machine = OccupancyStateMachine(mock_hass, basic_config, lambda x: None)
+        machine = OccupancyStateMachine(mock_hass, basic_config, lambda x, r="": None)
 
         # Normal sensor
         mock_state = MagicMock()
@@ -375,7 +375,7 @@ class TestOccupancyStateMachineScenarios:
             OccupancyStateMachine,
         )
 
-        machine = OccupancyStateMachine(mock_hass, basic_config, lambda x: None)
+        machine = OccupancyStateMachine(mock_hass, basic_config, lambda x, r="": None)
 
         # Add sensors
         machine._update_contributing_sensors("sensor1", add=True)
@@ -398,7 +398,7 @@ class TestOccupancyStateMachineScenarios:
             OccupancyStateMachine,
         )
 
-        machine = OccupancyStateMachine(mock_hass, basic_config, lambda x: None)
+        machine = OccupancyStateMachine(mock_hass, basic_config, lambda x, r="": None)
         assert machine._calculate_confidence() == 0.0
 
     def test_confidence_with_sensors(self, mock_hass, basic_config):
@@ -407,7 +407,7 @@ class TestOccupancyStateMachineScenarios:
             OccupancyStateMachine,
         )
 
-        machine = OccupancyStateMachine(mock_hass, basic_config, lambda x: None)
+        machine = OccupancyStateMachine(mock_hass, basic_config, lambda x, r="": None)
         machine._state.contributing_sensors = ["binary_sensor.test_motion"]
 
         confidence = machine._calculate_confidence()
@@ -420,7 +420,7 @@ class TestOccupancyStateMachineScenarios:
             OccupancyStateMachine,
         )
 
-        machine = OccupancyStateMachine(mock_hass, basic_config, lambda x: None)
+        machine = OccupancyStateMachine(mock_hass, basic_config, lambda x, r="": None)
 
         # Motion binding
         motion = machine._get_motion_binding("binary_sensor.test_motion")

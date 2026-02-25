@@ -57,7 +57,7 @@ class OccupancyStateMachine:
         self,
         hass: HomeAssistant,
         config: VirtualSensorConfig,
-        on_state_change: Callable[[OccupancyStateData], None],
+        on_state_change: Callable[[OccupancyStateData, str], None],
         can_go_vacant: Callable[[str], bool] | None = None,
         is_occupied_by_children: Callable[[str], bool] | None = None,
     ) -> None:
@@ -66,7 +66,8 @@ class OccupancyStateMachine:
         Args:
             hass: Home Assistant instance.
             config: Virtual sensor configuration.
-            on_state_change: Callback for state changes.
+            on_state_change: Callback for state changes. Receives the state
+                data and a reason string describing what caused the change.
             can_go_vacant: Optional house-level guard callback. Returns False
                 to block vacancy (e.g. house is sealed and this is the last
                 occupied room).
@@ -190,7 +191,7 @@ class OccupancyStateMachine:
             new_state,
             reason,
         )
-        self._notify_state_change()
+        self._notify_state_change(reason)
 
     # ------------------------------------------------------------------
     # Initial state evaluation
@@ -494,7 +495,7 @@ class OccupancyStateMachine:
             reason,
             self._state.sealed,
         )
-        self._notify_state_change()
+        self._notify_state_change(reason)
 
     def _transition_to_checking(self, reason: str) -> None:
         """Transition to CHECKING state."""
@@ -510,7 +511,7 @@ class OccupancyStateMachine:
             self.config.room_id,
             reason,
         )
-        self._notify_state_change()
+        self._notify_state_change(reason)
 
     def _transition_to_vacant(self, reason: str) -> None:
         """Transition to VACANT state."""
@@ -558,7 +559,7 @@ class OccupancyStateMachine:
             old_state,
             reason,
         )
-        self._notify_state_change()
+        self._notify_state_change(reason)
 
     def _check_all_sensors_clear(self) -> None:
         """Check if all sensors are clear and handle the transition."""
@@ -722,6 +723,6 @@ class OccupancyStateMachine:
 
         return min(1.0, active_weight / total_weight)
 
-    def _notify_state_change(self) -> None:
+    def _notify_state_change(self, reason: str = "") -> None:
         """Notify listeners of state change."""
-        self._on_state_change(self._state)
+        self._on_state_change(self._state, reason)
