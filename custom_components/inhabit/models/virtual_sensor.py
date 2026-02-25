@@ -28,6 +28,9 @@ class OccupancyStateData:
     seal_probability: float = 0.0
     door_states_at_detection: dict[str, bool] = field(default_factory=dict)
 
+    # Sensor reliability scores (entity_id -> 0.0-1.0 reliability)
+    sensor_reliability: dict[str, float] = field(default_factory=dict)
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return {
@@ -57,6 +60,7 @@ class OccupancyStateData:
             ),
             "seal_probability": self.seal_probability,
             "door_states_at_detection": self.door_states_at_detection,
+            "sensor_reliability": self.sensor_reliability,
         }
 
     @classmethod
@@ -99,6 +103,7 @@ class OccupancyStateData:
             ),
             seal_probability=float(data.get("seal_probability", 0.0)),
             door_states_at_detection=data.get("door_states_at_detection", {}),
+            sensor_reliability=data.get("sensor_reliability", {}),
         )
 
 

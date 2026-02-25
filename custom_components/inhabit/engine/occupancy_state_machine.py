@@ -19,6 +19,7 @@ from ..models.virtual_sensor import OccupancyStateData, VirtualSensorConfig
 from .adaptive_timeout import AdaptiveTimeoutManager, TimeOfDayProfile
 from .presence_aggregator import PresenceAggregator
 from .seal_probability import SealProbabilityTracker
+from .sensor_reliability import SensorReliabilityTracker
 
 if TYPE_CHECKING:
     from homeassistant.core import Event
@@ -118,6 +119,14 @@ class OccupancyStateMachine:
             _max_duration=float(config.effective_seal_max_duration),
         )
 
+        # Sensor reliability tracker
+        self._reliability_tracker = SensorReliabilityTracker()
+
+        # Build entity_id -> binding lookup for quick weight access
+        self._motion_binding_map: dict[str, Any] = {
+            b.entity_id: b for b in config.motion_sensors
+        }
+
     @property
     def state(self) -> OccupancyStateData:
         """Get current state."""
@@ -132,6 +141,11 @@ class OccupancyStateMachine:
     def timeout_manager(self) -> AdaptiveTimeoutManager:
         """Get the adaptive timeout manager."""
         return self._timeout_manager
+
+    @property
+    def reliability_tracker(self) -> SensorReliabilityTracker:
+        """Get the sensor reliability tracker."""
+        return self._reliability_tracker
 
     async def async_start(self) -> None:
         """Start the state machine and subscribe to sensors."""
@@ -339,6 +353,12 @@ class OccupancyStateMachine:
         self._aggregator.update_reading(
             entity_id, is_active, "motion", binding.weight
         )
+
+        # Feed the reliability tracker
+        if is_active:
+            self._reliability_tracker.on_sensor_activation(entity_id)
+        else:
+            self._reliability_tracker.on_sensor_deactivation(entity_id)
 
         if is_active:
             self._state.last_motion_at = datetime.now()
@@ -904,10 +924,37 @@ class OccupancyStateMachine:
     def _calculate_confidence(self) -> float:
         """Calculate occupancy confidence using the presence aggregator.
 
-        Delegates to the aggregator's weighted temporal-decay probability.
+        Uses the aggregator's weighted temporal-decay probability as the
+        base value, then blends in reliability-adjusted weights so that
+        sensors with poor track records contribute less to confidence.
         """
-        return self._aggregator.get_presence_probability()
+        aggregator_probability = self._aggregator.get_presence_probability()
+
+        # Also compute reliability-weighted confidence
+        total_weight = 0.0
+        active_weight = 0.0
+
+        for binding in self.config.motion_sensors:
+            effective_weight = self._reliability_tracker.get_effective_weight(
+                binding.entity_id, binding.weight
+            )
+            total_weight += effective_weight
+            if binding.entity_id in self._state.contributing_sensors:
+                active_weight += effective_weight
+
+        if total_weight == 0:
+            return aggregator_probability
+
+        reliability_confidence = min(1.0, active_weight / total_weight)
+
+        # Blend: aggregator is primary, reliability adjusts it
+        return max(aggregator_probability, reliability_confidence)
 
     def _notify_state_change(self) -> None:
         """Notify listeners of state change."""
+        # Update sensor reliability data in state
+        self._state.sensor_reliability = {
+            entity_id: self._reliability_tracker.get_reliability(entity_id)
+            for entity_id in self._state.contributing_sensors
+        }
         self._on_state_change(self._state)

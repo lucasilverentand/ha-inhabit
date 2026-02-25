@@ -700,6 +700,23 @@ class FloorPlanStore:
                 OccupancyDurationRecord dicts.
         """
         self._data["timeout_history"] = history
+
+    # ==================== Sensor Reliability ====================
+
+    def get_sensor_reliability(self) -> dict[str, dict]:
+        """Get persisted sensor reliability data.
+
+        Returns a dict of room_id -> {entity_id: record_dict}.
+        """
+        return dict(self._data.get("sensor_reliability", {}))
+
+    def save_sensor_reliability(self, data: dict[str, dict]) -> None:
+        """Save sensor reliability data.
+
+        Args:
+            data: dict of room_id -> {entity_id: record_dict}.
+        """
+        self._data["sensor_reliability"] = data
         self.async_delay_save()
 
     # ==================== Utilities ====================
