@@ -175,6 +175,12 @@ class FloorPlanStore:
 
         for i, floor in enumerate(floor_plan.floors):
             if floor.id == floor_id:
+                # Clean up sensor configs for all rooms and zones on this floor
+                for room in floor.rooms:
+                    self.delete_sensor_config(room.id)
+                for zone in floor.zones:
+                    self.delete_sensor_config(zone.id)
+
                 floor_plan.floors.pop(i)
                 self.update_floor_plan(floor_plan)
                 return True

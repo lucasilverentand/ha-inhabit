@@ -8,6 +8,7 @@ from typing import Any
 import voluptuous as vol
 from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 
 from ..const import DOMAIN, WS_PREFIX
@@ -71,6 +72,15 @@ def _validate_unique_ha_area(
         ),
     )
     return False
+
+
+def _remove_device(hass: HomeAssistant, region_id: str) -> None:
+    """Remove the HA device for a room or zone."""
+    dev_reg = dr.async_get(hass)
+    device = dev_reg.async_get_device(identifiers={(DOMAIN, region_id)})
+    if device:
+        _LOGGER.debug("Removing device for region %s", region_id)
+        dev_reg.async_remove_device(device.id)
 
 
 def async_register_websocket_commands(hass: HomeAssistant) -> None:
@@ -258,13 +268,16 @@ def ws_floor_plans_delete(
         connection.send_error(msg["id"], "not_found", "Floor plan not found")
         return
 
-    # Remove all occupancy sensors from the engine before deleting the floor plan
+    # Collect all region IDs (rooms and zones) before deleting
     sensor_engine = hass.data[DOMAIN]["sensor_engine"]
     region_ids = [room.id for room in floor_plan.get_all_rooms()]
     for floor in floor_plan.floors:
         region_ids.extend(zone.id for zone in floor.zones)
+
+    # Remove sensors from the engine and clean up devices
     for region_id in region_ids:
         hass.async_create_task(sensor_engine.async_remove_room(region_id))
+        _remove_device(hass, region_id)
 
     store.delete_floor_plan(msg["floor_plan_id"])
     connection.send_result(msg["id"], {"success": True})
@@ -357,6 +370,25 @@ def ws_floors_delete(
 ) -> None:
     """Delete a floor."""
     store = hass.data[DOMAIN]["store"]
+    floor_plan = store.get_floor_plan(msg["floor_plan_id"])
+    if not floor_plan:
+        connection.send_error(msg["id"], "not_found", "Floor plan not found")
+        return
+
+    floor = floor_plan.get_floor(msg["floor_id"])
+    if not floor:
+        connection.send_error(msg["id"], "not_found", "Floor not found")
+        return
+
+    # Remove sensors and devices for all rooms and zones on this floor
+    sensor_engine = hass.data[DOMAIN]["sensor_engine"]
+    for room in floor.rooms:
+        hass.async_create_task(sensor_engine.async_remove_room(room.id))
+        _remove_device(hass, room.id)
+    for zone in floor.zones:
+        hass.async_create_task(sensor_engine.async_remove_room(zone.id))
+        _remove_device(hass, zone.id)
+
     if store.delete_floor(msg["floor_plan_id"], msg["floor_id"]):
         connection.send_result(msg["id"], {"success": True})
     else:
@@ -684,9 +716,10 @@ def ws_rooms_delete(
     """Delete a room."""
     store = hass.data[DOMAIN]["store"]
 
-    # Remove from sensor engine
+    # Remove from sensor engine and clean up device
     sensor_engine = hass.data[DOMAIN]["sensor_engine"]
     hass.async_create_task(sensor_engine.async_remove_room(msg["room_id"]))
+    _remove_device(hass, msg["room_id"])
 
     if store.delete_room(msg["floor_plan_id"], msg["room_id"]):
         connection.send_result(msg["id"], {"success": True})
@@ -885,9 +918,10 @@ def ws_zones_delete(
     """Delete a zone."""
     store = hass.data[DOMAIN]["store"]
 
-    # Remove from sensor engine
+    # Remove from sensor engine and clean up device
     sensor_engine = hass.data[DOMAIN]["sensor_engine"]
     hass.async_create_task(sensor_engine.async_remove_room(msg["zone_id"]))
+    _remove_device(hass, msg["zone_id"])
 
     if store.delete_zone(msg["floor_plan_id"], msg["zone_id"]):
         connection.send_result(msg["id"], {"success": True})

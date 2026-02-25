@@ -17,7 +17,7 @@ except ImportError:
     HAS_STATIC_PATH_CONFIG = False
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import device_registry as dr, entity_registry as er
 from homeassistant.helpers.typing import ConfigType
 
 from .api import http as http_api
@@ -27,7 +27,6 @@ from .const import DOMAIN
 from .engine.mmwave_target_processor import MmwaveTargetProcessor
 from .engine.simulated_target_processor import SimulatedTargetProcessor
 from .engine.virtual_sensor_engine import VirtualSensorEngine
-from .seed import async_seed_demo_house
 from .store import FloorPlanStore, ImageStore
 
 _LOGGER = logging.getLogger(__name__)
@@ -57,11 +56,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if orphaned:
         _LOGGER.info("Cleaned up %d orphaned sensor configs: %s", len(orphaned), orphaned)
 
-    # Seed demo house on first startup (no-op if floor plans exist)
-    await async_seed_demo_house(hass, floor_plan_store)
-
-    # Clean up orphaned entity registry entries
+    # Clean up orphaned entity and device registry entries
     ent_reg = er.async_get(hass)
+    dev_reg = dr.async_get(hass)
     valid_ids = set()
     for fp in floor_plan_store.get_floor_plans():
         for room in fp.get_all_rooms():
@@ -88,6 +85,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     for ent in orphaned_entities:
         _LOGGER.info("Removing orphaned entity %s (%s)", ent.entity_id, ent.unique_id)
         ent_reg.async_remove(ent.entity_id)
+
+    # Clean up orphaned devices (devices whose region_id no longer exists)
+    for device in dr.async_entries_for_config_entry(dev_reg, entry.entry_id):
+        for _, identifier in device.identifiers:
+            if identifier not in valid_ids:
+                _LOGGER.info("Removing orphaned device %s (%s)", device.name, device.id)
+                dev_reg.async_remove_device(device.id)
+                break
 
     # Initialize virtual sensor engine
     sensor_engine = VirtualSensorEngine(hass, floor_plan_store)

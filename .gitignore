@@ -13,6 +13,8 @@ __pycache__/
 # Build artifacts
 *.egg-info/
 dist/
+!custom_components/inhabit/frontend/dist/
+custom_components/inhabit/frontend/dist/*.map
 build/
 .eggs/
 

@@ -1,0 +1,13 @@
+pre-commit:
+  commands:
+    frontend-dist-check:
+      glob: "frontend/src/**/*.ts"
+      run: |
+        cd frontend && npm run build --silent 2>&1
+        if [ -n "$(git diff --name-only custom_components/inhabit/frontend/dist/)" ]; then
+          echo "ERROR: Frontend dist is out of date. The build produced changes:"
+          git diff --name-only custom_components/inhabit/frontend/dist/
+          echo ""
+          echo "Stage the updated dist files and try again."
+          exit 1
+        fi
