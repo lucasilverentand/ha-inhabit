@@ -250,12 +250,11 @@ class VirtualSensorConfig:
         )
 
     def get_all_sensor_entity_ids(self) -> list[str]:
-        """Get all entity IDs for sensors bound to this room.
-
-        Note: presence_sensors are excluded — presence is now spatial (hitbox-based).
-        """
+        """Get all entity IDs for sensors bound to this room."""
         entity_ids = []
         for binding in self.motion_sensors:
+            entity_ids.append(binding.entity_id)
+        for binding in self.presence_sensors:
             entity_ids.append(binding.entity_id)
         for binding in self.door_sensors:
             entity_ids.append(binding.entity_id)

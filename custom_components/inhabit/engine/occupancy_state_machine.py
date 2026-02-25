@@ -16,6 +16,7 @@ from homeassistant.helpers.event import (
 
 from ..const import OccupancyState
 from ..models.virtual_sensor import OccupancyStateData, VirtualSensorConfig
+from .presence_aggregator import PresenceAggregator
 
 if TYPE_CHECKING:
     from homeassistant.core import Event
@@ -84,6 +85,15 @@ class OccupancyStateMachine:
         self._seal_expiry_timer: Callable[[], None] | None = None
         self._running = False
 
+        # Presence aggregator for weighted temporal-decay probability
+        self._aggregator = PresenceAggregator(
+            hass=hass,
+            motion_bindings=config.motion_sensors,
+            presence_bindings=config.presence_sensors,
+            motion_decay_seconds=float(config.motion_timeout),
+            presence_decay_seconds=float(config.presence_timeout),
+        )
+
     @property
     def state(self) -> OccupancyStateData:
         """Get current state."""
@@ -122,6 +132,15 @@ class OccupancyStateMachine:
             )
             self._unsub_state_listeners.append(unsub)
 
+        # Subscribe to presence sensors
+        for binding in self.config.presence_sensors:
+            unsub = async_track_state_change_event(
+                self.hass,
+                binding.entity_id,
+                self._handle_presence_event,
+            )
+            self._unsub_state_listeners.append(unsub)
+
         # Subscribe to exit sensors (hold-until-exit mode)
         for binding in self.config.exit_sensors:
             unsub = async_track_state_change_event(
@@ -153,6 +172,9 @@ class OccupancyStateMachine:
                     self.config.room_id,
                 )
         self._unsub_state_listeners.clear()
+
+        # Clear aggregator state
+        self._aggregator.clear()
 
     def set_state(self, new_state: str, reason: str = "") -> None:
         """Manually set the state (e.g. from SimulatedTargetProcessor)."""
@@ -198,11 +220,28 @@ class OccupancyStateMachine:
 
     async def _evaluate_initial_state(self) -> None:
         """Evaluate initial state based on current sensor values."""
+        # Refresh aggregator from current HA states
+        self._aggregator.refresh_from_state()
+
         for binding in self.config.motion_sensors:
             state = self.hass.states.get(binding.entity_id)
             if state and self._is_sensor_active(state, binding.inverted):
                 self._transition_to_occupied("initial motion detected")
                 return
+
+        for binding in self.config.presence_sensors:
+            state = self.hass.states.get(binding.entity_id)
+            if state and self._is_sensor_active(state, binding.inverted):
+                self._transition_to_occupied("initial presence detected")
+                return
+
+        # Check aggregator probability as a fallback (e.g. decaying readings)
+        probability = self._aggregator.get_presence_probability()
+        if probability >= self.config.occupied_threshold:
+            self._transition_to_occupied(
+                f"initial aggregator probability {probability:.2f}"
+            )
+            return
 
         _LOGGER.debug(
             "Room %s initial state: VACANT (no activity)", self.config.room_id
@@ -233,6 +272,11 @@ class OccupancyStateMachine:
             is_active,
         )
 
+        # Feed into aggregator
+        self._aggregator.update_reading(
+            entity_id, is_active, "motion", binding.weight
+        )
+
         if is_active:
             self._state.last_motion_at = datetime.now()
             self._update_contributing_sensors(entity_id, add=True)
@@ -260,6 +304,11 @@ class OccupancyStateMachine:
             entity_id,
             new_state.state,
             is_active,
+        )
+
+        # Feed into aggregator
+        self._aggregator.update_reading(
+            entity_id, is_active, "presence", binding.weight
         )
 
         if is_active:
@@ -468,15 +517,34 @@ class OccupancyStateMachine:
     # ------------------------------------------------------------------
 
     def _transition_to_occupied(self, reason: str) -> None:
-        """Transition to OCCUPIED state."""
+        """Transition to OCCUPIED state.
+
+        Uses threshold-gated logic: only transitions if the aggregator
+        probability meets occupied_threshold OR any sensor is physically
+        active (fast-path safety net).
+        """
         if self._state.state == OccupancyState.OCCUPIED:
-            # Already occupied — but re-evaluate seal on new detection
+            # Already occupied — update confidence and re-evaluate seal
+            self._state.confidence = self._calculate_confidence()
             if not self._state.sealed and self.config.door_seals_room:
                 self._evaluate_seal(f"re-detection: {reason}")
             # Reset seal expiry timer on new activity
             if self._state.sealed:
                 self._start_seal_expiry_timer()
             return
+
+        # Threshold gate: require physical activity OR sufficient probability
+        probability = self._aggregator.get_presence_probability()
+        if not self._any_sensor_active() and not self._any_presence_sensor_active():
+            if probability < self.config.occupied_threshold:
+                _LOGGER.debug(
+                    "Room %s: transition to OCCUPIED blocked — "
+                    "probability %.2f < threshold %.2f and no sensor active",
+                    self.config.room_id,
+                    probability,
+                    self.config.occupied_threshold,
+                )
+                return
 
         self._cancel_checking_timer()
         old_state = self._state.state
@@ -488,11 +556,12 @@ class OccupancyStateMachine:
         self._evaluate_seal(reason)
 
         _LOGGER.info(
-            "Room %s: %s → OCCUPIED (%s, sealed=%s)",
+            "Room %s: %s → OCCUPIED (%s, sealed=%s, confidence=%.2f)",
             self.config.room_id,
             old_state,
             reason,
             self._state.sealed,
+            self._state.confidence,
         )
         self._notify_state_change()
 
@@ -561,11 +630,16 @@ class OccupancyStateMachine:
         self._notify_state_change()
 
     def _check_all_sensors_clear(self) -> None:
-        """Check if all sensors are clear and handle the transition."""
+        """Check if all sensors are clear and handle the transition.
+
+        Uses the aggregator probability alongside binary sensor checks.
+        The room goes to CHECKING only if all sensors are clear AND the
+        probability is below the vacant threshold.
+        """
         if self._state.state != OccupancyState.OCCUPIED:
             return
 
-        if self._any_sensor_active():
+        if self._any_sensor_active() or self._any_presence_sensor_active():
             return
 
         # Hold-until-exit mode: own sensors clearing is ignored; only exit
@@ -596,6 +670,20 @@ class OccupancyStateMachine:
                 "Room %s: all sensors clear but room is sealed, staying OCCUPIED",
                 self.config.room_id,
             )
+            return
+
+        # Check aggregator probability — stay OCCUPIED if still above vacant threshold
+        probability = self._aggregator.get_presence_probability()
+        if probability > self.config.vacant_threshold:
+            _LOGGER.debug(
+                "Room %s: sensors clear but aggregator probability %.2f "
+                "> vacant threshold %.2f, staying OCCUPIED",
+                self.config.room_id,
+                probability,
+                self.config.vacant_threshold,
+            )
+            # Update confidence to reflect current probability
+            self._state.confidence = self._calculate_confidence()
             return
 
         self._transition_to_checking("all sensors clear")
@@ -633,6 +721,14 @@ class OccupancyStateMachine:
     def _any_sensor_active(self) -> bool:
         """Check if any motion sensor is currently active."""
         for binding in self.config.motion_sensors:
+            state = self.hass.states.get(binding.entity_id)
+            if state and self._is_sensor_active(state, binding.inverted):
+                return True
+        return False
+
+    def _any_presence_sensor_active(self) -> bool:
+        """Check if any presence sensor is currently active."""
+        for binding in self.config.presence_sensors:
             state = self.hass.states.get(binding.entity_id)
             if state and self._is_sensor_active(state, binding.inverted):
                 return True
@@ -705,22 +801,11 @@ class OccupancyStateMachine:
                 self._state.contributing_sensors.remove(entity_id)
 
     def _calculate_confidence(self) -> float:
-        """Calculate occupancy confidence based on contributing sensors."""
-        if not self._state.contributing_sensors:
-            return 0.0
+        """Calculate occupancy confidence using the presence aggregator.
 
-        total_weight = 0.0
-        active_weight = 0.0
-
-        for binding in self.config.motion_sensors:
-            total_weight += binding.weight
-            if binding.entity_id in self._state.contributing_sensors:
-                active_weight += binding.weight
-
-        if total_weight == 0:
-            return 0.5 if self._state.contributing_sensors else 0.0
-
-        return min(1.0, active_weight / total_weight)
+        Delegates to the aggregator's weighted temporal-decay probability.
+        """
+        return self._aggregator.get_presence_probability()
 
     def _notify_state_change(self) -> None:
         """Notify listeners of state change."""
