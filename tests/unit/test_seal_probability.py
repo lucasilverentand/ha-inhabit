@@ -381,10 +381,25 @@ class TestStateMachineSealIntegration:
 
     @pytest.fixture
     def mock_hass(self):
-        """Create a mock Home Assistant instance."""
+        """Create a mock Home Assistant instance.
+
+        Returns motion sensor as ON and door sensor as OFF (closed) so that
+        _any_sensor_active() passes the aggregator threshold gate and
+        _evaluate_seal() establishes a seal.
+        """
         hass = MagicMock()
-        hass.states = MagicMock()
         hass.loop = MagicMock()
+
+        def _get_state(entity_id):
+            mock_state = MagicMock()
+            if "door" in entity_id:
+                mock_state.state = STATE_OFF  # Door closed
+            else:
+                mock_state.state = STATE_ON  # Motion active
+            return mock_state
+
+        hass.states = MagicMock()
+        hass.states.get = MagicMock(side_effect=_get_state)
         return hass
 
     @pytest.fixture
@@ -423,7 +438,6 @@ class TestStateMachineSealIntegration:
         self, mock_hass, seal_config, state_changes
     ):
         """seal_probability is updated in state data when seal is established."""
-        mock_hass.states.get.return_value = MagicMock(state=STATE_OFF)  # Door closed
         machine, _ = self._make_machine(mock_hass, seal_config, state_changes)
 
         with patch(
@@ -438,7 +452,6 @@ class TestStateMachineSealIntegration:
         self, mock_hass, seal_config, state_changes
     ):
         """seal_probability is 0.0 after seal is broken."""
-        mock_hass.states.get.return_value = MagicMock(state=STATE_OFF)
         machine, _ = self._make_machine(mock_hass, seal_config, state_changes)
 
         with patch(
@@ -454,7 +467,6 @@ class TestStateMachineSealIntegration:
         self, mock_hass, seal_config, state_changes
     ):
         """A seal that has decayed below threshold allows vacancy transition."""
-        mock_hass.states.get.return_value = MagicMock(state=STATE_OFF)
         machine, _ = self._make_machine(mock_hass, seal_config, state_changes)
 
         from custom_components.inhabit.const import OccupancyState
@@ -486,7 +498,6 @@ class TestStateMachineSealIntegration:
         self, mock_hass, seal_config, state_changes
     ):
         """A seal that hasn't decayed blocks vacancy transition."""
-        mock_hass.states.get.return_value = MagicMock(state=STATE_OFF)
         machine, _ = self._make_machine(mock_hass, seal_config, state_changes)
 
         from custom_components.inhabit.const import OccupancyState
@@ -514,7 +525,6 @@ class TestStateMachineSealIntegration:
         self, mock_hass, seal_config, state_changes
     ):
         """New detection while sealed resets the decay timer."""
-        mock_hass.states.get.return_value = MagicMock(state=STATE_OFF)
         machine, _ = self._make_machine(mock_hass, seal_config, state_changes)
 
         with patch(
@@ -539,7 +549,6 @@ class TestStateMachineSealIntegration:
         self, mock_hass, seal_config, state_changes
     ):
         """Hard max_duration cutoff returns probability 0 regardless of half_life."""
-        mock_hass.states.get.return_value = MagicMock(state=STATE_OFF)
         machine, _ = self._make_machine(mock_hass, seal_config, state_changes)
 
         from custom_components.inhabit.const import OccupancyState
