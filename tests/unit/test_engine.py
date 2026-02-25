@@ -402,13 +402,16 @@ class TestOccupancyStateMachineScenarios:
         assert machine._calculate_confidence() == 0.0
 
     def test_confidence_with_sensors(self, mock_hass, basic_config):
-        """Test confidence with contributing sensors."""
+        """Test confidence with contributing sensors (via aggregator)."""
         from custom_components.inhabit.engine.occupancy_state_machine import (
             OccupancyStateMachine,
         )
 
         machine = OccupancyStateMachine(mock_hass, basic_config, lambda x: None)
-        machine._state.contributing_sensors = ["binary_sensor.test_motion"]
+        # Feed the aggregator with an active reading
+        machine._aggregator.update_reading(
+            "binary_sensor.test_motion", True, "motion", 1.0
+        )
 
         confidence = machine._calculate_confidence()
         assert confidence > 0.0
