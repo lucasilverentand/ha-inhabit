@@ -33,9 +33,17 @@ STATE_OFF = "off"
 def mock_hass():
     """Create a mock Home Assistant instance with event bus."""
     hass = MagicMock()
-    hass.states = MagicMock()
     hass.loop = MagicMock()
     hass.bus = MagicMock()
+
+    # Return motion sensors as ON so threshold gate passes
+    def _get_state(entity_id):
+        mock_state = MagicMock()
+        mock_state.state = "on"
+        return mock_state
+
+    hass.states = MagicMock()
+    hass.states.get = MagicMock(side_effect=_get_state)
 
     # Track fired events
     hass._fired_events = []
