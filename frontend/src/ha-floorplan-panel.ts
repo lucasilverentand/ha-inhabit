@@ -386,6 +386,7 @@ export class HaFloorplanPanel extends LitElement {
   }
 
   private _toggleEditorMode(): void {
+    if (!this._isAdmin) return;
     this._editorMode = !this._editorMode;
     this._applyMode();
   }

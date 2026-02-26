@@ -74,6 +74,17 @@ def _validate_unique_ha_area(
     return False
 
 
+def _require_admin(
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> bool:
+    """Check if the user is an admin. Sends an error and returns False if not."""
+    if not connection.user.is_admin:
+        connection.send_error(msg["id"], "unauthorized", "Admin access required")
+        return False
+    return True
+
+
 def _remove_device(hass: HomeAssistant, region_id: str) -> None:
     """Remove the HA device for a room or zone."""
     dev_reg = dr.async_get(hass)
@@ -203,6 +214,8 @@ def ws_floor_plans_create(
     msg: dict[str, Any],
 ) -> None:
     """Create a new floor plan."""
+    if not _require_admin(connection, msg):
+        return
     store = hass.data[DOMAIN]["store"]
     floor_plan = FloorPlan(
         name=msg["name"],
@@ -229,6 +242,8 @@ def ws_floor_plans_update(
     msg: dict[str, Any],
 ) -> None:
     """Update a floor plan."""
+    if not _require_admin(connection, msg):
+        return
     store = hass.data[DOMAIN]["store"]
     floor_plan = store.get_floor_plan(msg["floor_plan_id"])
     if not floor_plan:
@@ -262,6 +277,8 @@ def ws_floor_plans_delete(
     msg: dict[str, Any],
 ) -> None:
     """Delete a floor plan."""
+    if not _require_admin(connection, msg):
+        return
     store = hass.data[DOMAIN]["store"]
     floor_plan = store.get_floor_plan(msg["floor_plan_id"])
     if not floor_plan:
@@ -301,6 +318,8 @@ def ws_floors_add(
     msg: dict[str, Any],
 ) -> None:
     """Add a floor to a floor plan."""
+    if not _require_admin(connection, msg):
+        return
     store = hass.data[DOMAIN]["store"]
     floor = Floor(name=msg["name"], level=msg["level"])
     result = store.add_floor(msg["floor_plan_id"], floor)
@@ -328,6 +347,8 @@ def ws_floors_update(
     msg: dict[str, Any],
 ) -> None:
     """Update a floor."""
+    if not _require_admin(connection, msg):
+        return
     store = hass.data[DOMAIN]["store"]
     floor_plan = store.get_floor_plan(msg["floor_plan_id"])
     if not floor_plan:
@@ -369,6 +390,8 @@ def ws_floors_delete(
     msg: dict[str, Any],
 ) -> None:
     """Delete a floor."""
+    if not _require_admin(connection, msg):
+        return
     store = hass.data[DOMAIN]["store"]
     floor_plan = store.get_floor_plan(msg["floor_plan_id"])
     if not floor_plan:
@@ -510,6 +533,8 @@ def ws_floors_import(
     msg: dict[str, Any],
 ) -> None:
     """Import a floor with device placements and sensor configs."""
+    if not _require_admin(connection, msg):
+        return
     store = hass.data[DOMAIN]["store"]
     floor_plan_id = msg["floor_plan_id"]
     floor_plan = store.get_floor_plan(floor_plan_id)
@@ -583,6 +608,8 @@ def ws_rooms_add(
     msg: dict[str, Any],
 ) -> None:
     """Add a room to a floor."""
+    if not _require_admin(connection, msg):
+        return
     store = hass.data[DOMAIN]["store"]
     ha_area_id = _normalize_ha_area_id(msg.get("ha_area_id"))
     if not _validate_unique_ha_area(
@@ -644,6 +671,8 @@ def ws_rooms_update(
     msg: dict[str, Any],
 ) -> None:
     """Update a room."""
+    if not _require_admin(connection, msg):
+        return
     store = hass.data[DOMAIN]["store"]
     room = store.get_room(msg["floor_plan_id"], msg["room_id"])
     if not room:
@@ -714,6 +743,8 @@ def ws_rooms_delete(
     msg: dict[str, Any],
 ) -> None:
     """Delete a room."""
+    if not _require_admin(connection, msg):
+        return
     store = hass.data[DOMAIN]["store"]
 
     # Remove from sensor engine and clean up device
@@ -755,6 +786,8 @@ def ws_zones_add(
     msg: dict[str, Any],
 ) -> None:
     """Add a zone to a floor."""
+    if not _require_admin(connection, msg):
+        return
     store = hass.data[DOMAIN]["store"]
     ha_area_id = _normalize_ha_area_id(msg.get("ha_area_id"))
     if not _validate_unique_ha_area(
@@ -825,6 +858,8 @@ def ws_zones_update(
     msg: dict[str, Any],
 ) -> None:
     """Update a zone."""
+    if not _require_admin(connection, msg):
+        return
     store = hass.data[DOMAIN]["store"]
     zone = store.get_zone(msg["floor_plan_id"], msg["zone_id"])
     if not zone:
@@ -916,6 +951,8 @@ def ws_zones_delete(
     msg: dict[str, Any],
 ) -> None:
     """Delete a zone."""
+    if not _require_admin(connection, msg):
+        return
     store = hass.data[DOMAIN]["store"]
 
     # Remove from sensor engine and clean up device
@@ -1047,6 +1084,8 @@ def ws_edges_add(
     msg: dict[str, Any],
 ) -> None:
     """Add an edge to a floor, auto-snapping to nearby nodes."""
+    if not _require_admin(connection, msg):
+        return
     store = hass.data[DOMAIN]["store"]
     floor_plan = store.get_floor_plan(msg["floor_plan_id"])
     if not floor_plan:
@@ -1118,6 +1157,8 @@ def ws_edges_update(
     msg: dict[str, Any],
 ) -> None:
     """Update an edge's properties."""
+    if not _require_admin(connection, msg):
+        return
     store = hass.data[DOMAIN]["store"]
     floor_plan = store.get_floor_plan(msg["floor_plan_id"])
     if not floor_plan:
@@ -1205,6 +1246,8 @@ def ws_edges_delete(
     msg: dict[str, Any],
 ) -> None:
     """Delete an edge and clean up orphan nodes."""
+    if not _require_admin(connection, msg):
+        return
     store = hass.data[DOMAIN]["store"]
     floor_plan = store.get_floor_plan(msg["floor_plan_id"])
     if not floor_plan:
@@ -1270,6 +1313,8 @@ def ws_edges_link(
     msg: dict[str, Any],
 ) -> None:
     """Link edges so property changes propagate between them."""
+    if not _require_admin(connection, msg):
+        return
     from uuid import uuid4
 
     store = hass.data[DOMAIN]["store"]
@@ -1327,6 +1372,8 @@ def ws_edges_unlink(
     msg: dict[str, Any],
 ) -> None:
     """Unlink edges from their link groups."""
+    if not _require_admin(connection, msg):
+        return
     store = hass.data[DOMAIN]["store"]
     floor_plan = store.get_floor_plan(msg["floor_plan_id"])
     if not floor_plan:
@@ -1374,6 +1421,8 @@ def ws_edges_collinear_link(
     msg: dict[str, Any],
 ) -> None:
     """Link edges into a collinear group so they stay on the same line."""
+    if not _require_admin(connection, msg):
+        return
     from uuid import uuid4
 
     store = hass.data[DOMAIN]["store"]
@@ -1426,6 +1475,8 @@ def ws_edges_collinear_unlink(
     msg: dict[str, Any],
 ) -> None:
     """Remove edges from their collinear groups."""
+    if not _require_admin(connection, msg):
+        return
     store = hass.data[DOMAIN]["store"]
     floor_plan = store.get_floor_plan(msg["floor_plan_id"])
     if not floor_plan:
@@ -1473,6 +1524,8 @@ def ws_edges_angle_link(
     msg: dict[str, Any],
 ) -> None:
     """Link exactly 2 edges into an angle group (must share a common node)."""
+    if not _require_admin(connection, msg):
+        return
     from uuid import uuid4
 
     store = hass.data[DOMAIN]["store"]
@@ -1533,6 +1586,8 @@ def ws_edges_angle_unlink(
     msg: dict[str, Any],
 ) -> None:
     """Remove edges from their angle groups."""
+    if not _require_admin(connection, msg):
+        return
     store = hass.data[DOMAIN]["store"]
     floor_plan = store.get_floor_plan(msg["floor_plan_id"])
     if not floor_plan:
@@ -1588,6 +1643,8 @@ def ws_edges_split(
     msg: dict[str, Any],
 ) -> None:
     """Split an edge to insert a door or window."""
+    if not _require_admin(connection, msg):
+        return
     import math
 
     store = hass.data[DOMAIN]["store"]
@@ -1711,6 +1768,8 @@ def ws_nodes_update(
     msg: dict[str, Any],
 ) -> None:
     """Update node positions atomically."""
+    if not _require_admin(connection, msg):
+        return
     store = hass.data[DOMAIN]["store"]
     floor_plan = store.get_floor_plan(msg["floor_plan_id"])
     if not floor_plan:
@@ -1759,6 +1818,8 @@ def ws_nodes_merge(
     msg: dict[str, Any],
 ) -> None:
     """Merge two nodes, rewriting edges and removing degenerate ones."""
+    if not _require_admin(connection, msg):
+        return
     store = hass.data[DOMAIN]["store"]
     floor_plan = store.get_floor_plan(msg["floor_plan_id"])
     if not floor_plan:
@@ -1815,6 +1876,8 @@ def ws_nodes_dissolve(
     msg: dict[str, Any],
 ) -> None:
     """Dissolve a node: remove it and merge the two connected edges into one."""
+    if not _require_admin(connection, msg):
+        return
     store = hass.data[DOMAIN]["store"]
     floor_plan = store.get_floor_plan(msg["floor_plan_id"])
     if not floor_plan:
@@ -1899,6 +1962,8 @@ def ws_edges_split_at_point(
     msg: dict[str, Any],
 ) -> None:
     """Split an edge at a specific point, creating a new node and two edges."""
+    if not _require_admin(connection, msg):
+        return
     store = hass.data[DOMAIN]["store"]
     floor_plan = store.get_floor_plan(msg["floor_plan_id"])
     if not floor_plan:
@@ -2000,6 +2065,8 @@ def ws_lights_place(
     msg: dict[str, Any],
 ) -> None:
     """Place a light on a floor plan."""
+    if not _require_admin(connection, msg):
+        return
     store = hass.data[DOMAIN]["store"]
     light = LightPlacement(
         entity_id=msg["entity_id"],
@@ -2029,6 +2096,8 @@ def ws_lights_update(
     msg: dict[str, Any],
 ) -> None:
     """Update a light placement."""
+    if not _require_admin(connection, msg):
+        return
     store = hass.data[DOMAIN]["store"]
     light = store.get_light_placement(msg["light_id"])
     if not light:
@@ -2064,6 +2133,8 @@ def ws_lights_remove(
     msg: dict[str, Any],
 ) -> None:
     """Remove a light placement."""
+    if not _require_admin(connection, msg):
+        return
     store = hass.data[DOMAIN]["store"]
     if store.remove_light_placement(msg["light_id"]):
         connection.send_result(msg["id"], {"success": True})
@@ -2110,6 +2181,8 @@ def ws_switches_place(
     msg: dict[str, Any],
 ) -> None:
     """Place a switch on a floor plan."""
+    if not _require_admin(connection, msg):
+        return
     store = hass.data[DOMAIN]["store"]
     switch = SwitchPlacement(
         entity_id=msg["entity_id"],
@@ -2139,6 +2212,8 @@ def ws_switches_update(
     msg: dict[str, Any],
 ) -> None:
     """Update a switch placement."""
+    if not _require_admin(connection, msg):
+        return
     store = hass.data[DOMAIN]["store"]
     switch = store.get_switch_placement(msg["switch_id"])
     if not switch:
@@ -2174,6 +2249,8 @@ def ws_switches_remove(
     msg: dict[str, Any],
 ) -> None:
     """Remove a switch placement."""
+    if not _require_admin(connection, msg):
+        return
     store = hass.data[DOMAIN]["store"]
     if store.remove_switch_placement(msg["switch_id"]):
         connection.send_result(msg["id"], {"success": True})
@@ -2220,6 +2297,8 @@ def ws_buttons_place(
     msg: dict[str, Any],
 ) -> None:
     """Place a button on a floor plan."""
+    if not _require_admin(connection, msg):
+        return
     store = hass.data[DOMAIN]["store"]
     button = ButtonPlacement(
         entity_id=msg["entity_id"],
@@ -2249,6 +2328,8 @@ def ws_buttons_update(
     msg: dict[str, Any],
 ) -> None:
     """Update a button placement."""
+    if not _require_admin(connection, msg):
+        return
     store = hass.data[DOMAIN]["store"]
     button = store.get_button_placement(msg["button_id"])
     if not button:
@@ -2284,6 +2365,8 @@ def ws_buttons_remove(
     msg: dict[str, Any],
 ) -> None:
     """Remove a button placement."""
+    if not _require_admin(connection, msg):
+        return
     store = hass.data[DOMAIN]["store"]
     if store.remove_button_placement(msg["button_id"]):
         connection.send_result(msg["id"], {"success": True})
@@ -2377,6 +2460,8 @@ def ws_sensor_config_update(
     msg: dict[str, Any],
 ) -> None:
     """Update sensor configuration for a room (creates if not found)."""
+    if not _require_admin(connection, msg):
+        return
     store = hass.data[DOMAIN]["store"]
     config = store.get_sensor_config(msg["room_id"])
     if not config:
@@ -2508,6 +2593,8 @@ def ws_rules_create(
     msg: dict[str, Any],
 ) -> None:
     """Create a visual rule."""
+    if not _require_admin(connection, msg):
+        return
     store = hass.data[DOMAIN]["store"]
     rule = VisualRule.from_dict(
         {
@@ -2556,6 +2643,8 @@ def ws_rules_update(
     msg: dict[str, Any],
 ) -> None:
     """Update a visual rule."""
+    if not _require_admin(connection, msg):
+        return
     store = hass.data[DOMAIN]["store"]
     rule = store.get_visual_rule(msg["rule_id"])
     if not rule:
@@ -2600,6 +2689,8 @@ def ws_rules_delete(
     msg: dict[str, Any],
 ) -> None:
     """Delete a visual rule."""
+    if not _require_admin(connection, msg):
+        return
     store = hass.data[DOMAIN]["store"]
     if store.delete_visual_rule(msg["rule_id"]):
         connection.send_result(msg["id"], {"success": True})
@@ -2678,6 +2769,8 @@ def ws_mmwave_place(
     msg: dict[str, Any],
 ) -> None:
     """Place an mmWave sensor freely on the canvas."""
+    if not _require_admin(connection, msg):
+        return
     store = hass.data[DOMAIN]["store"]
     placement = MmwavePlacement(
         floor_plan_id=msg["floor_plan_id"],
@@ -2712,6 +2805,8 @@ def ws_mmwave_update(
     msg: dict[str, Any],
 ) -> None:
     """Update an mmWave placement."""
+    if not _require_admin(connection, msg):
+        return
     store = hass.data[DOMAIN]["store"]
     placement = store.get_mmwave_placement(msg["placement_id"])
     if not placement:
@@ -2751,6 +2846,8 @@ def ws_mmwave_delete(
     msg: dict[str, Any],
 ) -> None:
     """Delete an mmWave placement."""
+    if not _require_admin(connection, msg):
+        return
     store = hass.data[DOMAIN]["store"]
     if store.delete_mmwave_placement(msg["placement_id"]):
         connection.send_result(msg["id"], {"success": True})
@@ -2795,6 +2892,8 @@ def ws_simulate_target_add(
     msg: dict[str, Any],
 ) -> None:
     """Add a simulated target at a position."""
+    if not _require_admin(connection, msg):
+        return
     sim: SimulatedTargetProcessor = hass.data[DOMAIN]["sim_processor"]
     target = sim.add_target(
         msg["floor_plan_id"],
@@ -2820,6 +2919,8 @@ def ws_simulate_target_move(
     msg: dict[str, Any],
 ) -> None:
     """Move a simulated target to a new position."""
+    if not _require_admin(connection, msg):
+        return
     sim: SimulatedTargetProcessor = hass.data[DOMAIN]["sim_processor"]
     target = sim.move_target(
         msg["target_id"],
@@ -2845,6 +2946,8 @@ def ws_simulate_target_remove(
     msg: dict[str, Any],
 ) -> None:
     """Remove a simulated target."""
+    if not _require_admin(connection, msg):
+        return
     sim: SimulatedTargetProcessor = hass.data[DOMAIN]["sim_processor"]
     if sim.remove_target(msg["target_id"]):
         connection.send_result(msg["id"], {"success": True})
@@ -2864,6 +2967,8 @@ def ws_simulate_target_clear(
     msg: dict[str, Any],
 ) -> None:
     """Clear all simulated targets."""
+    if not _require_admin(connection, msg):
+        return
     sim: SimulatedTargetProcessor = hass.data[DOMAIN]["sim_processor"]
     sim.clear_all()
     connection.send_result(msg["id"], {"success": True})
