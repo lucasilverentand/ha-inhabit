@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.4.0](https://github.com/lucasilverentand/ha-inhabit/compare/v0.3.0...v0.4.0) (2026-02-26)
+
+
+### Features
+
+* add admin-only guards to all write WebSocket handlers ([03cd5f4](https://github.com/lucasilverentand/ha-inhabit/commit/03cd5f4fff314ef95bf12878e74915b20f7f1ef3))
+* clean up HA devices on room/floor/floor plan deletion ([a6bbb9c](https://github.com/lucasilverentand/ha-inhabit/commit/a6bbb9c4fd5a2f89dff7e62f6b5317b54f8d2965))
+
+
+### Bug Fixes
+
+* bump dependency versions to resolve security vulnerabilities ([93109ee](https://github.com/lucasilverentand/ha-inhabit/commit/93109ee28f7ad7e9fb380e29f6012fb1ae65aa24))
+
 ## [0.3.0](https://github.com/lucasilverentand/ha-inhabit/compare/v0.2.1...v0.3.0) (2026-02-25)
 
 
