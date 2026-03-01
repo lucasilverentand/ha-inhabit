@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1](https://github.com/lucasilverentand/ha-inhabit/compare/v0.4.0...v0.4.1) (2026-03-01)
+
+
+### Bug Fixes
+
+* remove floor plan name from viewer toolbar ([ed23b80](https://github.com/lucasilverentand/ha-inhabit/commit/ed23b80621b5fc29fe55b5f1835b4c72822dc671))
+
 ## [0.4.0](https://github.com/lucasilverentand/ha-inhabit/compare/v0.3.0...v0.4.0) (2026-02-26)
 
 
