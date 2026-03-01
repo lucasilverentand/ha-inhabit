@@ -4015,7 +4015,6 @@ function ue(e,t){return(t,i,o)=>((e,t,i)=>(i.configurable=!0,i.enumerable=!0,Ref
     `}_renderViewerToolbar(){const e=We.value,t=e?.floors??[],i=Fe.value?.id;return H`
       <div class="viewer-toolbar">
         <ha-icon icon="mdi:floor-plan"></ha-icon>
-        <h1>${e?.name??"Floorplan"}</h1>
         ${t.length>1?H`
               <select
                 class="floor-select"

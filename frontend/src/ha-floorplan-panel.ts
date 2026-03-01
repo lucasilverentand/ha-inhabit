@@ -763,7 +763,6 @@ export class HaFloorplanPanel extends LitElement {
     return html`
       <div class="viewer-toolbar">
         <ha-icon icon="mdi:floor-plan"></ha-icon>
-        <h1>${fp?.name ?? "Floorplan"}</h1>
         ${floors.length > 1
           ? html`
               <select
