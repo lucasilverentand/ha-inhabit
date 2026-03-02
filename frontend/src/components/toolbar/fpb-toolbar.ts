@@ -289,6 +289,32 @@ export class FpbToolbar extends LitElement {
       --mdc-icon-size: 20px;
     }
 
+    /* --- Done button --- */
+    .done-button {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 14px;
+      border: none;
+      border-radius: 8px;
+      background: var(--primary-color);
+      color: #fff;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: opacity 0.15s;
+      margin-left: 4px;
+    }
+
+    .done-button:hover {
+      opacity: 0.85;
+    }
+
+    .done-button ha-icon {
+      --mdc-icon-size: 18px;
+    }
+
     /* --- Mode switcher --- */
     .mode-group {
       display: flex;
@@ -415,6 +441,15 @@ export class FpbToolbar extends LitElement {
     } else if (e.key === "Escape") {
       this._cancelRename();
     }
+  }
+
+  private _exitEditor(): void {
+    this.dispatchEvent(
+      new CustomEvent("exit-editor", {
+        bubbles: true,
+        composed: true,
+      })
+    );
   }
 
   private _openImportExport(): void {
@@ -634,6 +669,16 @@ export class FpbToolbar extends LitElement {
             `)}
           </div>
         ` : null}
+
+        <div class="divider"></div>
+        <button
+          class="done-button"
+          @click=${this._exitEditor}
+          title="Exit editor"
+        >
+          <ha-icon icon="mdi:check"></ha-icon>
+          Done
+        </button>
       </div>
     `;
   }
