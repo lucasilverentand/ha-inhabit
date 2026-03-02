@@ -338,6 +338,12 @@ export class HaFloorplanPanel extends LitElement {
       color: var(--text-primary-color, #fff);
       border-color: var(--primary-color, #03a9f4);
     }
+
+    @media (hover: none) and (pointer: coarse) {
+      .edit-toggle {
+        display: none;
+      }
+    }
   `;
 
   override connectedCallback(): void {
@@ -779,6 +785,7 @@ export class HaFloorplanPanel extends LitElement {
               </select>
             `
           : null}
+        <span style="flex:1"></span>
         ${this._isAdmin
           ? html`
               <button
