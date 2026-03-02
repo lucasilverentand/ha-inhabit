@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.5.0](https://github.com/lucasilverentand/ha-inhabit/compare/v0.4.1...v0.5.0) (2026-03-02)
+
+
+### Features
+
+* add pinch-to-zoom and improve mobile touch navigation ([4fb1538](https://github.com/lucasilverentand/ha-inhabit/commit/4fb15386362e57d8f5bdc2e21d1aeb6630e5e1bb))
+
+
+### Bug Fixes
+
+* move edit button to right side of viewer toolbar and hide on mobile ([bc422cf](https://github.com/lucasilverentand/ha-inhabit/commit/bc422cf014ac53959b7733bff90ecf78439b4f12))
+
 ## [0.4.1](https://github.com/lucasilverentand/ha-inhabit/compare/v0.4.0...v0.4.1) (2026-03-01)
 
 
