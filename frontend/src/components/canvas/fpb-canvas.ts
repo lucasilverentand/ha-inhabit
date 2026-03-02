@@ -98,6 +98,18 @@ export class FpbCanvas extends LitElement {
   @state()
   private _panStart: Coordinates = { x: 0, y: 0 };
 
+  /** Active pointers for multi-touch (pinch-to-zoom). */
+  private _activePointers = new Map<number, { x: number; y: number }>();
+
+  /** Distance between two fingers at pinch start (screen px). */
+  private _pinchStartDist = 0;
+
+  /** Midpoint between two fingers at pinch start (screen px). */
+  private _pinchStartMid: Coordinates = { x: 0, y: 0 };
+
+  /** ViewBox snapshot when the pinch gesture began. */
+  private _pinchStartViewBox: ViewBox | null = null;
+
   @state()
   private _cursorPos: Coordinates = { x: 0, y: 0 };
 
@@ -268,6 +280,7 @@ export class FpbCanvas extends LitElement {
       outline: none;
       user-select: none;
       -webkit-user-select: none;
+      touch-action: none;
     }
 
     svg:focus {
@@ -1285,6 +1298,27 @@ export class FpbCanvas extends LitElement {
   }
 
   private _handlePointerDown(e: PointerEvent): void {
+    // Track all active pointers for multi-touch gestures
+    this._activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+    // Two-finger pinch-to-zoom: capture second pointer and start pinch
+    if (this._activePointers.size === 2) {
+      // Cancel any single-finger pan that was in progress
+      if (this._isPanning) {
+        this._isPanning = false;
+      }
+
+      const [p1, p2] = [...this._activePointers.values()];
+      const dx = p2.x - p1.x;
+      const dy = p2.y - p1.y;
+      this._pinchStartDist = Math.sqrt(dx * dx + dy * dy);
+      this._pinchStartMid = { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 };
+      this._pinchStartViewBox = { ...this._viewBox };
+      this._cancelViewBoxAnimation();
+      this._svg?.setPointerCapture(e.pointerId);
+      return;
+    }
+
     const point = this._screenToSvg({ x: e.clientX, y: e.clientY });
     const tool = activeTool.value;
     const snappedPoint = this._getSnappedPoint(point, tool === "light" || tool === "switch" || tool === "button" || tool === "mmwave" || tool === "wall" || tool === "zone");
@@ -1567,6 +1601,48 @@ export class FpbCanvas extends LitElement {
   }
 
   private _handlePointerMove(e: PointerEvent): void {
+    // Update tracked pointer position
+    if (this._activePointers.has(e.pointerId)) {
+      this._activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    }
+
+    // Handle pinch-to-zoom when two fingers are active
+    if (this._activePointers.size === 2 && this._pinchStartViewBox) {
+      const [p1, p2] = [...this._activePointers.values()];
+      const dx = p2.x - p1.x;
+      const dy = p2.y - p1.y;
+      const currentDist = Math.sqrt(dx * dx + dy * dy);
+
+      if (this._pinchStartDist > 0) {
+        const scale = this._pinchStartDist / currentDist;
+        const svgStart = this._pinchStartViewBox;
+
+        const newWidth = svgStart.width * scale;
+        const newHeight = svgStart.height * scale;
+
+        // Clamp zoom range
+        if (newWidth < 100 || newWidth > 10000) return;
+
+        // Zoom towards the midpoint between the two fingers
+        const currentMid = { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 };
+        const svgMid = this._screenToSvgWithViewBox(this._pinchStartMid, svgStart);
+
+        // Pan offset from finger midpoint movement (in SVG units)
+        const midDxScreen = currentMid.x - this._pinchStartMid.x;
+        const midDyScreen = currentMid.y - this._pinchStartMid.y;
+        const midDxSvg = midDxScreen * (svgStart.width / this._svg!.clientWidth);
+        const midDySvg = midDyScreen * (svgStart.height / this._svg!.clientHeight);
+
+        const newX = svgMid.x - (svgMid.x - svgStart.x) * scale - midDxSvg;
+        const newY = svgMid.y - (svgMid.y - svgStart.y) * scale - midDySvg;
+
+        const newViewBox = { x: newX, y: newY, width: newWidth, height: newHeight };
+        viewBox.value = newViewBox;
+        this._viewBox = newViewBox;
+      }
+      return;
+    }
+
     const point = this._screenToSvg({ x: e.clientX, y: e.clientY });
     const tool = activeTool.value;
     // Enable wall segment snapping for device and wall tools
@@ -1819,6 +1895,17 @@ export class FpbCanvas extends LitElement {
   }
 
   private _handlePointerUp(e: PointerEvent): void {
+    // Clean up multi-touch tracking
+    this._activePointers.delete(e.pointerId);
+
+    // End pinch gesture when a finger lifts
+    if (this._pinchStartViewBox) {
+      this._pinchStartViewBox = null;
+      this._pinchStartDist = 0;
+      this._svg?.releasePointerCapture(e.pointerId);
+      return;
+    }
+
     if (this._draggingSimTarget) {
       const point = this._screenToSvg({ x: e.clientX, y: e.clientY });
       // Send final move
@@ -1895,6 +1982,14 @@ export class FpbCanvas extends LitElement {
     if (this._isPanning) {
       this._isPanning = false;
       this._svg?.releasePointerCapture(e.pointerId);
+    }
+  }
+
+  private _handlePointerCancel(e: PointerEvent): void {
+    this._activePointers.delete(e.pointerId);
+    if (this._pinchStartViewBox) {
+      this._pinchStartViewBox = null;
+      this._pinchStartDist = 0;
     }
   }
 
@@ -2903,6 +2998,16 @@ export class FpbCanvas extends LitElement {
     return {
       x: this._viewBox.x + (screenPoint.x - rect.left) * scaleX,
       y: this._viewBox.y + (screenPoint.y - rect.top) * scaleY,
+    };
+  }
+
+  /** Convert screen coordinates to SVG units using an explicit viewBox (for pinch-to-zoom). */
+  private _screenToSvgWithViewBox(screenPoint: Coordinates, vb: ViewBox): Coordinates {
+    if (!this._svg) return screenPoint;
+    const rect = this._svg.getBoundingClientRect();
+    return {
+      x: vb.x + (screenPoint.x - rect.left) * (vb.width / rect.width),
+      y: vb.y + (screenPoint.y - rect.top) * (vb.height / rect.height),
     };
   }
 
@@ -6466,6 +6571,7 @@ export class FpbCanvas extends LitElement {
         @pointerdown=${this._handlePointerDown}
         @pointermove=${this._handlePointerMove}
         @pointerup=${this._handlePointerUp}
+        @pointercancel=${this._handlePointerCancel}
         @dblclick=${this._handleDblClick}
         @contextmenu=${this._handleContextMenu}
         @keydown=${this._handleKeyDown}
