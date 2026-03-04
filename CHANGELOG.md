@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.0](https://github.com/lucasilverentand/ha-inhabit/compare/v0.6.0...v0.7.0) (2026-03-04)
+
+
+### Features
+
+* add "other" device type, mmWave multi-target tracking, viewer device toggle, and unified entity picker ([004b618](https://github.com/lucasilverentand/ha-inhabit/commit/004b618b6636160756c6d99b7c0ccec5af9d9277))
+
 ## [0.6.0](https://github.com/lucasilverentand/ha-inhabit/compare/v0.5.0...v0.6.0) (2026-03-02)
 
 
