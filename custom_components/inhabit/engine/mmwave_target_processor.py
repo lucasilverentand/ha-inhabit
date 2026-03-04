@@ -126,8 +126,8 @@ class MmwaveTargetProcessor:
         self._region_hits[placement.id] = {}
         unsubs = []
 
-        for mapping in placement.target_mappings:
-            entity_ids = [mapping.x_entity_id, mapping.y_entity_id]
+        for idx, target in enumerate(placement.targets):
+            entity_ids = [target.get("x_entity_id", ""), target.get("y_entity_id", "")]
             entity_ids = [eid for eid in entity_ids if eid]
             if not entity_ids:
                 continue
@@ -135,12 +135,12 @@ class MmwaveTargetProcessor:
             unsub = async_track_state_change_event(
                 self.hass,
                 entity_ids,
-                self._make_state_handler(placement.id, mapping.target_index),
+                self._make_state_handler(placement.id, idx),
             )
             unsubs.append(unsub)
 
             # Read initial state
-            self._process_target(placement.id, mapping.target_index)
+            self._process_target(placement.id, idx)
 
         self._unsub_listeners[placement.id] = unsubs
 
@@ -162,16 +162,18 @@ class MmwaveTargetProcessor:
         if not placement:
             return
 
-        mapping = next(
-            (m for m in placement.target_mappings if m.target_index == target_index),
-            None,
-        )
-        if not mapping:
+        if target_index >= len(placement.targets):
             return
+        target = placement.targets[target_index]
 
         # Read current x/y from HA state
-        x_state = self.hass.states.get(mapping.x_entity_id)
-        y_state = self.hass.states.get(mapping.y_entity_id)
+        x_entity_id = target.get("x_entity_id", "")
+        y_entity_id = target.get("y_entity_id", "")
+        if not x_entity_id or not y_entity_id:
+            return
+
+        x_state = self.hass.states.get(x_entity_id)
+        y_state = self.hass.states.get(y_entity_id)
         if not x_state or not y_state:
             return
 
@@ -212,12 +214,12 @@ class MmwaveTargetProcessor:
         We rotate by the sensor's facing angle (wall normal + offset) and
         translate to mount position.
         """
-        facing_rad = math.radians(placement.wall_normal_angle + placement.angle)
+        facing_rad = math.radians(placement.angle)
         cos_a = math.cos(facing_rad)
         sin_a = math.sin(facing_rad)
 
-        world_x = placement.mount_x + (local_x * cos_a - local_y * sin_a)
-        world_y = placement.mount_y + (local_x * sin_a + local_y * cos_a)
+        world_x = placement.position.x + (local_x * cos_a - local_y * sin_a)
+        world_y = placement.position.y + (local_x * sin_a + local_y * cos_a)
 
         return Coordinates(x=world_x, y=world_y)
 

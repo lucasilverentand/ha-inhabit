@@ -166,6 +166,15 @@ export interface ButtonPlacement {
   label?: string;
 }
 
+export interface OtherPlacement {
+  id: string;
+  entity_id: string;
+  floor_id: string;
+  room_id?: string;
+  position: Coordinates;
+  label?: string;
+}
+
 // Virtual sensor types
 export type OccupancyState = "vacant" | "occupied" | "checking";
 
@@ -216,6 +225,7 @@ export interface MmwavePlacement {
   field_of_view: number;
   detection_range: number;
   label?: string;
+  targets: Array<{ x_entity_id: string; y_entity_id: string }>;
 }
 
 // Visual rule types
@@ -281,6 +291,7 @@ export type ToolType =
   | "switch"
   | "mmwave"
   | "button"
+  | "other"
   | "zone";
 
 export type ToolState = "ready" | "drawing" | "dragging";
@@ -319,6 +330,6 @@ export interface CanvasEvent {
 
 // Selection types
 export interface SelectionState {
-  type: "none" | "room" | "edge" | "light" | "switch" | "mmwave" | "button" | "shape" | "zone";
+  type: "none" | "room" | "edge" | "light" | "switch" | "mmwave" | "button" | "other" | "shape" | "zone";
   ids: string[];
 }

@@ -11,7 +11,7 @@ from homeassistant.helpers.storage import Store
 
 from ..const import STORAGE_KEY, STORAGE_VERSION
 from ..models.automation_rule import VisualRule
-from ..models.device_placement import ButtonPlacement, LightPlacement, SwitchPlacement
+from ..models.device_placement import ButtonPlacement, LightPlacement, OtherPlacement, SwitchPlacement
 from ..models.floor_plan import Door, Edge, Floor, FloorPlan, Node, Room, Wall, Window
 from ..models.mmwave_sensor import MmwavePlacement
 from ..models.virtual_sensor import VirtualSensorConfig
@@ -35,6 +35,7 @@ class FloorPlanStore:
             "visual_rules": {},
             "mmwave_placements": {},
             "button_placements": {},
+            "other_placements": {},
         }
         self._loaded = False
 
@@ -111,7 +112,7 @@ class FloorPlanStore:
         del self._data["floor_plans"][floor_plan_id]
 
         # Clean up associated data
-        for key in ("light_placements", "switch_placements", "button_placements"):
+        for key in ("light_placements", "switch_placements", "button_placements", "other_placements"):
             placements = self._data.get(key, {})
             to_del = [k for k, v in placements.items() if v.get("floor_plan_id") == floor_plan_id]
             for k in to_del:
@@ -519,6 +520,56 @@ class FloorPlanStore:
         data = self._data.get("button_placements", {}).get(button_id)
         if data:
             return ButtonPlacement.from_dict(data)
+        return None
+
+    # ==================== Other Placements ====================
+
+    def get_other_placements(self, floor_plan_id: str) -> list[OtherPlacement]:
+        """Get all other placements for a floor plan."""
+        placements = []
+        for data in self._data.get("other_placements", {}).values():
+            if data.get("floor_plan_id") == floor_plan_id:
+                placements.append(OtherPlacement.from_dict(data))
+        return placements
+
+    def place_other(
+        self, floor_plan_id: str, other: OtherPlacement
+    ) -> OtherPlacement:
+        """Place an other device on a floor plan."""
+        if "other_placements" not in self._data:
+            self._data["other_placements"] = {}
+        data = other.to_dict()
+        data["floor_plan_id"] = floor_plan_id
+        self._data["other_placements"][other.id] = data
+        self.async_delay_save()
+        return other
+
+    def update_other_placement(
+        self, other: OtherPlacement
+    ) -> OtherPlacement | None:
+        """Update an other placement."""
+        if other.id not in self._data.get("other_placements", {}):
+            return None
+        fp_id = self._data["other_placements"][other.id].get("floor_plan_id", "")
+        data = other.to_dict()
+        data["floor_plan_id"] = fp_id
+        self._data["other_placements"][other.id] = data
+        self.async_delay_save()
+        return other
+
+    def remove_other_placement(self, other_id: str) -> bool:
+        """Remove an other placement."""
+        if other_id in self._data.get("other_placements", {}):
+            del self._data["other_placements"][other_id]
+            self.async_delay_save()
+            return True
+        return False
+
+    def get_other_placement(self, other_id: str) -> OtherPlacement | None:
+        """Get a single other placement by ID."""
+        data = self._data.get("other_placements", {}).get(other_id)
+        if data:
+            return OtherPlacement.from_dict(data)
         return None
 
     # ==================== Sensor Configs ====================

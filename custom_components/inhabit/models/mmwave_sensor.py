@@ -22,6 +22,7 @@ class MmwavePlacement:
     field_of_view: float = 120.0  # FOV cone (degrees)
     detection_range: float = 500.0  # Max range (canvas units)
     label: str | None = None
+    targets: list[dict[str, str]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
@@ -36,6 +37,7 @@ class MmwavePlacement:
             "field_of_view": self.field_of_view,
             "detection_range": self.detection_range,
             "label": self.label,
+            "targets": self.targets,
         }
 
     @classmethod
@@ -56,4 +58,5 @@ class MmwavePlacement:
             field_of_view=float(data.get("field_of_view", 120.0)),
             detection_range=float(data.get("detection_range", 500.0)),
             label=data.get("label"),
+            targets=data.get("targets", []),
         )

@@ -111,3 +111,38 @@ class ButtonPlacement:
             position=Coordinates.from_dict(data.get("position", {"x": 0, "y": 0})),
             label=data.get("label"),
         )
+
+
+@dataclass
+class OtherPlacement:
+    """A generic entity placed on a floor plan."""
+
+    id: str = field(default_factory=_generate_id)
+    entity_id: str = ""
+    floor_id: str = ""
+    room_id: str | None = None
+    position: Coordinates = field(default_factory=lambda: Coordinates(0, 0))
+    label: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary."""
+        return {
+            "id": self.id,
+            "entity_id": self.entity_id,
+            "floor_id": self.floor_id,
+            "room_id": self.room_id,
+            "position": self.position.to_dict(),
+            "label": self.label,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> OtherPlacement:
+        """Create from dictionary."""
+        return cls(
+            id=data.get("id", _generate_id()),
+            entity_id=data.get("entity_id", ""),
+            floor_id=data.get("floor_id", ""),
+            room_id=data.get("room_id"),
+            position=Coordinates.from_dict(data.get("position", {"x": 0, "y": 0})),
+            label=data.get("label"),
+        )

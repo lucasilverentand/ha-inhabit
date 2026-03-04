@@ -13,7 +13,7 @@ from homeassistant.helpers.dispatcher import async_dispatcher_connect
 
 from ..const import DOMAIN, WS_PREFIX
 from ..models.automation_rule import VisualRule
-from ..models.device_placement import ButtonPlacement, LightPlacement, SwitchPlacement
+from ..models.device_placement import ButtonPlacement, LightPlacement, OtherPlacement, SwitchPlacement
 from ..models.floor_plan import (
     Coordinates,
     Edge,
@@ -138,6 +138,10 @@ def async_register_websocket_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_buttons_update)
     websocket_api.async_register_command(hass, ws_buttons_remove)
     websocket_api.async_register_command(hass, ws_buttons_list)
+    websocket_api.async_register_command(hass, ws_others_place)
+    websocket_api.async_register_command(hass, ws_others_update)
+    websocket_api.async_register_command(hass, ws_others_remove)
+    websocket_api.async_register_command(hass, ws_others_list)
     websocket_api.async_register_command(hass, ws_sensor_config_get)
     websocket_api.async_register_command(hass, ws_sensor_config_update)
     websocket_api.async_register_command(hass, ws_rules_list)
@@ -2392,6 +2396,122 @@ def ws_buttons_list(
     connection.send_result(msg["id"], [p.to_dict() for p in placements])
 
 
+# ==================== Other Placements ====================
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{WS_PREFIX}/others/place",
+        vol.Required("floor_plan_id"): str,
+        vol.Required("floor_id"): str,
+        vol.Required("entity_id"): str,
+        vol.Required("position"): dict,
+        vol.Optional("room_id"): vol.Any(str, None),
+        vol.Optional("label"): vol.Any(str, None),
+    }
+)
+@callback
+def ws_others_place(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Place an other device on a floor plan."""
+    if not _require_admin(connection, msg):
+        return
+    store = hass.data[DOMAIN]["store"]
+    other = OtherPlacement(
+        entity_id=msg["entity_id"],
+        floor_id=msg["floor_id"],
+        room_id=msg.get("room_id"),
+        position=Coordinates.from_dict(msg["position"]),
+        label=msg.get("label"),
+    )
+    result = store.place_other(msg["floor_plan_id"], other)
+    connection.send_result(msg["id"], result.to_dict())
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{WS_PREFIX}/others/update",
+        vol.Required("other_id"): str,
+        vol.Optional("entity_id"): str,
+        vol.Optional("position"): dict,
+        vol.Optional("room_id"): vol.Any(str, None),
+        vol.Optional("label"): vol.Any(str, None),
+    }
+)
+@callback
+def ws_others_update(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Update an other placement."""
+    if not _require_admin(connection, msg):
+        return
+    store = hass.data[DOMAIN]["store"]
+    other = store.get_other_placement(msg["other_id"])
+    if not other:
+        connection.send_error(msg["id"], "not_found", "Other placement not found")
+        return
+
+    if "entity_id" in msg:
+        other.entity_id = msg["entity_id"]
+    if "position" in msg:
+        other.position = Coordinates.from_dict(msg["position"])
+    if "room_id" in msg:
+        other.room_id = msg["room_id"]
+    if "label" in msg:
+        other.label = msg["label"]
+
+    result = store.update_other_placement(other)
+    if result:
+        connection.send_result(msg["id"], result.to_dict())
+    else:
+        connection.send_error(msg["id"], "update_failed", "Failed to update other placement")
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{WS_PREFIX}/others/remove",
+        vol.Required("other_id"): str,
+    }
+)
+@callback
+def ws_others_remove(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Remove an other placement."""
+    if not _require_admin(connection, msg):
+        return
+    store = hass.data[DOMAIN]["store"]
+    if store.remove_other_placement(msg["other_id"]):
+        connection.send_result(msg["id"], {"success": True})
+    else:
+        connection.send_error(msg["id"], "not_found", "Other placement not found")
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{WS_PREFIX}/others/list",
+        vol.Required("floor_plan_id"): str,
+    }
+)
+@callback
+def ws_others_list(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """List all other placements for a floor plan."""
+    store = hass.data[DOMAIN]["store"]
+    placements = store.get_other_placements(msg["floor_plan_id"])
+    connection.send_result(msg["id"], [p.to_dict() for p in placements])
+
+
 # ==================== Sensor Configuration ====================
 
 
@@ -2760,6 +2880,7 @@ def ws_occupancy_history(
         vol.Optional("field_of_view", default=120.0): vol.Coerce(float),
         vol.Optional("detection_range", default=500.0): vol.Coerce(float),
         vol.Optional("label"): vol.Any(str, None),
+        vol.Optional("targets", default=[]): list,
     }
 )
 @callback
@@ -2782,6 +2903,7 @@ def ws_mmwave_place(
         field_of_view=msg["field_of_view"],
         detection_range=msg["detection_range"],
         label=msg.get("label"),
+        targets=msg.get("targets", []),
     )
     result = store.create_mmwave_placement(placement)
     connection.send_result(msg["id"], result.to_dict())
@@ -2796,6 +2918,7 @@ def ws_mmwave_place(
         vol.Optional("field_of_view"): vol.Coerce(float),
         vol.Optional("detection_range"): vol.Coerce(float),
         vol.Optional("label"): vol.Any(str, None),
+        vol.Optional("targets"): list,
     }
 )
 @callback
@@ -2823,6 +2946,8 @@ def ws_mmwave_update(
         placement.detection_range = msg["detection_range"]
     if "label" in msg:
         placement.label = msg["label"]
+    if "targets" in msg:
+        placement.targets = msg["targets"]
 
     result = store.update_mmwave_placement(placement)
     if result:

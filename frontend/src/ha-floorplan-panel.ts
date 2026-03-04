@@ -11,6 +11,7 @@ import type {
   LightPlacement,
   SwitchPlacement,
   ButtonPlacement,
+  OtherPlacement,
   MmwavePlacement,
 } from "./types";
 
@@ -42,6 +43,7 @@ export {
   lightPlacements,
   switchPlacements,
   buttonPlacements,
+  otherPlacements,
   constraintConflicts,
   focusedRoomId,
   occupancyPanelTarget,
@@ -64,6 +66,7 @@ import {
   lightPlacements,
   switchPlacements,
   buttonPlacements,
+  otherPlacements,
   constraintConflicts,
   focusedRoomId,
   occupancyPanelTarget,
@@ -104,7 +107,7 @@ export class HaFloorplanPanel extends LitElement {
   private _occupancyPanelTarget: { id: string; name: string; type: "room" | "zone" } | null = null;
 
   @state()
-  private _devicePanelTarget: { id: string; type: "light" | "switch" | "mmwave" | "button" } | null = null;
+  private _devicePanelTarget: { id: string; type: "light" | "switch" | "mmwave" | "button" | "other" } | null = null;
 
   @state()
   private _editorMode = false;
@@ -344,6 +347,7 @@ export class HaFloorplanPanel extends LitElement {
         display: none;
       }
     }
+
   `;
 
   override connectedCallback(): void {
@@ -506,7 +510,7 @@ export class HaFloorplanPanel extends LitElement {
     if (!this.hass) return;
 
     try {
-      const [lights, switches, buttons, mmwave] = await Promise.all([
+      const [lights, switches, buttons, others, mmwave] = await Promise.all([
         this.hass.callWS<LightPlacement[]>({
           type: "inhabit/lights/list",
           floor_plan_id: floorPlanId,
@@ -519,6 +523,10 @@ export class HaFloorplanPanel extends LitElement {
           type: "inhabit/buttons/list",
           floor_plan_id: floorPlanId,
         }),
+        this.hass.callWS<OtherPlacement[]>({
+          type: "inhabit/others/list",
+          floor_plan_id: floorPlanId,
+        }),
         this.hass.callWS<MmwavePlacement[]>({
           type: "inhabit/mmwave/list",
           floor_plan_id: floorPlanId,
@@ -527,6 +535,7 @@ export class HaFloorplanPanel extends LitElement {
       lightPlacements.value = lights;
       switchPlacements.value = switches;
       buttonPlacements.value = buttons;
+      otherPlacements.value = others;
       mmwavePlacements.value = mmwave;
     } catch (err) {
       console.error("Error loading device placements:", err);

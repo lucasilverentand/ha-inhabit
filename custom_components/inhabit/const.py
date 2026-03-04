@@ -39,6 +39,7 @@ class DeviceCategory:
     SWITCH: Final = "switch"
     MMWAVE: Final = "mmwave"
     BUTTON: Final = "button"
+    OTHER: Final = "other"
 
 
 # Sensor types for occupancy detection

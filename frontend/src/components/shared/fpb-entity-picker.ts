@@ -31,6 +31,10 @@ export class FpbEntityPicker extends LitElement {
   @property({ type: Array })
   exclude: string[] = [];
 
+  /** Entity domains to exclude (e.g. ["light", "switch"]). */
+  @property({ type: Array })
+  excludeDomains: string[] = [];
+
   /** Allow selecting multiple entities before confirming. */
   @property({ type: Boolean })
   multi = false;
@@ -297,6 +301,7 @@ export class FpbEntityPicker extends LitElement {
     if (!this.hass) return [];
     const excludeSet = new Set(this.exclude);
     const domainSet = new Set(this.domains);
+    const excludeDomainSet = new Set(this.excludeDomains);
     const terms = this._search.toLowerCase().split(/\s+/).filter(Boolean);
 
     const entries: Array<EntityEntry & { score: number }> = [];
@@ -305,6 +310,7 @@ export class FpbEntityPicker extends LitElement {
       if (excludeSet.has(eid)) continue;
       const domain = eid.split(".")[0];
       if (domainSet.size > 0 && !domainSet.has(domain)) continue;
+      if (excludeDomainSet.size > 0 && excludeDomainSet.has(domain)) continue;
 
       const entry: EntityEntry = {
         entity_id: eid,

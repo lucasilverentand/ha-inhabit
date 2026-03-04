@@ -10,12 +10,14 @@ import type {
   LightPlacement,
   SwitchPlacement,
   ButtonPlacement,
+  OtherPlacement,
   MmwavePlacement,
 } from "../../types";
 import {
   lightPlacements,
   switchPlacements,
   buttonPlacements,
+  otherPlacements,
   mmwavePlacements,
   devicePanelTarget,
   selection,
@@ -30,10 +32,16 @@ export class FpbDevicePanel extends LitElement {
   placementId = "";
 
   @property({ type: String })
-  deviceType: "light" | "switch" | "mmwave" | "button" = "light";
+  deviceType: "light" | "switch" | "mmwave" | "button" | "other" = "light";
 
   @state()
   private _rebinding = false;
+
+  @state()
+  private _editingTargetIndex: number | null = null;
+
+  @state()
+  private _editingTargetAxis: "x" | "y" | null = null;
 
   static override styles = css`
     :host {
@@ -167,23 +175,93 @@ export class FpbDevicePanel extends LitElement {
     .delete-btn:hover {
       opacity: 0.9;
     }
+
+    .target-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      background: var(--primary-background-color);
+      border-radius: 8px;
+      font-size: 12px;
+    }
+
+    .target-row .target-label {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .target-row .target-axis {
+      color: var(--secondary-text-color);
+      font-weight: 600;
+      min-width: 14px;
+    }
+
+    .target-actions {
+      display: flex;
+      gap: 4px;
+    }
+
+    .small-btn {
+      padding: 2px 8px;
+      border: 1px solid var(--divider-color, #e0e0e0);
+      border-radius: 4px;
+      background: var(--card-background-color);
+      color: var(--primary-text-color);
+      cursor: pointer;
+      font-size: 11px;
+      white-space: nowrap;
+    }
+
+    .small-btn:hover {
+      background: var(--secondary-background-color);
+    }
+
+    .small-btn.danger {
+      color: var(--error-color, #f44336);
+      border-color: var(--error-color, #f44336);
+    }
+
+    .add-target-btn {
+      padding: 6px 12px;
+      border: 1px dashed var(--divider-color, #e0e0e0);
+      border-radius: 8px;
+      background: none;
+      color: var(--primary-color);
+      cursor: pointer;
+      font-size: 12px;
+      width: 100%;
+    }
+
+    .add-target-btn:hover {
+      background: var(--primary-background-color);
+    }
   `;
 
-  private _getPlacement(): LightPlacement | SwitchPlacement | ButtonPlacement | MmwavePlacement | null {
+  private _getPlacement(): LightPlacement | SwitchPlacement | ButtonPlacement | OtherPlacement | MmwavePlacement | null {
     if (this.deviceType === "light") {
       return lightPlacements.value.find(p => p.id === this.placementId) ?? null;
     } else if (this.deviceType === "switch") {
       return switchPlacements.value.find(p => p.id === this.placementId) ?? null;
     } else if (this.deviceType === "button") {
       return buttonPlacements.value.find(p => p.id === this.placementId) ?? null;
+    } else if (this.deviceType === "other") {
+      return otherPlacements.value.find(p => p.id === this.placementId) ?? null;
     } else {
       return mmwavePlacements.value.find(p => p.id === this.placementId) ?? null;
     }
   }
 
   private _getPickerDomains(): string[] {
-    if (this.deviceType === "mmwave") return [];
+    if (this.deviceType === "mmwave" || this.deviceType === "other") return [];
     return [this.deviceType];
+  }
+
+  private _getPickerExcludeDomains(): string[] {
+    if (this.deviceType === "other") return ["light", "switch", "button"];
+    return [];
   }
 
   private _getExcludedEntityIds(): string[] {
@@ -193,6 +271,8 @@ export class FpbDevicePanel extends LitElement {
       return switchPlacements.value.filter(p => p.id !== this.placementId).map(p => p.entity_id);
     } else if (this.deviceType === "button") {
       return buttonPlacements.value.filter(p => p.id !== this.placementId).map(p => p.entity_id);
+    } else if (this.deviceType === "other") {
+      return otherPlacements.value.filter(p => p.id !== this.placementId).map(p => p.entity_id);
     } else {
       return mmwavePlacements.value.filter(p => p.id !== this.placementId && p.entity_id).map(p => p.entity_id!);
     }
@@ -226,6 +306,15 @@ export class FpbDevicePanel extends LitElement {
           entity_id: newEntityId,
         });
         buttonPlacements.value = buttonPlacements.value.map(p =>
+          p.id === this.placementId ? { ...p, entity_id: newEntityId } : p
+        );
+      } else if (this.deviceType === "other") {
+        await this.hass.callWS({
+          type: "inhabit/others/update",
+          other_id: this.placementId,
+          entity_id: newEntityId,
+        });
+        otherPlacements.value = otherPlacements.value.map(p =>
           p.id === this.placementId ? { ...p, entity_id: newEntityId } : p
         );
       } else {
@@ -283,6 +372,12 @@ export class FpbDevicePanel extends LitElement {
           button_id: this.placementId,
         });
         buttonPlacements.value = buttonPlacements.value.filter(p => p.id !== this.placementId);
+      } else if (this.deviceType === "other") {
+        await this.hass.callWS({
+          type: "inhabit/others/remove",
+          other_id: this.placementId,
+        });
+        otherPlacements.value = otherPlacements.value.filter(p => p.id !== this.placementId);
       } else {
         await this.hass.callWS({
           type: "inhabit/mmwave/delete",
@@ -305,6 +400,7 @@ export class FpbDevicePanel extends LitElement {
     if (this.deviceType === "light") return "mdi:lightbulb";
     if (this.deviceType === "switch") return "mdi:toggle-switch";
     if (this.deviceType === "button") return "mdi:gesture-tap-button";
+    if (this.deviceType === "other") return "mdi:devices";
     return "mdi:access-point";
   }
 
@@ -312,6 +408,7 @@ export class FpbDevicePanel extends LitElement {
     if (this.deviceType === "light") return "Light";
     if (this.deviceType === "switch") return "Switch";
     if (this.deviceType === "button") return "Button";
+    if (this.deviceType === "other") return "Other Device";
     return "mmWave Sensor";
   }
 
@@ -357,6 +454,7 @@ export class FpbDevicePanel extends LitElement {
             <fpb-entity-picker
               .hass=${this.hass}
               .domains=${this._getPickerDomains()}
+              .excludeDomains=${this._getPickerExcludeDomains()}
               .exclude=${this._getExcludedEntityIds()}
               title="Select ${this._getTitle()} Entity"
               placeholder="Search entities..."
@@ -430,7 +528,92 @@ export class FpbDevicePanel extends LitElement {
           />
         </div>
       </div>
+
+      ${this._renderTrackingTargets(p)}
     `;
+  }
+
+  private _renderTrackingTargets(p: MmwavePlacement) {
+    const targets = p.targets ?? [];
+
+    const entityName = (eid: string) => {
+      if (!eid) return "Not set";
+      return this.hass?.states[eid]?.attributes?.friendly_name ?? eid;
+    };
+
+    return html`
+      <div class="section">
+        <div class="section-title">Tracking Targets</div>
+
+        ${targets.map((t, i) => html`
+          <div class="target-row">
+            <span class="target-axis">X:</span>
+            <span class="target-label">${entityName(t.x_entity_id)}</span>
+            <span class="target-axis">Y:</span>
+            <span class="target-label">${entityName(t.y_entity_id)}</span>
+            <div class="target-actions">
+              <button class="small-btn" @click=${() => {
+                this._editingTargetIndex = i;
+                this._editingTargetAxis = "x";
+              }}>X</button>
+              <button class="small-btn" @click=${() => {
+                this._editingTargetIndex = i;
+                this._editingTargetAxis = "y";
+              }}>Y</button>
+              <button class="small-btn danger" @click=${() => this._removeTarget(p, i)}>
+                <ha-icon icon="mdi:close" style="--mdc-icon-size: 12px;"></ha-icon>
+              </button>
+            </div>
+          </div>
+
+          ${this._editingTargetIndex === i && this._editingTargetAxis !== null ? html`
+            <fpb-entity-picker
+              .hass=${this.hass}
+              .domains=${["number"]}
+              title="Select ${this._editingTargetAxis.toUpperCase()} Entity for Target ${i + 1}"
+              placeholder="Search number entities..."
+              @entities-confirmed=${(e: CustomEvent) => {
+                this._updateTargetEntity(p, i, this._editingTargetAxis!, e.detail.entityIds[0]);
+              }}
+              @picker-closed=${() => {
+                this._editingTargetIndex = null;
+                this._editingTargetAxis = null;
+              }}
+            ></fpb-entity-picker>
+          ` : nothing}
+        `)}
+
+        <button class="add-target-btn" @click=${() => this._addTarget(p)}>
+          + Add Target
+        </button>
+      </div>
+    `;
+  }
+
+  private async _addTarget(p: MmwavePlacement): Promise<void> {
+    const newTargets = [...(p.targets ?? []), { x_entity_id: "", y_entity_id: "" }];
+    await this._updateMmwave({ targets: newTargets });
+  }
+
+  private async _removeTarget(p: MmwavePlacement, index: number): Promise<void> {
+    const newTargets = (p.targets ?? []).filter((_, i) => i !== index);
+    await this._updateMmwave({ targets: newTargets });
+  }
+
+  private async _updateTargetEntity(
+    p: MmwavePlacement,
+    index: number,
+    axis: "x" | "y",
+    entityId: string,
+  ): Promise<void> {
+    const newTargets = [...(p.targets ?? [])];
+    newTargets[index] = {
+      ...newTargets[index],
+      [axis === "x" ? "x_entity_id" : "y_entity_id"]: entityId,
+    };
+    this._editingTargetIndex = null;
+    this._editingTargetAxis = null;
+    await this._updateMmwave({ targets: newTargets });
   }
 }
 

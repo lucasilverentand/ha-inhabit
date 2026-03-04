@@ -38,6 +38,7 @@ const PLACEMENT_MENU_ITEMS: AddMenuItem[] = [
   { id: "switch", icon: "mdi:toggle-switch", label: "Switch" },
   { id: "button", icon: "mdi:gesture-tap-button", label: "Button" },
   { id: "mmwave", icon: "mdi:access-point", label: "mmWave" },
+  { id: "other", icon: "mdi:devices", label: "Other" },
 ];
 
 export class FpbToolbar extends LitElement {

@@ -1,7 +1,7 @@
 """Data models for Inhabit Floor Plan Builder."""
 
 from .automation_rule import RuleAction, RuleCondition, VisualRule
-from .device_placement import LightPlacement, SwitchPlacement
+from .device_placement import LightPlacement, OtherPlacement, SwitchPlacement
 from .floor_plan import (
     BoundingBox,
     Coordinates,
@@ -20,6 +20,7 @@ __all__ = [
     "BoundingBox",
     "Coordinates",
     "LightPlacement",
+    "OtherPlacement",
     "SwitchPlacement",
     "Door",
     "Floor",

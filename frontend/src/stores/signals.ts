@@ -20,6 +20,7 @@ import type {
   LightPlacement,
   SwitchPlacement,
   ButtonPlacement,
+  OtherPlacement,
   MmwavePlacement,
   SimulatedTarget,
 } from "../types";
@@ -39,10 +40,11 @@ interface InhabitSignals {
   lightPlacements: Signal<LightPlacement[]>;
   switchPlacements: Signal<SwitchPlacement[]>;
   buttonPlacements: Signal<ButtonPlacement[]>;
+  otherPlacements: Signal<OtherPlacement[]>;
   constraintConflicts: Signal<Map<string, ConstraintViolation[]>>;
   focusedRoomId: Signal<string | null>;
   occupancyPanelTarget: Signal<{ id: string; name: string; type: "room" | "zone" } | null>;
-  devicePanelTarget: Signal<{ id: string; type: "light" | "switch" | "mmwave" | "button" } | null>;
+  devicePanelTarget: Signal<{ id: string; type: "light" | "switch" | "mmwave" | "button" | "other" } | null>;
   mmwavePlacements: Signal<MmwavePlacement[]>;
   simulatedTargets: Signal<SimulatedTarget[]>;
   simHitboxEnabled: Signal<boolean>;
@@ -78,10 +80,11 @@ function createSignals(): InhabitSignals {
     lightPlacements: signal<LightPlacement[]>([]),
     switchPlacements: signal<SwitchPlacement[]>([]),
     buttonPlacements: signal<ButtonPlacement[]>([]),
+    otherPlacements: signal<OtherPlacement[]>([]),
     constraintConflicts: signal<Map<string, ConstraintViolation[]>>(new Map()),
     focusedRoomId: signal<string | null>(null),
     occupancyPanelTarget: signal<{ id: string; name: string; type: "room" | "zone" } | null>(null),
-    devicePanelTarget: signal<{ id: string; type: "light" | "switch" | "mmwave" | "button" } | null>(null),
+    devicePanelTarget: signal<{ id: string; type: "light" | "switch" | "mmwave" | "button" | "other" } | null>(null),
     mmwavePlacements: signal<MmwavePlacement[]>([]),
     simulatedTargets: signal<SimulatedTarget[]>([]),
     simHitboxEnabled: signal<boolean>(false),
@@ -110,6 +113,7 @@ export const layers = s.layers;
 export const lightPlacements = s.lightPlacements;
 export const switchPlacements = s.switchPlacements;
 export const buttonPlacements = s.buttonPlacements;
+export const otherPlacements = s.otherPlacements;
 export const constraintConflicts = s.constraintConflicts;
 export const focusedRoomId = s.focusedRoomId;
 export const occupancyPanelTarget = s.occupancyPanelTarget;
@@ -168,6 +172,7 @@ export function resetSignals(): void {
   lightPlacements.value = [];
   switchPlacements.value = [];
   buttonPlacements.value = [];
+  otherPlacements.value = [];
   constraintConflicts.value = new Map();
   focusedRoomId.value = null;
   occupancyPanelTarget.value = null;

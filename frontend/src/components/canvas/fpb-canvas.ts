@@ -5,7 +5,7 @@
 import { LitElement, html, css, svg } from "lit";
 import { property, state, query } from "lit/decorators.js";
 import { effect } from "@preact/signals-core";
-import type { HomeAssistant, Coordinates, ViewBox, Edge, Node, Room, WallDirection, CanvasMode, Floor, SelectionState, HassEntity, LightPlacement, SwitchPlacement, ButtonPlacement, Zone, SimulatedTarget } from "../../types";
+import type { HomeAssistant, Coordinates, ViewBox, Edge, Node, Room, WallDirection, CanvasMode, Floor, SelectionState, HassEntity, LightPlacement, SwitchPlacement, ButtonPlacement, OtherPlacement, Zone, SimulatedTarget } from "../../types";
 import {
   currentFloor,
   currentFloorPlan,
@@ -19,6 +19,7 @@ import {
   lightPlacements,
   switchPlacements,
   buttonPlacements,
+  otherPlacements,
   reloadFloorData,
   constraintConflicts,
   focusedRoomId,
@@ -34,6 +35,7 @@ import { buildNodeGraph, solveNodeMove, solveEdgeLengthChange, solveConstraintSn
 import { resolveFloorEdges, buildNodeMap, findNearestNode, edgesAtNode } from "../../utils/node-graph";
 import { detectRoomsFromEdges } from "../../utils/room-detection";
 import { pushAction, undo, redo } from "../../stores/history-store";
+import "../shared/fpb-entity-picker";
 
 
 /** Door swing angle: how far a door opens (degrees from closed/wall position). */
@@ -197,7 +199,13 @@ export class FpbCanvas extends LitElement {
   private _pendingDevice: { position: Coordinates } | null = null;
 
   @state()
-  private _entitySearch: string = "";
+  private _showEntityPickerModal = false;
+
+  // Long-press support for viewing mode
+  private _longPressTimer: ReturnType<typeof setTimeout> | null = null;
+  private _longPressTriggered = false;
+  private _viewingPointerStart: Coordinates | null = null;
+  private _viewingClickedDevice: { entityId: string; type: string; id: string } | null = null;
 
   @state()
   private _openingPreview: {
@@ -230,7 +238,7 @@ export class FpbCanvas extends LitElement {
   // ---- Placement dragging state ----
   @state()
   private _draggingPlacement: {
-    type: "light" | "switch" | "button" | "mmwave";
+    type: "light" | "switch" | "button" | "other" | "mmwave";
     id: string;
     startPoint: Coordinates;
     originalPosition: Coordinates;
@@ -1321,12 +1329,13 @@ export class FpbCanvas extends LitElement {
 
     const point = this._screenToSvg({ x: e.clientX, y: e.clientY });
     const tool = activeTool.value;
-    const snappedPoint = this._getSnappedPoint(point, tool === "light" || tool === "switch" || tool === "button" || tool === "mmwave" || tool === "wall" || tool === "zone");
+    const snappedPoint = this._getSnappedPoint(point, tool === "light" || tool === "switch" || tool === "button" || tool === "other" || tool === "mmwave" || tool === "wall" || tool === "zone");
     const mode = this._canvasMode;
 
     // Close entity picker if clicking outside (but not when in device mode placing a new one)
-    if (this._pendingDevice && activeTool.value !== "light" && activeTool.value !== "switch" && activeTool.value !== "button") {
+    if (this._pendingDevice && activeTool.value !== "light" && activeTool.value !== "switch" && activeTool.value !== "button" && activeTool.value !== "other") {
       this._pendingDevice = null;
+      this._showEntityPickerModal = false;
     }
 
     // Middle button always pans
@@ -1347,11 +1356,24 @@ export class FpbCanvas extends LitElement {
       return;
     }
 
-    // Viewing mode: left-click selects devices or pans
+    // Viewing mode: left-click toggles devices or pans; long-press opens details
     if (mode === "viewing" && e.button === 0) {
-      const clickedDevice = this._handleSelectClick(point, e.shiftKey);
-      if (clickedDevice) {
-        return;
+      const floor = currentFloor.value;
+      if (floor) {
+        const hit = this._hitTestDevice(point, floor);
+        if (hit) {
+          this._viewingClickedDevice = hit;
+          this._viewingPointerStart = { x: e.clientX, y: e.clientY };
+          this._longPressTriggered = false;
+          this._longPressTimer = setTimeout(() => {
+            this._longPressTriggered = true;
+            if (hit.entityId) {
+              this._openEntityDetails(hit.entityId);
+            }
+          }, 500);
+          this._svg?.setPointerCapture(e.pointerId);
+          return;
+        }
       }
       this._cancelViewBoxAnimation();
       this._isPanning = true;
@@ -1428,7 +1450,7 @@ export class FpbCanvas extends LitElement {
             this._svg?.setPointerCapture(e.pointerId);
           }
         } else if (
-          (selection.value.type === "light" || selection.value.type === "switch" || selection.value.type === "button" || selection.value.type === "mmwave") &&
+          (selection.value.type === "light" || selection.value.type === "switch" || selection.value.type === "button" || selection.value.type === "other" || selection.value.type === "mmwave") &&
           selection.value.ids.length === 1
         ) {
           // Set up placement drag
@@ -1441,6 +1463,8 @@ export class FpbCanvas extends LitElement {
             pos = switchPlacements.value.find(p => p.id === selId)?.position ?? null;
           } else if (selType === "button") {
             pos = buttonPlacements.value.find(p => p.id === selId)?.position ?? null;
+          } else if (selType === "other") {
+            pos = otherPlacements.value.find(p => p.id === selId)?.position ?? null;
           } else {
             pos = mmwavePlacements.value.find(p => p.id === selId)?.position ?? null;
           }
@@ -1465,7 +1489,7 @@ export class FpbCanvas extends LitElement {
           ? this._cursorPos
           : snappedPoint;
         this._handleWallClick(wallPoint, e.shiftKey);
-      } else if (tool === "light" || tool === "switch" || tool === "button") {
+      } else if (tool === "light" || tool === "switch" || tool === "button" || tool === "other") {
         this._edgeEditor = null;
         this._multiEdgeEditor = null;
         this._handleDeviceClick(snappedPoint);
@@ -1500,9 +1524,9 @@ export class FpbCanvas extends LitElement {
   }
 
   private _handleDeviceClick(point: Coordinates): void {
-    // Open entity picker at this position
+    // Open entity picker modal at this position
     this._pendingDevice = { position: point };
-    this._entitySearch = "";
+    this._showEntityPickerModal = true;
   }
 
   private async _placeOpening(tool: "door" | "window"): Promise<void> {
@@ -1646,7 +1670,7 @@ export class FpbCanvas extends LitElement {
     const point = this._screenToSvg({ x: e.clientX, y: e.clientY });
     const tool = activeTool.value;
     // Enable wall segment snapping for device and wall tools
-    let snapped = this._getSnappedPoint(point, tool === "light" || tool === "switch" || tool === "button" || tool === "mmwave" || tool === "wall" || tool === "zone");
+    let snapped = this._getSnappedPoint(point, tool === "light" || tool === "switch" || tool === "button" || tool === "other" || tool === "mmwave" || tool === "wall" || tool === "zone");
 
     // Shift constrains to horizontal/vertical when drawing a wall
     if (e.shiftKey && tool === "wall" && this._wallStartPoint) {
@@ -1673,6 +1697,22 @@ export class FpbCanvas extends LitElement {
     }
 
     this._cursorPos = snapped;
+
+    // Cancel long-press if pointer moved too far
+    if (this._longPressTimer && this._viewingPointerStart) {
+      const dx = e.clientX - this._viewingPointerStart.x;
+      const dy = e.clientY - this._viewingPointerStart.y;
+      if (Math.abs(dx) > 5 || Math.abs(dy) > 5) {
+        clearTimeout(this._longPressTimer);
+        this._longPressTimer = null;
+        this._viewingClickedDevice = null;
+        this._viewingPointerStart = null;
+        // Start panning instead
+        this._cancelViewBoxAnimation();
+        this._isPanning = true;
+        this._panStart = { x: e.clientX, y: e.clientY };
+      }
+    }
 
     // Handle simulated target dragging
     if (this._draggingSimTarget) {
@@ -1737,6 +1777,10 @@ export class FpbCanvas extends LitElement {
           );
         } else if (dp.type === "button") {
           buttonPlacements.value = buttonPlacements.value.map(p =>
+            p.id === dp.id ? { ...p, position: newPos } : p
+          );
+        } else if (dp.type === "other") {
+          otherPlacements.value = otherPlacements.value.map(p =>
             p.id === dp.id ? { ...p, position: newPos } : p
           );
         } else {
@@ -1906,6 +1950,28 @@ export class FpbCanvas extends LitElement {
       return;
     }
 
+    // Handle long-press / tap in viewing mode
+    if (this._viewingClickedDevice) {
+      if (this._longPressTimer) {
+        clearTimeout(this._longPressTimer);
+        this._longPressTimer = null;
+      }
+      const device = this._viewingClickedDevice;
+      this._viewingClickedDevice = null;
+      this._viewingPointerStart = null;
+      this._svg?.releasePointerCapture(e.pointerId);
+      if (!this._longPressTriggered) {
+        // Short tap: toggle for light/switch/button, open details for other/mmwave
+        if ((device.type === "light" || device.type === "switch" || device.type === "button") && device.entityId) {
+          this._toggleEntity(device.entityId);
+        } else if (device.entityId) {
+          this._openEntityDetails(device.entityId);
+        }
+      }
+      this._longPressTriggered = false;
+      return;
+    }
+
     if (this._draggingSimTarget) {
       const point = this._screenToSvg({ x: e.clientX, y: e.clientY });
       // Send final move
@@ -1997,6 +2063,17 @@ export class FpbCanvas extends LitElement {
    * Double-click on an edge to split it at that point.
    */
   private async _handleDblClick(e: MouseEvent): Promise<void> {
+    if (this._canvasMode === "viewing") {
+      const point = this._screenToSvg({ x: e.clientX, y: e.clientY });
+      const floor = currentFloor.value;
+      if (floor) {
+        const hit = this._hitTestDevice(point, floor);
+        if (hit && hit.entityId) {
+          this._openEntityDetails(hit.entityId);
+        }
+      }
+      return;
+    }
     if (this._canvasMode !== "walls") return;
 
     const point = this._screenToSvg({ x: e.clientX, y: e.clientY });
@@ -2043,6 +2120,18 @@ export class FpbCanvas extends LitElement {
    * Right-click on a node to dissolve it (merge the two connected edges).
    */
   private async _handleContextMenu(e: MouseEvent): Promise<void> {
+    if (this._canvasMode === "viewing") {
+      e.preventDefault();
+      const point = this._screenToSvg({ x: e.clientX, y: e.clientY });
+      const floor = currentFloor.value;
+      if (floor) {
+        const hit = this._hitTestDevice(point, floor);
+        if (hit && hit.entityId) {
+          this._openEntityDetails(hit.entityId);
+        }
+      }
+      return;
+    }
     if (this._canvasMode === "occupancy" && simHitboxEnabled.value) {
       e.preventDefault();
       return; // Right-click removal of sim targets handled in _handlePointerDown
@@ -2693,7 +2782,7 @@ export class FpbCanvas extends LitElement {
           if (mode === "placement") {
             devicePanelTarget.value = { id: light.id, type: "light" };
           } else {
-            this._openEntityDetails(light.entity_id);
+            this._toggleEntity(light.entity_id);
           }
           return true;
         }
@@ -2705,7 +2794,7 @@ export class FpbCanvas extends LitElement {
           if (mode === "placement") {
             devicePanelTarget.value = { id: sw.id, type: "switch" };
           } else {
-            this._openEntityDetails(sw.entity_id);
+            this._toggleEntity(sw.entity_id);
           }
           return true;
         }
@@ -2717,7 +2806,19 @@ export class FpbCanvas extends LitElement {
           if (mode === "placement") {
             devicePanelTarget.value = { id: btn.id, type: "button" };
           } else {
-            this._openEntityDetails(btn.entity_id);
+            this._toggleEntity(btn.entity_id);
+          }
+          return true;
+        }
+      }
+      for (const other of otherPlacements.value.filter(d => d.floor_id === floor.id)) {
+        const dist = Math.hypot(point.x - other.position.x, point.y - other.position.y);
+        if (dist < 15) {
+          selection.value = { type: "other", ids: [other.id] };
+          if (mode === "placement") {
+            devicePanelTarget.value = { id: other.id, type: "other" };
+          } else {
+            this._openEntityDetails(other.entity_id);
           }
           return true;
         }
@@ -4455,6 +4556,13 @@ export class FpbCanvas extends LitElement {
               ${this._renderButton(btn)}
             </g>
           `)}
+        ${otherPlacements.value
+          .filter(d => d.floor_id === floor.id)
+          .map(other => svg`
+            <g class="${frid ? (this._isDeviceInFocusedRegion(other.room_id, other.position, frid, floor) ? "device-focused" : "device-dimmed") : ""}">
+              ${this._renderOther(other)}
+            </g>
+          `)}
         ${this._renderMmwaveLayer(floor)}
       </g>
     `;
@@ -4506,6 +4614,14 @@ export class FpbCanvas extends LitElement {
     return this._renderDeviceIcon(btn.position.x, btn.position.y, isOn, "button", btn.id, label, "#2196f3", "#616161", iconData);
   }
 
+  private _renderOther(other: OtherPlacement) {
+    const state = this.hass?.states[other.entity_id];
+    const isOn = state?.state === "on";
+    const label = (other.label || state?.attributes.friendly_name || other.entity_id) as string;
+    const iconData = this._getEntityIconData(state, "mdi:devices");
+    return this._renderDeviceIcon(other.position.x, other.position.y, isOn, "other", other.id, label, "#9c27b0", isOn ? "#fff" : "#616161", iconData);
+  }
+
   private _renderMmwaveLayer(floor: Floor) {
     const placements = mmwavePlacements.value.filter(p => p.floor_id === floor.id);
     if (placements.length === 0) return null;
@@ -4537,6 +4653,24 @@ export class FpbCanvas extends LitElement {
           const hx = px + handleDist * Math.cos(angleRad);
           const hy = py + handleDist * Math.sin(angleRad);
 
+          // Render target dots from tracked entities
+          const targetDots = (p.targets ?? []).map(t => {
+            if (!t.x_entity_id || !t.y_entity_id) return null;
+            const xState = this.hass?.states[t.x_entity_id];
+            const yState = this.hass?.states[t.y_entity_id];
+            if (!xState || !yState) return null;
+            const localX = parseFloat(xState.state);
+            const localY = parseFloat(yState.state);
+            if (isNaN(localX) || isNaN(localY) || (localX === 0 && localY === 0)) return null;
+            // Transform from sensor-local coords to world coords
+            const rad = p.angle * Math.PI / 180;
+            const cosA = Math.cos(rad);
+            const sinA = Math.sin(rad);
+            const wx = px + localX * cosA - localY * sinA;
+            const wy = py + localX * sinA + localY * cosA;
+            return svg`<circle cx="${wx}" cy="${wy}" r="5" fill="#ff5722" stroke="#fff" stroke-width="1.5" opacity="0.9"/>`;
+          });
+
           return svg`
             <g class="mmwave-placement ${isSelected ? "selected" : ""}">
               ${showCoverage ? svg`
@@ -4554,6 +4688,7 @@ export class FpbCanvas extends LitElement {
                 fill="#2196f3" stroke="#fff" stroke-width="2"/>
               <text x="${px}" y="${py + 3}" text-anchor="middle"
                 font-size="8" fill="#fff" font-weight="bold">R</text>
+              ${targetDots}
               ${showCoverage && isSelected ? svg`
                 <!-- Rotation handle -->
                 <g class="rotation-handle"
@@ -5396,33 +5531,6 @@ export class FpbCanvas extends LitElement {
     return { x: cx * factor, y: cy * factor };
   }
 
-  private _svgToScreen(svgPoint: Coordinates): Coordinates {
-    if (!this._svg) return svgPoint;
-
-    const ctm = this._svg.getScreenCTM();
-    if (ctm) {
-      // Get absolute screen position
-      const screenX = ctm.a * svgPoint.x + ctm.c * svgPoint.y + ctm.e;
-      const screenY = ctm.b * svgPoint.x + ctm.d * svgPoint.y + ctm.f;
-      // Convert to position relative to the SVG element
-      const rect = this._svg.getBoundingClientRect();
-      return {
-        x: screenX - rect.left,
-        y: screenY - rect.top,
-      };
-    }
-
-    // Fallback
-    const rect = this._svg.getBoundingClientRect();
-    const scaleX = rect.width / this._viewBox.width;
-    const scaleY = rect.height / this._viewBox.height;
-
-    return {
-      x: (svgPoint.x - this._viewBox.x) * scaleX,
-      y: (svgPoint.y - this._viewBox.y) * scaleY,
-    };
-  }
-
   private _renderEdgeEditor() {
     if (!this._edgeEditor) return null;
 
@@ -5963,36 +6071,6 @@ export class FpbCanvas extends LitElement {
     return entities.slice(0, 30);
   }
 
-  private _getFilteredEntities(): HassEntity[] {
-    if (!this.hass) return [];
-
-    const tool = activeTool.value;
-    const domain = tool === "light" ? "light" : tool === "switch" ? "switch" : tool === "button" ? "button" : null;
-    if (!domain) return [];
-
-    let entities = Object.values(this.hass.states).filter((e) =>
-      e.entity_id.startsWith(domain + ".")
-    );
-
-    if (this._entitySearch) {
-      const search = this._entitySearch.toLowerCase();
-      entities = entities.filter(
-        (e) =>
-          e.entity_id.toLowerCase().includes(search) ||
-          ((e.attributes.friendly_name as string) || "").toLowerCase().includes(search)
-      );
-    }
-
-    return entities.slice(0, 30);
-  }
-
-  private _getEntityIcon(entity: HassEntity): string {
-    const domain = entity.entity_id.split(".")[0];
-    if (domain === "light") return (entity.attributes.icon as string) || "mdi:lightbulb";
-    if (domain === "switch") return (entity.attributes.icon as string) || "mdi:toggle-switch";
-    return (entity.attributes.icon as string) || "mdi:devices";
-  }
-
   private _getEntityIconData(entity: HassEntity | undefined, fallbackIcon: string): IconData | undefined {
     if (!entity) return this._getIconData(fallbackIcon);
 
@@ -6018,6 +6096,47 @@ export class FpbCanvas extends LitElement {
       bubbles: true,
       composed: true,
     }));
+  }
+
+  private _toggleEntity(entityId: string): void {
+    if (!this.hass) return;
+    const domain = entityId.split(".")[0];
+    if (domain === "button" || domain === "input_button") {
+      this.hass.callService("button", "press", { entity_id: entityId });
+    } else if (domain === "light" || domain === "switch" || domain === "input_boolean") {
+      this.hass.callService("homeassistant", "toggle", { entity_id: entityId });
+    } else {
+      this._openEntityDetails(entityId);
+    }
+  }
+
+  private _hitTestDevice(point: Coordinates, floor: Floor): { entityId: string; type: "light" | "switch" | "button" | "other" | "mmwave"; id: string } | null {
+    for (const light of lightPlacements.value.filter(d => d.floor_id === floor.id)) {
+      if (Math.hypot(point.x - light.position.x, point.y - light.position.y) < 15) {
+        return { entityId: light.entity_id, type: "light", id: light.id };
+      }
+    }
+    for (const sw of switchPlacements.value.filter(d => d.floor_id === floor.id)) {
+      if (Math.hypot(point.x - sw.position.x, point.y - sw.position.y) < 15) {
+        return { entityId: sw.entity_id, type: "switch", id: sw.id };
+      }
+    }
+    for (const btn of buttonPlacements.value.filter(d => d.floor_id === floor.id)) {
+      if (Math.hypot(point.x - btn.position.x, point.y - btn.position.y) < 15) {
+        return { entityId: btn.entity_id, type: "button", id: btn.id };
+      }
+    }
+    for (const other of otherPlacements.value.filter(d => d.floor_id === floor.id)) {
+      if (Math.hypot(point.x - other.position.x, point.y - other.position.y) < 15) {
+        return { entityId: other.entity_id, type: "other", id: other.id };
+      }
+    }
+    for (const mw of mmwavePlacements.value.filter(p => p.floor_id === floor.id)) {
+      if (Math.hypot(point.x - mw.position.x, point.y - mw.position.y) < 15) {
+        return { entityId: mw.entity_id ?? "", type: "mmwave", id: mw.id };
+      }
+    }
+    return null;
   }
 
   private _getStateIconCacheKey(entity: HassEntity): string {
@@ -6205,9 +6324,9 @@ export class FpbCanvas extends LitElement {
     if (!floor || !floorPlan) return;
 
     const tool = activeTool.value;
-    const wsType = tool === "light" ? "inhabit/lights/place" : tool === "button" ? "inhabit/buttons/place" : "inhabit/switches/place";
-    const removeType = tool === "light" ? "inhabit/lights/remove" : tool === "button" ? "inhabit/buttons/remove" : "inhabit/switches/remove";
-    const idKey = tool === "light" ? "light_id" : tool === "button" ? "button_id" : "switch_id";
+    const wsType = tool === "light" ? "inhabit/lights/place" : tool === "button" ? "inhabit/buttons/place" : tool === "other" ? "inhabit/others/place" : "inhabit/switches/place";
+    const removeType = tool === "light" ? "inhabit/lights/remove" : tool === "button" ? "inhabit/buttons/remove" : tool === "other" ? "inhabit/others/remove" : "inhabit/switches/remove";
+    const idKey = tool === "light" ? "light_id" : tool === "button" ? "button_id" : tool === "other" ? "other_id" : "switch_id";
 
     const hass = this.hass;
     const fpId = floorPlan.id;
@@ -6328,6 +6447,8 @@ export class FpbCanvas extends LitElement {
       newPos = switchPlacements.value.find(p => p.id === dp.id)?.position;
     } else if (dp.type === "button") {
       newPos = buttonPlacements.value.find(p => p.id === dp.id)?.position;
+    } else if (dp.type === "other") {
+      newPos = otherPlacements.value.find(p => p.id === dp.id)?.position;
     } else {
       newPos = mmwavePlacements.value.find(p => p.id === dp.id)?.position;
     }
@@ -6354,6 +6475,12 @@ export class FpbCanvas extends LitElement {
           button_id: dp.id,
           position: finalPos,
         });
+      } else if (dp.type === "other") {
+        await hass.callWS({
+          type: "inhabit/others/update",
+          other_id: dp.id,
+          position: finalPos,
+        });
       } else {
         await hass.callWS({
           type: "inhabit/mmwave/update",
@@ -6375,6 +6502,8 @@ export class FpbCanvas extends LitElement {
             await hass.callWS({ type: "inhabit/switches/update", switch_id: placementId, position: origPos });
           } else if (placementType === "button") {
             await hass.callWS({ type: "inhabit/buttons/update", button_id: placementId, position: origPos });
+          } else if (placementType === "other") {
+            await hass.callWS({ type: "inhabit/others/update", other_id: placementId, position: origPos });
           } else {
             await hass.callWS({ type: "inhabit/mmwave/update", placement_id: placementId, position: origPos });
           }
@@ -6387,6 +6516,8 @@ export class FpbCanvas extends LitElement {
             await hass.callWS({ type: "inhabit/switches/update", switch_id: placementId, position: finalPos });
           } else if (placementType === "button") {
             await hass.callWS({ type: "inhabit/buttons/update", button_id: placementId, position: finalPos });
+          } else if (placementType === "other") {
+            await hass.callWS({ type: "inhabit/others/update", other_id: placementId, position: finalPos });
           } else {
             await hass.callWS({ type: "inhabit/mmwave/update", placement_id: placementId, position: finalPos });
           }
@@ -6514,42 +6645,41 @@ export class FpbCanvas extends LitElement {
 
   private _cancelDevicePlacement(): void {
     this._pendingDevice = null;
+    this._showEntityPickerModal = false;
+  }
+
+  private _getPickerDomains(): string[] {
+    const tool = activeTool.value;
+    if (tool === "light") return ["light"];
+    if (tool === "switch") return ["switch"];
+    if (tool === "button") return ["button"];
+    return [];
+  }
+
+  private _getPickerExcludeDomains(): string[] {
+    const tool = activeTool.value;
+    if (tool === "other") return ["light", "switch", "button"];
+    return [];
   }
 
   private _renderEntityPicker() {
-    if (!this._pendingDevice) return null;
+    if (!this._showEntityPickerModal || !this._pendingDevice) return null;
 
-    const screenPos = this._svgToScreen(this._pendingDevice.position);
-    const entities = this._getFilteredEntities();
+    const tool = activeTool.value;
+    const title = tool === "light" ? "Select Light" : tool === "switch" ? "Select Switch" : tool === "button" ? "Select Button" : tool === "other" ? "Select Entity" : "Select Entity";
 
     return html`
-      <div class="entity-picker"
-           style="left: ${screenPos.x + 20}px; top: ${screenPos.y - 10}px;"
-           @click=${(e: Event) => e.stopPropagation()}
-           @pointerdown=${(e: Event) => e.stopPropagation()}>
-        <input
-          type="text"
-          placeholder="Search entities..."
-          .value=${this._entitySearch}
-          @input=${(e: InputEvent) => this._entitySearch = (e.target as HTMLInputElement).value}
-          @keydown=${(e: KeyboardEvent) => e.key === "Escape" && this._cancelDevicePlacement()}
-          autofocus
-        />
-        <div class="entity-list">
-          ${entities.map(
-            (entity) => html`
-              <div
-                class="entity-item ${entity.state === "on" ? "on" : ""}"
-                @click=${() => this._placeDevice(entity.entity_id)}
-              >
-                <ha-icon icon=${this._getEntityIcon(entity)}></ha-icon>
-                <span class="name">${entity.attributes.friendly_name || entity.entity_id}</span>
-                <span class="state">${entity.state}</span>
-              </div>
-            `
-          )}
-        </div>
-      </div>
+      <fpb-entity-picker
+        .hass=${this.hass}
+        .domains=${this._getPickerDomains()}
+        .excludeDomains=${this._getPickerExcludeDomains()}
+        title=${title}
+        @entities-confirmed=${(e: CustomEvent) => {
+          this._placeDevice(e.detail.entityIds[0]);
+          this._showEntityPickerModal = false;
+        }}
+        @picker-closed=${() => this._cancelDevicePlacement()}
+      ></fpb-entity-picker>
     `;
   }
 
@@ -7238,9 +7368,9 @@ export class FpbCanvas extends LitElement {
 
   private _renderDevicePreview() {
     const tool = activeTool.value;
-    if ((tool !== "light" && tool !== "switch" && tool !== "mmwave") || this._pendingDevice) return null;
+    if ((tool !== "light" && tool !== "switch" && tool !== "button" && tool !== "other" && tool !== "mmwave") || this._pendingDevice) return null;
 
-    const color = tool === "light" ? "#ffd600" : tool === "switch" ? "#4caf50" : "#2196f3";
+    const color = tool === "light" ? "#ffd600" : tool === "switch" ? "#4caf50" : tool === "button" ? "#2196f3" : tool === "other" ? "#9c27b0" : "#2196f3";
 
     return svg`
       <g class="device-preview">
