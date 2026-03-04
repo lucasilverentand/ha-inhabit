@@ -8,6 +8,7 @@ export interface HomeAssistant {
   services: Record<string, Record<string, object>>;
   user: HassUser;
   language: string;
+  auth: { data: { access_token: string } };
   callService(domain: string, service: string, data?: object): Promise<void>;
   callWS<T>(msg: object): Promise<T>;
   connection: {
@@ -88,6 +89,17 @@ export interface Edge {
   height?: number;
 }
 
+export interface BackgroundLayer {
+  id: string;
+  name: string;
+  url: string;
+  offset_x: number;
+  offset_y: number;
+  scale: number;
+  opacity: number;
+  visible: boolean;
+}
+
 export interface Room {
   id: string;
   name: string;
@@ -99,6 +111,7 @@ export interface Room {
   checking_timeout: number;
   connected_rooms: string[];
   ha_area_id?: string;
+  background_layers: BackgroundLayer[];
 }
 
 export interface Zone {

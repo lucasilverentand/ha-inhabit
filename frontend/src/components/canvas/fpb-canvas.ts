@@ -5,7 +5,7 @@
 import { LitElement, html, css, svg } from "lit";
 import { property, state, query } from "lit/decorators.js";
 import { effect } from "@preact/signals-core";
-import type { HomeAssistant, Coordinates, ViewBox, Edge, Node, Room, WallDirection, CanvasMode, Floor, SelectionState, HassEntity, LightPlacement, SwitchPlacement, ButtonPlacement, OtherPlacement, Zone, SimulatedTarget } from "../../types";
+import type { HomeAssistant, Coordinates, ViewBox, Edge, Node, Room, WallDirection, CanvasMode, Floor, SelectionState, HassEntity, LightPlacement, SwitchPlacement, ButtonPlacement, OtherPlacement, Zone, SimulatedTarget, BackgroundLayer } from "../../types";
 import {
   currentFloor,
   currentFloorPlan,
@@ -122,7 +122,7 @@ export class FpbCanvas extends LitElement {
   private _wallChainStart: Coordinates | null = null;
 
   @state()
-  private _roomEditor: { room: Room; editName: string; editColor: string; editAreaId: string | null } | null = null;
+  private _roomEditor: { room: Room; editName: string; editColor: string; editAreaId: string | null; editLayers: BackgroundLayer[]; selectedLayerIdx: number | null } | null = null;
 
   @state()
   private _haAreas: Array<{ area_id: string; name: string; icon?: string | null }> = [];
@@ -243,6 +243,28 @@ export class FpbCanvas extends LitElement {
     startPoint: Coordinates;
     originalPosition: Coordinates;
     hasMoved: boolean;
+    pointerId: number;
+  } | null = null;
+
+  // ---- Background layer dragging state ----
+  private _draggingLayer: {
+    layerIdx: number;
+    startPoint: Coordinates;
+    originalOffsetX: number;
+    originalOffsetY: number;
+    pointerId: number;
+  } | null = null;
+
+  // ---- Background layer corner resize state ----
+  private _draggingCorner: {
+    corner: string; // 'tl' | 'tr' | 'bl' | 'br'
+    layerIdx: number;
+    anchorX: number;
+    anchorY: number;
+    bx: number;
+    by: number;
+    bw: number;
+    bh: number;
     pointerId: number;
   } | null = null;
 
@@ -911,6 +933,170 @@ export class FpbCanvas extends LitElement {
       border-color: var(--primary-color, #2196f3);
     }
 
+    .room-bg-upload {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      border-radius: 8px;
+      background: var(--primary-color, #2196f3);
+      color: var(--text-primary-color, #fff);
+      font-size: 13px;
+      cursor: pointer;
+    }
+
+    .room-bg-preview {
+      position: relative;
+      display: inline-block;
+    }
+
+    .room-bg-preview img {
+      max-width: 100%;
+      max-height: 80px;
+      border-radius: 6px;
+      object-fit: cover;
+    }
+
+    .room-bg-remove {
+      position: absolute;
+      top: -6px;
+      right: -6px;
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      border: none;
+      background: var(--error-color, #f44336);
+      color: #fff;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+      --mdc-icon-size: 14px;
+    }
+
+    .bg-layer-list {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      max-height: 160px;
+      overflow-y: auto;
+      margin-bottom: 6px;
+    }
+
+    .bg-layer-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 6px;
+      border-radius: 6px;
+      cursor: pointer;
+      background: rgba(255,255,255,0.05);
+      border: 1.5px solid transparent;
+    }
+
+    .bg-layer-item:hover {
+      background: rgba(255,255,255,0.1);
+    }
+
+    .bg-layer-item.selected {
+      border-color: var(--primary-color, #2196f3);
+      background: rgba(33,150,243,0.1);
+    }
+
+    .bg-layer-vis {
+      background: none;
+      border: none;
+      color: var(--secondary-text-color, #aaa);
+      cursor: pointer;
+      padding: 0;
+      --mdc-icon-size: 16px;
+      flex-shrink: 0;
+    }
+
+    .bg-layer-thumb {
+      width: 28px;
+      height: 28px;
+      border-radius: 4px;
+      object-fit: cover;
+      flex-shrink: 0;
+    }
+
+    .bg-layer-name {
+      flex: 1;
+      font-size: 12px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .bg-layer-delete {
+      background: none;
+      border: none;
+      color: var(--error-color, #f44336);
+      cursor: pointer;
+      padding: 0;
+      --mdc-icon-size: 14px;
+      flex-shrink: 0;
+      opacity: 0.6;
+    }
+
+    .bg-layer-delete:hover {
+      opacity: 1;
+    }
+
+    .bg-layer-controls {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding: 6px 0;
+    }
+
+    .bg-layer-reorder {
+      display: flex;
+      gap: 4px;
+    }
+
+    .bg-layer-reorder button {
+      background: rgba(255,255,255,0.1);
+      border: none;
+      border-radius: 6px;
+      color: var(--text-primary-color, #fff);
+      cursor: pointer;
+      padding: 4px 8px;
+      --mdc-icon-size: 14px;
+    }
+
+    .bg-layer-reorder button:disabled {
+      opacity: 0.3;
+      cursor: default;
+    }
+
+    .bg-layer-slider-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+    }
+
+    .bg-layer-slider-row span:first-child {
+      width: 48px;
+      flex-shrink: 0;
+    }
+
+    .bg-layer-slider-row input[type="range"] {
+      flex: 1;
+      height: 4px;
+      accent-color: var(--primary-color, #2196f3);
+    }
+
+    .bg-layer-slider-val {
+      width: 36px;
+      text-align: right;
+      font-size: 11px;
+      color: var(--secondary-text-color, #aaa);
+    }
+
     .entity-picker {
       position: absolute;
       background: var(--card-background-color, white);
@@ -1414,6 +1600,34 @@ export class FpbCanvas extends LitElement {
       }
     }
 
+    // Layer drag: if room editor is open with a selected layer, start dragging on click inside the layer rect or room
+    if (e.button === 0 && this._roomEditor && this._roomEditor.selectedLayerIdx !== null) {
+      const layer = this._roomEditor.editLayers[this._roomEditor.selectedLayerIdx];
+      if (layer) {
+        const room = this._roomEditor.room;
+        const vs = room.polygon.vertices;
+        const xs = vs.map(v => v.x), ys = vs.map(v => v.y);
+        const rbx = Math.min(...xs), rby = Math.min(...ys);
+        const rbw = Math.max(...xs) - rbx, rbh = Math.max(...ys) - rby;
+        const lx = rbx + layer.offset_x;
+        const ly = rby + layer.offset_y;
+        const lw = rbw * layer.scale;
+        const lh = rbh * layer.scale;
+        const inLayerRect = point.x >= lx && point.x <= lx + lw && point.y >= ly && point.y <= ly + lh;
+        if (inLayerRect || this._pointInPolygon(point, room.polygon.vertices)) {
+          this._draggingLayer = {
+            layerIdx: this._roomEditor.selectedLayerIdx,
+            startPoint: point,
+            originalOffsetX: layer.offset_x,
+            originalOffsetY: layer.offset_y,
+            pointerId: e.pointerId,
+          };
+          this._svg?.setPointerCapture(e.pointerId);
+          return;
+        }
+      }
+    }
+
     // Left click behavior depends on tool
     if (e.button === 0) {
       if (tool === "select") {
@@ -1753,6 +1967,48 @@ export class FpbCanvas extends LitElement {
       return;
     }
 
+    // Handle background layer corner resize
+    if (this._draggingCorner && this._roomEditor) {
+      const { corner, layerIdx, anchorX, anchorY, bx, by, bw, bh } = this._draggingCorner;
+      const dx = point.x - anchorX;
+      const dy = point.y - anchorY;
+      const origDiag = Math.sqrt(bw * bw + bh * bh);
+      const newDiag = Math.sqrt(dx * dx + dy * dy);
+      const newScale = Math.max(newDiag / origDiag, 0.05);
+      let newOffsetX: number, newOffsetY: number;
+      if (corner === 'br') {
+        newOffsetX = anchorX - bx;
+        newOffsetY = anchorY - by;
+      } else if (corner === 'tl') {
+        newOffsetX = anchorX - bw * newScale - bx;
+        newOffsetY = anchorY - bh * newScale - by;
+      } else if (corner === 'tr') {
+        newOffsetX = anchorX - bx;
+        newOffsetY = anchorY - bh * newScale - by;
+      } else {
+        newOffsetX = anchorX - bw * newScale - bx;
+        newOffsetY = anchorY - by;
+      }
+      const editLayers = [...this._roomEditor.editLayers];
+      editLayers[layerIdx] = { ...editLayers[layerIdx], scale: newScale, offset_x: newOffsetX, offset_y: newOffsetY };
+      this._roomEditor = { ...this._roomEditor, editLayers };
+      return;
+    }
+
+    // Handle background layer dragging
+    if (this._draggingLayer && this._roomEditor) {
+      const dx = point.x - this._draggingLayer.startPoint.x;
+      const dy = point.y - this._draggingLayer.startPoint.y;
+      const editLayers = [...this._roomEditor.editLayers];
+      editLayers[this._draggingLayer.layerIdx] = {
+        ...editLayers[this._draggingLayer.layerIdx],
+        offset_x: this._draggingLayer.originalOffsetX + dx,
+        offset_y: this._draggingLayer.originalOffsetY + dy,
+      };
+      this._roomEditor = { ...this._roomEditor, editLayers };
+      return;
+    }
+
     // Handle placement dragging (light/switch/mmwave)
     if (this._draggingPlacement) {
       const dx = point.x - this._draggingPlacement.startPoint.x;
@@ -1988,6 +2244,18 @@ export class FpbCanvas extends LitElement {
     if (this._rotatingMmwave) {
       this._finishMmwaveRotation();
       this._svg?.releasePointerCapture(e.pointerId);
+      return;
+    }
+
+    if (this._draggingCorner) {
+      this._svg?.releasePointerCapture(e.pointerId);
+      this._draggingCorner = null;
+      return;
+    }
+
+    if (this._draggingLayer) {
+      this._svg?.releasePointerCapture(e.pointerId);
+      this._draggingLayer = null;
       return;
     }
 
@@ -2286,6 +2554,8 @@ export class FpbCanvas extends LitElement {
       this._draggingZone = null;
       this._draggingZoneVertex = null;
       this._draggingPlacement = null;
+      this._draggingLayer = null;
+      this._draggingCorner = null;
       if (this._rotatingMmwave) {
         // Revert angle on cancel
         const rm = this._rotatingMmwave;
@@ -2877,6 +3147,8 @@ export class FpbCanvas extends LitElement {
               editName: areaName,
               editColor: room.color,
               editAreaId: room.ha_area_id ?? null,
+              editLayers: (room.background_layers ?? []).map(l => ({ ...l })),
+              selectedLayerIdx: null,
             };
           }
           return true;
@@ -3775,7 +4047,7 @@ export class FpbCanvas extends LitElement {
     const floorPlan = currentFloorPlan.value;
     if (!floor || !floorPlan) return;
 
-    const { room, editName, editColor, editAreaId } = this._roomEditor;
+    const { room, editName, editColor, editAreaId, editLayers } = this._roomEditor;
 
     try {
       await this.hass.callWS({
@@ -3785,6 +4057,7 @@ export class FpbCanvas extends LitElement {
         name: editName,
         color: editColor,
         ha_area_id: editAreaId,
+        background_layers: editLayers,
       });
       await reloadFloorData();
     } catch (err) {
@@ -3819,6 +4092,58 @@ export class FpbCanvas extends LitElement {
 
     this._roomEditor = null;
     selection.value = { type: "none", ids: [] };
+  }
+
+  private async _handleRoomBgUpload(e: Event): Promise<void> {
+    const file = (e.target as HTMLInputElement).files?.[0];
+    if (!file || !this.hass) return;
+
+    const formData = new FormData();
+    formData.append("file", file);
+
+    try {
+      const resp = await fetch("/api/inhabit/images/upload", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${this.hass.auth.data.access_token}` },
+        body: formData,
+      });
+      const data = await resp.json();
+      if (data.url && this._roomEditor) {
+        const fileName = file.name.replace(/\.[^.]+$/, "") || "Layer";
+        const newLayer: BackgroundLayer = {
+          id: Math.random().toString(36).slice(2, 10),
+          name: fileName,
+          url: data.url,
+          offset_x: 0,
+          offset_y: 0,
+          scale: 1.0,
+          opacity: 1.0,
+          visible: true,
+        };
+        const editLayers = [...this._roomEditor.editLayers, newLayer];
+        this._roomEditor = { ...this._roomEditor, editLayers, selectedLayerIdx: editLayers.length - 1 };
+      }
+    } catch (err) {
+      console.error("Error uploading room background:", err);
+    }
+  }
+
+  private _startCornerDrag(e: PointerEvent, corner: string, layerIdx: number, bx: number, by: number, bw: number, bh: number): void {
+    e.stopPropagation();
+    e.preventDefault();
+    if (!this._roomEditor) return;
+    const layer = this._roomEditor.editLayers[layerIdx];
+    const lx = bx + layer.offset_x;
+    const ly = by + layer.offset_y;
+    const lw = bw * layer.scale;
+    const lh = bh * layer.scale;
+    let anchorX: number, anchorY: number;
+    if (corner === 'tl') { anchorX = lx + lw; anchorY = ly + lh; }
+    else if (corner === 'tr') { anchorX = lx; anchorY = ly + lh; }
+    else if (corner === 'bl') { anchorX = lx + lw; anchorY = ly; }
+    else { anchorX = lx; anchorY = ly; }
+    this._draggingCorner = { corner, layerIdx, anchorX, anchorY, bx, by, bw, bh, pointerId: e.pointerId };
+    this._svg?.setPointerCapture(e.pointerId);
   }
 
   private _renderRoomEditor() {
@@ -3905,6 +4230,85 @@ export class FpbCanvas extends LitElement {
               ></button>
             `)}
           </div>
+        </div>
+
+        <div class="wall-editor-section">
+          <span class="wall-editor-section-label">Background Layers</span>
+          <div class="bg-layer-list">
+            ${this._roomEditor.editLayers.map((layer, idx) => html`
+              <div class="bg-layer-item ${this._roomEditor?.selectedLayerIdx === idx ? 'selected' : ''}"
+                   @click=${() => { if (this._roomEditor) this._roomEditor = { ...this._roomEditor, selectedLayerIdx: this._roomEditor.selectedLayerIdx === idx ? null : idx }; }}>
+                <button class="bg-layer-vis" @click=${(e: Event) => {
+                  e.stopPropagation();
+                  if (!this._roomEditor) return;
+                  const editLayers = [...this._roomEditor.editLayers];
+                  editLayers[idx] = { ...editLayers[idx], visible: !editLayers[idx].visible };
+                  this._roomEditor = { ...this._roomEditor, editLayers };
+                }}><ha-icon icon=${layer.visible ? "mdi:eye" : "mdi:eye-off"}></ha-icon></button>
+                <img class="bg-layer-thumb" src="${layer.url}" />
+                <span class="bg-layer-name">${layer.name || "Layer"}</span>
+                <button class="bg-layer-delete" @click=${(e: Event) => {
+                  e.stopPropagation();
+                  if (!this._roomEditor) return;
+                  const editLayers = this._roomEditor.editLayers.filter((_, i) => i !== idx);
+                  let selectedLayerIdx = this._roomEditor.selectedLayerIdx;
+                  if (selectedLayerIdx !== null) {
+                    if (selectedLayerIdx === idx) selectedLayerIdx = null;
+                    else if (selectedLayerIdx > idx) selectedLayerIdx--;
+                  }
+                  this._roomEditor = { ...this._roomEditor, editLayers, selectedLayerIdx };
+                }}><ha-icon icon="mdi:close"></ha-icon></button>
+              </div>
+            `)}
+          </div>
+          ${this._roomEditor.selectedLayerIdx !== null && this._roomEditor.editLayers[this._roomEditor.selectedLayerIdx] ? (() => {
+            const idx = this._roomEditor!.selectedLayerIdx!;
+            const layer = this._roomEditor!.editLayers[idx];
+            return html`
+              <div class="bg-layer-controls">
+                <div class="bg-layer-reorder">
+                  <button ?disabled=${idx === 0} @click=${() => {
+                    if (!this._roomEditor || idx === 0) return;
+                    const editLayers = [...this._roomEditor.editLayers];
+                    [editLayers[idx - 1], editLayers[idx]] = [editLayers[idx], editLayers[idx - 1]];
+                    this._roomEditor = { ...this._roomEditor, editLayers, selectedLayerIdx: idx - 1 };
+                  }}><ha-icon icon="mdi:arrow-up"></ha-icon></button>
+                  <button ?disabled=${idx === this._roomEditor!.editLayers.length - 1} @click=${() => {
+                    if (!this._roomEditor || idx === this._roomEditor.editLayers.length - 1) return;
+                    const editLayers = [...this._roomEditor.editLayers];
+                    [editLayers[idx], editLayers[idx + 1]] = [editLayers[idx + 1], editLayers[idx]];
+                    this._roomEditor = { ...this._roomEditor, editLayers, selectedLayerIdx: idx + 1 };
+                  }}><ha-icon icon="mdi:arrow-down"></ha-icon></button>
+                </div>
+                <div class="bg-layer-slider-row">
+                  <span>Scale</span>
+                  <input type="range" min="0.1" max="5" step="0.05" .value=${String(layer.scale)}
+                    @input=${(e: InputEvent) => {
+                      if (!this._roomEditor) return;
+                      const editLayers = [...this._roomEditor.editLayers];
+                      editLayers[idx] = { ...editLayers[idx], scale: parseFloat((e.target as HTMLInputElement).value) };
+                      this._roomEditor = { ...this._roomEditor, editLayers };
+                    }} />
+                  <span class="bg-layer-slider-val">${Math.round(layer.scale * 100)}%</span>
+                </div>
+                <div class="bg-layer-slider-row">
+                  <span>Opacity</span>
+                  <input type="range" min="0" max="1" step="0.05" .value=${String(layer.opacity)}
+                    @input=${(e: InputEvent) => {
+                      if (!this._roomEditor) return;
+                      const editLayers = [...this._roomEditor.editLayers];
+                      editLayers[idx] = { ...editLayers[idx], opacity: parseFloat((e.target as HTMLInputElement).value) };
+                      this._roomEditor = { ...this._roomEditor, editLayers };
+                    }} />
+                  <span class="bg-layer-slider-val">${Math.round(layer.opacity * 100)}%</span>
+                </div>
+              </div>
+            `;
+          })() : null}
+          <label class="room-bg-upload">
+            <ha-icon icon="mdi:image-plus"></ha-icon> Add Image
+            <input type="file" accept="image/*" @change=${this._handleRoomBgUpload} hidden />
+          </label>
         </div>
 
         <div class="wall-editor-actions">
@@ -4458,11 +4862,17 @@ export class FpbCanvas extends LitElement {
 
     return svg`
       <!-- Background layer -->
-      ${backgroundLayer?.visible && floor.background_image ? svg`
+      ${backgroundLayer?.visible && floor.background_image && floor.rooms.length > 0 ? svg`
+        <defs>
+          <clipPath id="bg-clip-${floor.id}">
+            ${floor.rooms.map(room => svg`<path d="${polygonToPath(room.polygon)}"/>`)}
+          </clipPath>
+        </defs>
         <image href="${floor.background_image}"
                x="0" y="0"
                width="${1000 * floor.background_scale}"
                height="${800 * floor.background_scale}"
+               clip-path="url(#bg-clip-${floor.id})"
                opacity="${backgroundLayer.opacity ?? 1}"
                class="${frid ? "room-dimmed" : ""}"/>
       ` : null}
@@ -4478,6 +4888,60 @@ export class FpbCanvas extends LitElement {
                   stroke="var(--divider-color, #999)"
                   stroke-width="1"/>
           `)}
+          <!-- Room background layers -->
+          ${floor.rooms.filter(r => (r.background_layers ?? []).length > 0 || (this._roomEditor?.room.id === r.id && this._roomEditor.editLayers.length > 0)).map(room => {
+            const vs = room.polygon.vertices;
+            const xs = vs.map(v => v.x), ys = vs.map(v => v.y);
+            const bx = Math.min(...xs), by = Math.min(...ys);
+            const bw = Math.max(...xs) - bx, bh = Math.max(...ys) - by;
+            // Use live editLayers when room editor is open for this room
+            const layers = (this._roomEditor && this._roomEditor.room.id === room.id)
+              ? this._roomEditor.editLayers
+              : (room.background_layers ?? []);
+            return svg`
+              <clipPath id="room-bg-clip-${room.id}">
+                <path d="${polygonToPath(room.polygon)}"/>
+              </clipPath>
+              <g clip-path="url(#room-bg-clip-${room.id})"
+                 class="${frid ? (room.id === frid ? "room-focused" : "room-dimmed") : ""}">
+                ${layers.filter(l => l.visible).map((layer) => {
+                  const lw = bw * layer.scale;
+                  const lh = bh * layer.scale;
+                  const lx = bx + layer.offset_x;
+                  const ly = by + layer.offset_y;
+                  return svg`
+                    <image href="${layer.url}"
+                           x="${lx}" y="${ly}" width="${lw}" height="${lh}"
+                           preserveAspectRatio="xMidYMid slice"
+                           opacity="${layer.opacity}"/>
+                  `;
+                })}
+              </g>
+              ${this._roomEditor && this._roomEditor.room.id === room.id && this._roomEditor.selectedLayerIdx !== null ? (() => {
+                const selIdx = this._roomEditor!.selectedLayerIdx!;
+                const selLayer = this._roomEditor!.editLayers[selIdx];
+                if (!selLayer) return null;
+                const lw = bw * selLayer.scale;
+                const lh = bh * selLayer.scale;
+                const lx = bx + selLayer.offset_x;
+                const ly = by + selLayer.offset_y;
+                const hr = this._svg ? 5 * this._viewBox.width / this._svg.clientWidth : 5;
+                const sw = this._svg ? 1.5 * this._viewBox.width / this._svg.clientWidth : 1.5;
+                return svg`
+                  <rect x="${lx}" y="${ly}" width="${lw}" height="${lh}"
+                        fill="none" stroke="var(--primary-color, #2196f3)"
+                        stroke-width="${sw}" stroke-dasharray="${sw * 4} ${sw * 2}"
+                        pointer-events="none"/>
+                  ${[['tl', lx, ly], ['tr', lx + lw, ly], ['bl', lx, ly + lh], ['br', lx + lw, ly + lh]].map(([c, cx, cy]) => svg`
+                    <circle cx="${cx}" cy="${cy}" r="${hr}"
+                            fill="white" stroke="var(--primary-color, #2196f3)" stroke-width="${sw}"
+                            style="cursor:${c === 'tl' || c === 'br' ? 'nwse-resize' : 'nesw-resize'}"
+                            @pointerdown=${(e: PointerEvent) => this._startCornerDrag(e, c as string, selIdx, bx, by, bw, bh)}/>
+                  `)}
+                `;
+              })() : null}
+            `;
+          })}
         </g>
       ` : null}
 

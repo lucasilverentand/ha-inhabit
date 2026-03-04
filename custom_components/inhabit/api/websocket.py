@@ -15,6 +15,7 @@ from ..const import DOMAIN, WS_PREFIX
 from ..models.automation_rule import VisualRule
 from ..models.device_placement import ButtonPlacement, LightPlacement, OtherPlacement, SwitchPlacement
 from ..models.floor_plan import (
+    BackgroundLayer,
     Coordinates,
     Edge,
     Floor,
@@ -666,6 +667,7 @@ def ws_rooms_add(
         vol.Optional("motion_timeout"): int,
         vol.Optional("checking_timeout"): int,
         vol.Optional("ha_area_id"): vol.Any(str, None),
+        vol.Optional("background_layers"): [dict],
     }
 )
 @callback
@@ -707,6 +709,10 @@ def ws_rooms_update(
         ):
             return
         room.ha_area_id = next_ha_area_id
+    if "background_layers" in msg:
+        room.background_layers = [
+            BackgroundLayer.from_dict(l) for l in msg["background_layers"]
+        ]
 
     result = store.update_room(msg["floor_plan_id"], room)
     if result:

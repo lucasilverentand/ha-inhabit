@@ -353,6 +353,47 @@ class Edge:
 
 
 @dataclass
+class BackgroundLayer:
+    """A single background image layer for a room."""
+
+    id: str = field(default_factory=_generate_id)
+    name: str = ""
+    url: str = ""
+    offset_x: float = 0.0
+    offset_y: float = 0.0
+    scale: float = 1.0
+    opacity: float = 1.0
+    visible: bool = True
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary."""
+        return {
+            "id": self.id,
+            "name": self.name,
+            "url": self.url,
+            "offset_x": self.offset_x,
+            "offset_y": self.offset_y,
+            "scale": self.scale,
+            "opacity": self.opacity,
+            "visible": self.visible,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> BackgroundLayer:
+        """Create from dictionary."""
+        return cls(
+            id=data.get("id", _generate_id()),
+            name=data.get("name", ""),
+            url=data.get("url", ""),
+            offset_x=float(data.get("offset_x", 0.0)),
+            offset_y=float(data.get("offset_y", 0.0)),
+            scale=float(data.get("scale", 1.0)),
+            opacity=float(data.get("opacity", 1.0)),
+            visible=bool(data.get("visible", True)),
+        )
+
+
+@dataclass
 class Room:
     """Room definition with polygon boundary."""
 
@@ -368,6 +409,7 @@ class Room:
         default_factory=list
     )  # Room IDs connected via doors
     ha_area_id: str | None = None
+    background_layers: list[BackgroundLayer] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
@@ -382,11 +424,19 @@ class Room:
             "checking_timeout": self.checking_timeout,
             "connected_rooms": self.connected_rooms,
             "ha_area_id": self.ha_area_id,
+            "background_layers": [l.to_dict() for l in self.background_layers],
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Room:
         """Create from dictionary."""
+        # Migrate old single background_image to background_layers
+        layers_data = data.get("background_layers", [])
+        if not layers_data and data.get("background_image"):
+            layers_data = [
+                {"id": _generate_id(), "name": "Background", "url": data["background_image"]}
+            ]
+
         return cls(
             id=data.get("id", _generate_id()),
             name=data.get("name", ""),
@@ -398,6 +448,7 @@ class Room:
             checking_timeout=int(data.get("checking_timeout", 30)),
             connected_rooms=data.get("connected_rooms", []),
             ha_area_id=data.get("ha_area_id"),
+            background_layers=[BackgroundLayer.from_dict(l) for l in layers_data],
         )
 
 
