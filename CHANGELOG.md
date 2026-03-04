@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.8.0](https://github.com/lucasilverentand/ha-inhabit/compare/v0.7.0...v0.8.0) (2026-03-04)
+
+
+### Features
+
+* add multi-layer room background images with layer panel ([32e3aae](https://github.com/lucasilverentand/ha-inhabit/commit/32e3aaebdc0fdfb944d36d4f9e4eb3b157e77ccb))
+* decouple mmWave entity binding and broaden target entity picker ([ade584e](https://github.com/lucasilverentand/ha-inhabit/commit/ade584e6cf5760b0833e89339bfd7f15d18b9acc))
+
 ## [0.7.0](https://github.com/lucasilverentand/ha-inhabit/compare/v0.6.0...v0.7.0) (2026-03-04)
 
 
