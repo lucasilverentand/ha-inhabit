@@ -219,7 +219,6 @@ export interface MmwavePlacement {
   floor_plan_id: string;
   floor_id: string;
   room_id?: string;
-  entity_id?: string;
   position: Coordinates;
   angle: number;
   field_of_view: number;

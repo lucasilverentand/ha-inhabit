@@ -16,7 +16,6 @@ class MmwavePlacement:
     floor_plan_id: str = ""
     floor_id: str = ""
     room_id: str | None = None
-    entity_id: str | None = None
     position: Coordinates = field(default_factory=lambda: Coordinates(0, 0))
     angle: float = 0.0  # Facing direction (degrees)
     field_of_view: float = 120.0  # FOV cone (degrees)
@@ -31,7 +30,6 @@ class MmwavePlacement:
             "floor_plan_id": self.floor_plan_id,
             "floor_id": self.floor_id,
             "room_id": self.room_id,
-            "entity_id": self.entity_id,
             "position": self.position.to_dict(),
             "angle": self.angle,
             "field_of_view": self.field_of_view,
@@ -52,7 +50,6 @@ class MmwavePlacement:
             floor_plan_id=data.get("floor_plan_id", ""),
             floor_id=data.get("floor_id", ""),
             room_id=data.get("room_id"),
-            entity_id=data.get("entity_id"),
             position=Coordinates.from_dict(position or {"x": 0, "y": 0}),
             angle=float(data.get("angle", 0.0)),
             field_of_view=float(data.get("field_of_view", 120.0)),

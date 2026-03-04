@@ -35,6 +35,10 @@ export class FpbEntityPicker extends LitElement {
   @property({ type: Array })
   excludeDomains: string[] = [];
 
+  /** Only show entities whose state is a finite number. */
+  @property({ type: Boolean })
+  numericOnly = false;
+
   /** Allow selecting multiple entities before confirming. */
   @property({ type: Boolean })
   multi = false;
@@ -311,6 +315,11 @@ export class FpbEntityPicker extends LitElement {
       const domain = eid.split(".")[0];
       if (domainSet.size > 0 && !domainSet.has(domain)) continue;
       if (excludeDomainSet.size > 0 && excludeDomainSet.has(domain)) continue;
+
+      if (this.numericOnly) {
+        const s = this.hass.states[eid].state;
+        if (isNaN(parseFloat(s)) || !isFinite(Number(s))) continue;
+      }
 
       const entry: EntityEntry = {
         entity_id: eid,

@@ -176,67 +176,82 @@ export class FpbDevicePanel extends LitElement {
       opacity: 0.9;
     }
 
-    .target-row {
+    .target-card {
+      background: var(--primary-background-color, #fafafa);
+      border-radius: 10px;
+      padding: 10px 12px;
       display: flex;
-      align-items: center;
+      flex-direction: column;
       gap: 6px;
-      padding: 6px 10px;
-      background: var(--primary-background-color);
-      border-radius: 8px;
-      font-size: 12px;
     }
 
-    .target-row .target-label {
+    .target-card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--secondary-text-color);
+    }
+
+    .target-card-header .remove-btn {
+      background: none;
+      border: none;
+      cursor: pointer;
+      padding: 4px;
+      border-radius: 6px;
+      color: var(--secondary-text-color, #999);
+      line-height: 1;
+      --mdc-icon-size: 16px;
+      transition: color 0.15s;
+    }
+
+    .target-card-header .remove-btn:hover {
+      color: var(--error-color, #f44336);
+    }
+
+    .target-axis-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 8px;
+      background: var(--card-background-color, #fff);
+      border-radius: 8px;
+      font-size: 13px;
+    }
+
+    .target-axis-row .axis-label {
+      font-weight: 600;
+      color: var(--secondary-text-color);
+      min-width: 14px;
+    }
+
+    .target-axis-row .entity-name {
       flex: 1;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
     }
 
-    .target-row .target-axis {
+    .target-axis-row .entity-name.empty {
       color: var(--secondary-text-color);
-      font-weight: 600;
-      min-width: 14px;
-    }
-
-    .target-actions {
-      display: flex;
-      gap: 4px;
-    }
-
-    .small-btn {
-      padding: 2px 8px;
-      border: 1px solid var(--divider-color, #e0e0e0);
-      border-radius: 4px;
-      background: var(--card-background-color);
-      color: var(--primary-text-color);
-      cursor: pointer;
-      font-size: 11px;
-      white-space: nowrap;
-    }
-
-    .small-btn:hover {
-      background: var(--secondary-background-color);
-    }
-
-    .small-btn.danger {
-      color: var(--error-color, #f44336);
-      border-color: var(--error-color, #f44336);
+      font-style: italic;
     }
 
     .add-target-btn {
       padding: 6px 12px;
-      border: 1px dashed var(--divider-color, #e0e0e0);
+      background: var(--primary-color);
+      color: var(--text-primary-color);
+      border: none;
       border-radius: 8px;
-      background: none;
-      color: var(--primary-color);
       cursor: pointer;
-      font-size: 12px;
-      width: 100%;
+      font-size: 13px;
+      white-space: nowrap;
+      align-self: flex-start;
     }
 
     .add-target-btn:hover {
-      background: var(--primary-background-color);
+      opacity: 0.9;
     }
   `;
 
@@ -255,7 +270,7 @@ export class FpbDevicePanel extends LitElement {
   }
 
   private _getPickerDomains(): string[] {
-    if (this.deviceType === "mmwave" || this.deviceType === "other") return [];
+    if (this.deviceType === "other") return [];
     return [this.deviceType];
   }
 
@@ -271,10 +286,8 @@ export class FpbDevicePanel extends LitElement {
       return switchPlacements.value.filter(p => p.id !== this.placementId).map(p => p.entity_id);
     } else if (this.deviceType === "button") {
       return buttonPlacements.value.filter(p => p.id !== this.placementId).map(p => p.entity_id);
-    } else if (this.deviceType === "other") {
-      return otherPlacements.value.filter(p => p.id !== this.placementId).map(p => p.entity_id);
     } else {
-      return mmwavePlacements.value.filter(p => p.id !== this.placementId && p.entity_id).map(p => p.entity_id!);
+      return otherPlacements.value.filter(p => p.id !== this.placementId).map(p => p.entity_id);
     }
   }
 
@@ -315,15 +328,6 @@ export class FpbDevicePanel extends LitElement {
           entity_id: newEntityId,
         });
         otherPlacements.value = otherPlacements.value.map(p =>
-          p.id === this.placementId ? { ...p, entity_id: newEntityId } : p
-        );
-      } else {
-        await this.hass.callWS({
-          type: "inhabit/mmwave/update",
-          placement_id: this.placementId,
-          entity_id: newEntityId,
-        });
-        mmwavePlacements.value = mmwavePlacements.value.map(p =>
           p.id === this.placementId ? { ...p, entity_id: newEntityId } : p
         );
       }
@@ -426,7 +430,9 @@ export class FpbDevicePanel extends LitElement {
       `;
     }
 
-    const entityId = "entity_id" in placement ? (placement as { entity_id?: string }).entity_id : undefined;
+    const entityId = this.deviceType !== "mmwave" && "entity_id" in placement
+      ? (placement as { entity_id?: string }).entity_id
+      : undefined;
     const friendlyName = entityId && this.hass?.states[entityId]
       ? this.hass.states[entityId].attributes?.friendly_name ?? entityId
       : entityId ?? "No entity";
@@ -442,29 +448,31 @@ export class FpbDevicePanel extends LitElement {
         </button>
       </div>
       <div class="panel-body">
-        <!-- Entity binding -->
-        <div class="section">
-          <div class="section-title">Entity</div>
-          <div class="entity-row">
-            <ha-icon icon=${this._getIcon()} style="--mdc-icon-size: 18px;"></ha-icon>
-            <span class="entity-id">${friendlyName}</span>
-            <button class="rebind-btn" @click=${() => { this._rebinding = true; }}>Change</button>
+        <!-- Entity binding (not shown for mmwave) -->
+        ${this.deviceType !== "mmwave" ? html`
+          <div class="section">
+            <div class="section-title">Entity</div>
+            <div class="entity-row">
+              <ha-icon icon=${this._getIcon()} style="--mdc-icon-size: 18px;"></ha-icon>
+              <span class="entity-id">${friendlyName}</span>
+              <button class="rebind-btn" @click=${() => { this._rebinding = true; }}>Change</button>
+            </div>
+            ${this._rebinding ? html`
+              <fpb-entity-picker
+                .hass=${this.hass}
+                .domains=${this._getPickerDomains()}
+                .excludeDomains=${this._getPickerExcludeDomains()}
+                .exclude=${this._getExcludedEntityIds()}
+                title="Select ${this._getTitle()} Entity"
+                placeholder="Search entities..."
+                @entities-confirmed=${(e: CustomEvent) => {
+                  this._rebindEntity(e.detail.entityIds[0]);
+                }}
+                @picker-closed=${() => { this._rebinding = false; }}
+              ></fpb-entity-picker>
+            ` : nothing}
           </div>
-          ${this._rebinding ? html`
-            <fpb-entity-picker
-              .hass=${this.hass}
-              .domains=${this._getPickerDomains()}
-              .excludeDomains=${this._getPickerExcludeDomains()}
-              .exclude=${this._getExcludedEntityIds()}
-              title="Select ${this._getTitle()} Entity"
-              placeholder="Search entities..."
-              @entities-confirmed=${(e: CustomEvent) => {
-                this._rebindEntity(e.detail.entityIds[0]);
-              }}
-              @picker-closed=${() => { this._rebinding = false; }}
-            ></fpb-entity-picker>
-          ` : nothing}
-        </div>
+        ` : nothing}
 
         ${this.deviceType === "mmwave" ? this._renderMmwaveSettings(placement as MmwavePlacement) : null}
 
@@ -537,7 +545,7 @@ export class FpbDevicePanel extends LitElement {
     const targets = p.targets ?? [];
 
     const entityName = (eid: string) => {
-      if (!eid) return "Not set";
+      if (!eid) return null;
       return this.hass?.states[eid]?.attributes?.friendly_name ?? eid;
     };
 
@@ -546,32 +554,37 @@ export class FpbDevicePanel extends LitElement {
         <div class="section-title">Tracking Targets</div>
 
         ${targets.map((t, i) => html`
-          <div class="target-row">
-            <span class="target-axis">X:</span>
-            <span class="target-label">${entityName(t.x_entity_id)}</span>
-            <span class="target-axis">Y:</span>
-            <span class="target-label">${entityName(t.y_entity_id)}</span>
-            <div class="target-actions">
-              <button class="small-btn" @click=${() => {
+          <div class="target-card">
+            <div class="target-card-header">
+              <span>Target ${i + 1}</span>
+              <button class="remove-btn" @click=${() => this._removeTarget(p, i)}>
+                <ha-icon icon="mdi:trash-can-outline"></ha-icon>
+              </button>
+            </div>
+            <div class="target-axis-row">
+              <span class="axis-label">X</span>
+              <span class="entity-name ${t.x_entity_id ? "" : "empty"}">${entityName(t.x_entity_id) ?? "Not set"}</span>
+              <button class="rebind-btn" @click=${() => {
                 this._editingTargetIndex = i;
                 this._editingTargetAxis = "x";
-              }}>X</button>
-              <button class="small-btn" @click=${() => {
+              }}>Change</button>
+            </div>
+            <div class="target-axis-row">
+              <span class="axis-label">Y</span>
+              <span class="entity-name ${t.y_entity_id ? "" : "empty"}">${entityName(t.y_entity_id) ?? "Not set"}</span>
+              <button class="rebind-btn" @click=${() => {
                 this._editingTargetIndex = i;
                 this._editingTargetAxis = "y";
-              }}>Y</button>
-              <button class="small-btn danger" @click=${() => this._removeTarget(p, i)}>
-                <ha-icon icon="mdi:close" style="--mdc-icon-size: 12px;"></ha-icon>
-              </button>
+              }}>Change</button>
             </div>
           </div>
 
           ${this._editingTargetIndex === i && this._editingTargetAxis !== null ? html`
             <fpb-entity-picker
               .hass=${this.hass}
-              .domains=${["number"]}
+              .numericOnly=${true}
               title="Select ${this._editingTargetAxis.toUpperCase()} Entity for Target ${i + 1}"
-              placeholder="Search number entities..."
+              placeholder="Search numeric entities..."
               @entities-confirmed=${(e: CustomEvent) => {
                 this._updateTargetEntity(p, i, this._editingTargetAxis!, e.detail.entityIds[0]);
               }}
@@ -584,7 +597,7 @@ export class FpbDevicePanel extends LitElement {
         `)}
 
         <button class="add-target-btn" @click=${() => this._addTarget(p)}>
-          + Add Target
+          Add target
         </button>
       </div>
     `;

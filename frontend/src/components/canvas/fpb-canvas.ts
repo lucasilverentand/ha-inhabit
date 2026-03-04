@@ -2829,8 +2829,6 @@ export class FpbCanvas extends LitElement {
           selection.value = { type: "mmwave", ids: [mw.id] };
           if (mode === "placement") {
             devicePanelTarget.value = { id: mw.id, type: "mmwave" };
-          } else if (mw.entity_id) {
-            this._openEntityDetails(mw.entity_id);
           }
           return true;
         }
@@ -6133,7 +6131,7 @@ export class FpbCanvas extends LitElement {
     }
     for (const mw of mmwavePlacements.value.filter(p => p.floor_id === floor.id)) {
       if (Math.hypot(point.x - mw.position.x, point.y - mw.position.y) < 15) {
-        return { entityId: mw.entity_id ?? "", type: "mmwave", id: mw.id };
+        return { entityId: "", type: "mmwave", id: mw.id };
       }
     }
     return null;
