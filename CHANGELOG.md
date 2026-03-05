@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.9.0](https://github.com/lucasilverentand/ha-inhabit/compare/v0.8.0...v0.9.0) (2026-03-05)
+
+
+### Features
+
+* add standalone mmWave target simulation script ([9bf2208](https://github.com/lucasilverentand/ha-inhabit/commit/9bf22080f52423be5e5cde2f9972d3f05602994c))
+* render mmWave targets on floor plan with smooth animation ([aa3c144](https://github.com/lucasilverentand/ha-inhabit/commit/aa3c144bb0daed6774151ebd1ca11c41460bfc64))
+
+
+### Bug Fixes
+
+* correct mmWave local-to-world coordinate transform ([10d852a](https://github.com/lucasilverentand/ha-inhabit/commit/10d852aa7381dd8ce94418bea8181fc18f486ad7))
+
 ## [0.8.0](https://github.com/lucasilverentand/ha-inhabit/compare/v0.7.0...v0.8.0) (2026-03-04)
 
 
