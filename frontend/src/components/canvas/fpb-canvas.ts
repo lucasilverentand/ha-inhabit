@@ -276,6 +276,19 @@ export class FpbCanvas extends LitElement {
     pointerId: number;
   } | null = null;
 
+  // ---- mmWave target animation state ----
+  /** Tracked target positions with interpolation: key = "placementId-targetIdx" */
+  private _mmwaveTargetPositions = new Map<string, {
+    displayX: number; displayY: number;  // current rendered position
+    targetX: number; targetY: number;    // goal position from entity state
+    arrived: boolean;                     // true once displayX/Y ≈ targetX/Y
+    isNew: boolean;                       // true on first appearance only
+  }>();
+  /** Targets currently fading out after disappearing */
+  @state()
+  private _mmwaveFadingTargets: Array<{ key: string; x: number; y: number; startTime: number }> = [];
+  private _mmwaveAnimTimer: number | null = null;
+
   // ---- Simulation state ----
   @state()
   private _draggingSimTarget: { targetId: string; pointerId: number } | null = null;
@@ -5091,8 +5104,41 @@ export class FpbCanvas extends LitElement {
     const sel = selection.value;
     const showCoverage = this._canvasMode !== "viewing";
 
+    // Scale-independent sizes for target dots
+    const vb = this._viewBox;
+    const scale = Math.max(vb.width, vb.height) / 100;
+    const targetR = scale * 0.5;
+    const pulseR = targetR * 2.5;
+    const targetFontSize = scale * 0.8;
+
+    // Determine which rooms have active targets inside them
+    const occupiedRoomIds = new Set<string>();
+    for (const pos of this._mmwaveTargetPositions.values()) {
+      for (const room of floor.rooms) {
+        if (occupiedRoomIds.has(room.id)) continue;
+        const vs = room.polygon?.vertices;
+        if (!vs || vs.length < 3) continue;
+        let inside = false;
+        for (let i = 0, j = vs.length - 1; i < vs.length; j = i++) {
+          if ((vs[i].y > pos.displayY) !== (vs[j].y > pos.displayY) &&
+              pos.displayX < (vs[j].x - vs[i].x) * (pos.displayY - vs[i].y) / (vs[j].y - vs[i].y) + vs[i].x) {
+            inside = !inside;
+          }
+        }
+        if (inside) occupiedRoomIds.add(room.id);
+      }
+    }
+
     return svg`
       <g class="mmwave-layer">
+        <!-- Occupied room overlays -->
+        ${floor.rooms
+          .filter(r => occupiedRoomIds.has(r.id) && r.polygon?.vertices?.length)
+          .map(r => svg`
+            <path d="${polygonToPath(r.polygon)}"
+                  fill="rgba(255, 255, 255, 0.05)" stroke="none"
+                  class="mmwave-occupied-room"/>
+          `)}
         ${placements.map(p => {
           const isSelected = sel.type === "mmwave" && sel.ids.includes(p.id);
           const halfFov = p.field_of_view / 2;
@@ -5115,35 +5161,164 @@ export class FpbCanvas extends LitElement {
           const hx = px + handleDist * Math.cos(angleRad);
           const hy = py + handleDist * Math.sin(angleRad);
 
-          // Render target dots from tracked entities
-          const targetDots = (p.targets ?? []).map(t => {
-            if (!t.x_entity_id || !t.y_entity_id) return null;
+          // Find room polygon for clipping the FOV cone
+          // Try room_id first, then find room containing the sensor position
+          let room = p.room_id ? floor.rooms.find(r => r.id === p.room_id) : null;
+          if (!room) {
+            room = floor.rooms.find(r => {
+              const vs = r.polygon?.vertices;
+              if (!vs || vs.length < 3) return false;
+              // Point-in-polygon (ray casting)
+              let inside = false;
+              for (let i = 0, j = vs.length - 1; i < vs.length; j = i++) {
+                if ((vs[i].y > py) !== (vs[j].y > py) &&
+                    px < (vs[j].x - vs[i].x) * (py - vs[i].y) / (vs[j].y - vs[i].y) + vs[i].x) {
+                  inside = !inside;
+                }
+              }
+              return inside;
+            }) ?? null;
+          }
+          const clipId = `mmwave-clip-${p.id}`;
+
+          // Update target goal positions from entity state
+          const activeKeys = new Set<string>();
+          const rad = p.angle * Math.PI / 180;
+          const cosA = Math.cos(rad);
+          const sinA = Math.sin(rad);
+
+          for (let idx = 0; idx < (p.targets ?? []).length; idx++) {
+            const t = p.targets[idx];
+            if (!t.x_entity_id || !t.y_entity_id) continue;
             const xState = this.hass?.states[t.x_entity_id];
             const yState = this.hass?.states[t.y_entity_id];
-            if (!xState || !yState) return null;
-            const localX = parseFloat(xState.state);
-            const localY = parseFloat(yState.state);
-            if (isNaN(localX) || isNaN(localY) || (localX === 0 && localY === 0)) return null;
+            if (!xState || !yState) continue;
+            const rawX = parseFloat(xState.state);
+            const rawY = parseFloat(yState.state);
+            if (isNaN(rawX) || isNaN(rawY) || (rawX === 0 && rawY === 0)) continue;
+            // Convert mm (sensor unit) to cm (floor plan unit)
+            const localX = rawX / 10;
+            const localY = rawY / 10;
             // Transform from sensor-local coords to world coords
-            const rad = p.angle * Math.PI / 180;
-            const cosA = Math.cos(rad);
-            const sinA = Math.sin(rad);
-            const wx = px + localX * cosA - localY * sinA;
-            const wy = py + localX * sinA + localY * cosA;
-            return svg`<circle cx="${wx}" cy="${wy}" r="5" fill="#ff5722" stroke="#fff" stroke-width="1.5" opacity="0.9"/>`;
+            // localY = forward (along facing direction), localX = lateral (perpendicular)
+            const wx = px + localY * cosA - localX * sinA;
+            const wy = py + localY * sinA + localX * cosA;
+
+            const key = `${p.id}-${idx}`;
+            activeKeys.add(key);
+            const existing = this._mmwaveTargetPositions.get(key);
+            if (existing) {
+              existing.targetX = wx;
+              existing.targetY = wy;
+              existing.arrived = false;
+            } else {
+              // New target — start at goal position
+              this._mmwaveTargetPositions.set(key, {
+                displayX: wx, displayY: wy,
+                targetX: wx, targetY: wy,
+                arrived: true, isNew: true,
+              });
+            }
+            this._ensureMmwaveAnimLoop();
+          }
+
+          // Detect disappeared targets — schedule fade-out
+          for (const [key, pos] of this._mmwaveTargetPositions) {
+            if (key.startsWith(p.id + "-") && !activeKeys.has(key)) {
+              if (!this._mmwaveFadingTargets.some(f => f.key === key)) {
+                this._mmwaveFadingTargets = [...this._mmwaveFadingTargets, {
+                  key, x: pos.displayX, y: pos.displayY, startTime: Date.now(),
+                }];
+                this._ensureMmwaveAnimLoop();
+              }
+              this._mmwaveTargetPositions.delete(key);
+            }
+          }
+
+          // Render target dots at interpolated display positions
+          const targetDots = (p.targets ?? []).map((_t, idx) => {
+            const key = `${p.id}-${idx}`;
+            const pos = this._mmwaveTargetPositions.get(key);
+            if (!pos) return null;
+            const showAppear = pos.isNew;
+            if (pos.isNew) pos.isNew = false; // only animate once
+            return svg`
+              <g class="mmwave-target" transform="translate(${pos.displayX}, ${pos.displayY})">
+                ${showAppear ? svg`
+                  <animateTransform attributeName="transform" type="scale"
+                    from="0 0" to="1 1" dur="0.35s" fill="freeze" additive="sum"/>
+                  <animate attributeName="opacity" from="0" to="1" dur="0.35s" fill="freeze"/>
+                ` : null}
+                <!-- Pulse ring -->
+                <circle cx="0" cy="0" r="${pulseR}"
+                  fill="none" stroke="#ff5722" stroke-width="${scale * 0.06}" opacity="0.4">
+                  <animate attributeName="r" values="${targetR};${pulseR}" dur="1.5s" repeatCount="indefinite"/>
+                  <animate attributeName="opacity" values="0.5;0" dur="1.5s" repeatCount="indefinite"/>
+                </circle>
+                <!-- Target dot -->
+                <circle cx="0" cy="0" r="${targetR}"
+                  fill="#ff5722" stroke="#fff" stroke-width="${scale * 0.1}" opacity="0.95"/>
+                <!-- Target label -->
+                <text x="0" y="${-targetR - scale * 0.3}" text-anchor="middle"
+                  font-size="${targetFontSize}" fill="#ff5722" font-weight="600">T${idx + 1}</text>
+              </g>
+            `;
           });
+
+          // Render fading-out targets for this placement
+          const fadingDots = this._mmwaveFadingTargets
+            .filter(f => f.key.startsWith(p.id + "-"))
+            .map(f => {
+              const elapsed = Date.now() - f.startTime;
+              const progress = Math.min(elapsed / 800, 1);
+              const opacity = 1 - progress;
+              const blur = progress * scale * 0.5;
+              const dotScale = 1 - progress * 0.3;
+              const filterId = `mmwave-fade-${f.key.replace(/[^a-zA-Z0-9]/g, '_')}`;
+              return svg`
+                <g class="mmwave-target-fade" transform="translate(${f.x}, ${f.y}) scale(${dotScale})"
+                   opacity="${opacity}">
+                  <defs>
+                    <filter id="${filterId}">
+                      <feGaussianBlur stdDeviation="${blur}"/>
+                    </filter>
+                  </defs>
+                  <g filter="url(#${filterId})">
+                    <circle cx="0" cy="0" r="${targetR}"
+                      fill="#ff5722" stroke="#fff" stroke-width="${scale * 0.1}"/>
+                  </g>
+                </g>
+              `;
+            });
 
           return svg`
             <g class="mmwave-placement ${isSelected ? "selected" : ""}">
               ${showCoverage ? svg`
-                <!-- FOV cone -->
-                <path
-                  d="M ${px} ${py} L ${ax} ${ay} A ${range} ${range} 0 ${largeArc} 1 ${bx} ${by} Z"
-                  fill="rgba(33, 150, 243, 0.1)"
-                  stroke="rgba(33, 150, 243, 0.4)"
-                  stroke-width="1"
-                  stroke-dasharray="4 2"
-                />
+                ${room?.polygon?.vertices?.length ? svg`
+                  <!-- FOV cone clipped to room -->
+                  <defs>
+                    <clipPath id="${clipId}">
+                      <path d="${polygonToPath(room.polygon)}"/>
+                    </clipPath>
+                  </defs>
+                  <path
+                    d="M ${px} ${py} L ${ax} ${ay} A ${range} ${range} 0 ${largeArc} 1 ${bx} ${by} Z"
+                    fill="rgba(33, 150, 243, 0.1)"
+                    stroke="rgba(33, 150, 243, 0.4)"
+                    stroke-width="1"
+                    stroke-dasharray="4 2"
+                    clip-path="url(#${clipId})"
+                  />
+                ` : svg`
+                  <!-- FOV cone (no room to clip) -->
+                  <path
+                    d="M ${px} ${py} L ${ax} ${ay} A ${range} ${range} 0 ${largeArc} 1 ${bx} ${by} Z"
+                    fill="rgba(33, 150, 243, 0.1)"
+                    stroke="rgba(33, 150, 243, 0.4)"
+                    stroke-width="1"
+                    stroke-dasharray="4 2"
+                  />
+                `}
               ` : null}
               <!-- Sensor icon -->
               <circle cx="${px}" cy="${py}" r="8"
@@ -5151,6 +5326,7 @@ export class FpbCanvas extends LitElement {
               <text x="${px}" y="${py + 3}" text-anchor="middle"
                 font-size="8" fill="#fff" font-weight="bold">R</text>
               ${targetDots}
+              ${fadingDots}
               ${showCoverage && isSelected ? svg`
                 <!-- Rotation handle -->
                 <g class="rotation-handle"
@@ -7103,6 +7279,47 @@ export class FpbCanvas extends LitElement {
       );
     }
     this._rotatingMmwave = null;
+  }
+
+  /** Drive interpolation + fade-out animation for mmWave targets via rAF. */
+  private _ensureMmwaveAnimLoop(): void {
+    if (this._mmwaveAnimTimer) return;
+    let lastTime = performance.now();
+    const tick = (now: number) => {
+      const dt = Math.min((now - lastTime) / 1000, 0.05); // delta in seconds, capped
+      lastTime = now;
+
+      // Lerp display positions toward targets
+      const lerpSpeed = 8; // higher = snappier
+      let anyMoving = false;
+      for (const pos of this._mmwaveTargetPositions.values()) {
+        if (pos.arrived) continue;
+        const dx = pos.targetX - pos.displayX;
+        const dy = pos.targetY - pos.displayY;
+        if (Math.abs(dx) < 0.1 && Math.abs(dy) < 0.1) {
+          pos.displayX = pos.targetX;
+          pos.displayY = pos.targetY;
+          pos.arrived = true;
+        } else {
+          pos.displayX += dx * lerpSpeed * dt;
+          pos.displayY += dy * lerpSpeed * dt;
+          anyMoving = true;
+        }
+      }
+
+      // Prune finished fade-outs
+      const remaining = this._mmwaveFadingTargets.filter(f => Date.now() - f.startTime < 800);
+      this._mmwaveFadingTargets = remaining;
+
+      if (anyMoving || remaining.length > 0) {
+        this.requestUpdate();
+        this._mmwaveAnimTimer = requestAnimationFrame(tick);
+      } else {
+        this._mmwaveAnimTimer = null;
+        this.requestUpdate();
+      }
+    };
+    this._mmwaveAnimTimer = requestAnimationFrame(tick);
   }
 
   private _cancelDevicePlacement(): void {
