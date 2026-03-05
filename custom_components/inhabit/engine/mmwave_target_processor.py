@@ -218,8 +218,9 @@ class MmwaveTargetProcessor:
         cos_a = math.cos(facing_rad)
         sin_a = math.sin(facing_rad)
 
-        world_x = placement.position.x + (local_x * cos_a - local_y * sin_a)
-        world_y = placement.position.y + (local_x * sin_a + local_y * cos_a)
+        # local_y = forward (along facing direction), local_x = lateral
+        world_x = placement.position.x + (local_y * cos_a - local_x * sin_a)
+        world_y = placement.position.y + (local_y * sin_a + local_x * cos_a)
 
         return Coordinates(x=world_x, y=world_y)
 
