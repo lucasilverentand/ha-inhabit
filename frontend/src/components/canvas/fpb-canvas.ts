@@ -868,9 +868,16 @@ export class FpbCanvas extends LitElement {
       border: 1.5px solid var(--error-color, #f44336);
     }
 
-    .wall-editor .delete-btn:hover {
+    .wall-editor .delete-btn:hover:not(:disabled) {
       background: var(--error-color, #f44336);
       color: white;
+    }
+
+    .wall-editor .delete-btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+      border-color: var(--disabled-text-color, #999);
+      color: var(--disabled-text-color, #999);
     }
 
     .room-side-btn {
@@ -1252,6 +1259,10 @@ export class FpbCanvas extends LitElement {
     svg.mode-viewing .zone-shape {
       fill: none;
       fill-opacity: 0;
+      stroke: none;
+    }
+
+    svg.mode-viewing .zone-border {
       stroke: var(--secondary-text-color, #666);
       stroke-dasharray: 4,4;
     }
@@ -1271,6 +1282,20 @@ export class FpbCanvas extends LitElement {
       stroke: var(--primary-color, #03a9f4);
       stroke-width: 3;
       stroke-dasharray: none;
+    }
+
+    .zone-midpoint-handle {
+      opacity: 0;
+      transition: opacity 0.15s ease;
+    }
+
+    .zone-midpoint-handle:hover {
+      opacity: 1;
+      fill-opacity: 0.6;
+    }
+
+    .furniture-layer:hover .zone-midpoint-handle {
+      opacity: 0.5;
     }
 
     .zone-area-shape {
@@ -1416,9 +1441,15 @@ export class FpbCanvas extends LitElement {
 
     // Space-to-pan: listen on window so it works even when SVG isn't focused
     this._onSpaceDown = (e: KeyboardEvent) => {
-      if (e.code === "Space" && !e.repeat && !(e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement)) {
-        e.preventDefault();
-        this._spaceHeld = true;
+      if (e.code === "Space" && !e.repeat) {
+        // Check composedPath to handle inputs inside Shadow DOM
+        const inInput = e.composedPath().some(el =>
+          el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement
+        );
+        if (!inInput) {
+          e.preventDefault();
+          this._spaceHeld = true;
+        }
       }
     };
     this._onSpaceUp = (e: KeyboardEvent) => {
@@ -1908,6 +1939,8 @@ export class FpbCanvas extends LitElement {
       } else {
         snapped = { x: this._wallStartPoint.x, y: snapped.y };
       }
+      // Re-snap to nearby nodes/edges after axis constraint
+      snapped = this._getSnappedPoint(snapped, true);
     }
 
     // Zone tool: prefer horizontal/vertical lines from the last placed point
@@ -2070,23 +2103,48 @@ export class FpbCanvas extends LitElement {
 
     // Handle zone vertex dragging
     if (this._draggingZoneVertex) {
-      let snappedVert = this._getSnappedPoint(point, true);
       const zone = this._draggingZoneVertex.zone;
+      let snappedVert = this._getSnappedPoint(point, true, false, zone.id);
       if (zone.polygon?.vertices) {
         const verts = zone.polygon.vertices;
         const idx = this._draggingZoneVertex.vertexIndex;
         const len = verts.length;
+
         const prev = verts[(idx - 1 + len) % len];
         const next = verts[(idx + 1) % len];
         const threshold = 15;
 
-        // Snap to horizontal/vertical alignment with neighbors
+        // Axis-aligned snapping: snap x/y independently to match neighbors
         for (const neighbor of [prev, next]) {
           if (Math.abs(snappedVert.x - neighbor.x) < threshold) {
             snappedVert = { x: neighbor.x, y: snappedVert.y };
           }
           if (Math.abs(snappedVert.y - neighbor.y) < threshold) {
             snappedVert = { x: snappedVert.x, y: neighbor.y };
+          }
+        }
+
+        // 90° angle snapping: if the angle at this vertex between prev and next
+        // edges is close to 90°, project to make it exact
+        const toPrev = { x: prev.x - snappedVert.x, y: prev.y - snappedVert.y };
+        const toNext = { x: next.x - snappedVert.x, y: next.y - snappedVert.y };
+        const lenPrev = Math.sqrt(toPrev.x * toPrev.x + toPrev.y * toPrev.y);
+        const lenNext = Math.sqrt(toNext.x * toNext.x + toNext.y * toNext.y);
+        if (lenPrev > 1 && lenNext > 1) {
+          const dot = toPrev.x * toNext.x + toPrev.y * toNext.y;
+          const cosAngle = dot / (lenPrev * lenNext);
+          // Check if angle is close to 90° (cos ≈ 0)
+          const ANGLE_SNAP_DEG = 5;
+          const cosThreshold = Math.cos((90 - ANGLE_SNAP_DEG) * Math.PI / 180);
+          if (Math.abs(cosAngle) < cosThreshold) {
+            // Project snappedVert onto the line perpendicular to prev→next through prev's direction
+            // Move the vertex along the toNext direction so dot product becomes 0
+            // new_pos = snappedVert - (dot / lenNext²) * toNext
+            const lenNextSq = toNext.x * toNext.x + toNext.y * toNext.y;
+            snappedVert = {
+              x: Math.round(snappedVert.x + (dot / lenNextSq) * toNext.x),
+              y: Math.round(snappedVert.y + (dot / lenNextSq) * toNext.y),
+            };
           }
         }
 
@@ -2401,8 +2459,8 @@ export class FpbCanvas extends LitElement {
    * Right-click on a node to dissolve it (merge the two connected edges).
    */
   private async _handleContextMenu(e: MouseEvent): Promise<void> {
+    e.preventDefault();
     if (this._canvasMode === "viewing") {
-      e.preventDefault();
       const point = this._screenToSvg({ x: e.clientX, y: e.clientY });
       const floor = currentFloor.value;
       if (floor) {
@@ -2414,11 +2472,12 @@ export class FpbCanvas extends LitElement {
       return;
     }
     if (this._canvasMode === "occupancy" && simHitboxEnabled.value) {
-      e.preventDefault();
       return; // Right-click removal of sim targets handled in _handlePointerDown
     }
+    if (this._canvasMode === "furniture") {
+      return;
+    }
     if (this._canvasMode !== "walls") return;
-    e.preventDefault();
 
     const point = this._screenToSvg({ x: e.clientX, y: e.clientY });
     const floor = currentFloor.value;
@@ -2960,6 +3019,45 @@ export class FpbCanvas extends LitElement {
         if (closestPoint) {
           return closestPoint;
         }
+
+        // Angle snapping: snap to 90° multiples relative to connected neighbor nodes
+        const ANGLE_SNAP_THRESHOLD = 5; // degrees
+        const connectedEdges = edgesAtNode(draggedId, floor.edges);
+        let bestAngleSnap: Coordinates | null = null;
+        let bestAngleSnapDist = Infinity;
+
+        for (const edge of connectedEdges) {
+          const neighborId = edge.start_node === draggedId ? edge.end_node : edge.start_node;
+          const neighbor = floor.nodes.find(n => n.id === neighborId);
+          if (!neighbor) continue;
+
+          const dx = point.x - neighbor.x;
+          const dy = point.y - neighbor.y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          if (dist < 1) continue;
+
+          const angleDeg = Math.atan2(dy, dx) * 180 / Math.PI;
+          // Find nearest 90° multiple
+          const nearest90 = Math.round(angleDeg / 90) * 90;
+          const diff = Math.abs(angleDeg - nearest90);
+
+          if (diff < ANGLE_SNAP_THRESHOLD && diff > 0.01) {
+            const snapRad = nearest90 * Math.PI / 180;
+            const snapped: Coordinates = {
+              x: Math.round(neighbor.x + dist * Math.cos(snapRad)),
+              y: Math.round(neighbor.y + dist * Math.sin(snapRad)),
+            };
+            const snapDist = Math.sqrt((point.x - snapped.x) ** 2 + (point.y - snapped.y) ** 2);
+            if (snapDist < bestAngleSnapDist) {
+              bestAngleSnapDist = snapDist;
+              bestAngleSnap = snapped;
+            }
+          }
+        }
+
+        if (bestAngleSnap) {
+          return bestAngleSnap;
+        }
       }
     }
 
@@ -2970,32 +3068,76 @@ export class FpbCanvas extends LitElement {
     };
   }
 
-  private _getSnappedPoint(point: Coordinates, snapToEdgeSegments = false): Coordinates {
+  private _getSnappedPoint(point: Coordinates, snapToEdgeSegments = false, skipGridSnap = false, excludeZoneId?: string): Coordinates {
     const floor = currentFloor.value;
-    if (!floor) return snapToGrid.value ? snapPoint(point, gridSize.value) : point;
+    if (!floor) return !skipGridSnap && snapToGrid.value ? snapPoint(point, gridSize.value) : point;
 
-    const snapDistance = 15;
+    // Scale snap distance with viewport so it feels consistent at any zoom level
+    const svgEl = this._svg;
+    const viewScale = svgEl ? this._viewBox.width / svgEl.clientWidth : 1;
+    const snapDistance = Math.max(15, 20 * viewScale);
 
-    // Snap to existing nodes first (highest priority)
+    // Snap to existing wall nodes first (highest priority)
     const nearest = findNearestNode(point, floor.nodes, snapDistance);
     if (nearest) {
       return { x: nearest.x, y: nearest.y };
     }
 
-    // Snap to edge segments (for device placement)
+    // Snap to zone polygon vertices (exclude the zone being edited)
+    if (floor.zones?.length) {
+      let closestZoneNode: Coordinates | null = null;
+      let closestZoneNodeDist = snapDistance;
+      for (const zone of floor.zones) {
+        if (zone.id === excludeZoneId) continue;
+        if (!zone.polygon?.vertices) continue;
+        for (const v of zone.polygon.vertices) {
+          const dist = Math.sqrt((point.x - v.x) ** 2 + (point.y - v.y) ** 2);
+          if (dist < closestZoneNodeDist) {
+            closestZoneNodeDist = dist;
+            closestZoneNode = { x: v.x, y: v.y };
+          }
+        }
+      }
+      if (closestZoneNode) {
+        return closestZoneNode;
+      }
+    }
+
     if (snapToEdgeSegments) {
-      const resolved = resolveFloorEdges(floor);
       let closestPoint: Coordinates | null = null;
       let closestDist = snapDistance;
 
+      // Snap to wall edge segments
+      const resolved = resolveFloorEdges(floor);
       for (const re of resolved) {
         const snapped = this._getClosestPointOnSegment(point, re.startPos, re.endPos);
         const dist = Math.sqrt(
           Math.pow(point.x - snapped.x, 2) + Math.pow(point.y - snapped.y, 2)
         );
-        if (dist < closestDist) {
+        // Use wall thickness as minimum snap range
+        const wallSnap = Math.max(closestDist, re.thickness / 2 + 5);
+        if (dist < wallSnap && dist < closestDist) {
           closestDist = dist;
           closestPoint = snapped;
+        }
+      }
+
+      // Snap to zone polygon edges (exclude the zone being edited)
+      if (floor.zones?.length) {
+        for (const zone of floor.zones) {
+          if (zone.id === excludeZoneId) continue;
+          if (!zone.polygon?.vertices) continue;
+          const verts = zone.polygon.vertices;
+          for (let i = 0; i < verts.length; i++) {
+            const a = verts[i];
+            const b = verts[(i + 1) % verts.length];
+            const snapped = this._getClosestPointOnSegment(point, a, b);
+            const dist = Math.sqrt((point.x - snapped.x) ** 2 + (point.y - snapped.y) ** 2);
+            if (dist < closestDist) {
+              closestDist = dist;
+              closestPoint = snapped;
+            }
+          }
         }
       }
 
@@ -3004,7 +3146,7 @@ export class FpbCanvas extends LitElement {
       }
     }
 
-    return snapToGrid.value ? snapPoint(point, gridSize.value) : point;
+    return !skipGridSnap && snapToGrid.value ? snapPoint(point, gridSize.value) : point;
   }
 
   private _getClosestPointOnSegment(point: Coordinates, start: Coordinates, end: Coordinates): Coordinates {
@@ -3919,51 +4061,68 @@ export class FpbCanvas extends LitElement {
     const detected = detectRoomsFromEdges(floor.nodes, floor.edges);
     const existingRooms = [...floor.rooms];
     const matchedExistingIds = new Set<string>();
+    const matchedDetectedIdxs = new Set<number>();
     let nextRoomNum = this._getNextRoomNumber(existingRooms) - 1;
 
-    // Match detected rooms to existing rooms by vertex count + centroid proximity.
-    // Vertex matching alone breaks when constraint propagation moves many nodes.
-    for (const candidate of detected) {
-      let bestMatch: Room | null = null;
-      let bestScore = 0;
+    // Compute all pairwise scores between detected and existing rooms,
+    // then assign by best global score to avoid greedy ordering bugs
+    // where rooms get swapped.
+    const pairs: Array<{ di: number; roomId: string; score: number }> = [];
 
+    for (let di = 0; di < detected.length; di++) {
+      const candidate = detected[di];
       for (const room of existingRooms) {
-        if (matchedExistingIds.has(room.id)) continue;
-
         const existingVerts = room.polygon.vertices;
-        const detectedVerts = candidate.vertices;
-
-        // Primary: same vertex count + close centroid = strong match
         const existingCentroid = this._getPolygonCenter(existingVerts);
         if (!existingCentroid) continue;
-        const detectedCentroid = candidate.centroid;
+
         const centroidDist = Math.sqrt(
-          (existingCentroid.x - detectedCentroid.x) ** 2 +
-          (existingCentroid.y - detectedCentroid.y) ** 2
+          (existingCentroid.x - candidate.centroid.x) ** 2 +
+          (existingCentroid.y - candidate.centroid.y) ** 2
         );
 
-        // Score: combine vertex count match and centroid proximity
         let score = 0;
 
-        // Same vertex count is a strong signal (topology didn't change)
-        if (existingVerts.length === detectedVerts.length) {
-          score += 0.5;
+        // Containment: existing centroid inside detected polygon is a strong signal
+        if (this._pointInPolygon(existingCentroid, candidate.vertices)) {
+          score += 0.6;
         }
 
-        // Centroid proximity (within 200px is a reasonable match for constraint moves)
+        // Same vertex count means topology didn't change
+        if (existingVerts.length === candidate.vertices.length) {
+          score += 0.3;
+        }
+
+        // Centroid proximity as tiebreaker
         if (centroidDist < 200) {
-          score += 0.5 * (1 - centroidDist / 200);
+          score += 0.1 * (1 - centroidDist / 200);
         }
 
-        if (score > 0.3 && score > bestScore) {
-          bestScore = score;
-          bestMatch = room;
+        if (score > 0.3) {
+          pairs.push({ di, roomId: room.id, score });
         }
       }
+    }
+
+    // Sort by descending score so the best matches are assigned first
+    pairs.sort((a, b) => b.score - a.score);
+
+    // Assign best-first: each detected room and existing room can only match once
+    const matchMap = new Map<number, Room>(); // detected index -> existing room
+    for (const { di, roomId, score: _score } of pairs) {
+      if (matchedDetectedIdxs.has(di) || matchedExistingIds.has(roomId)) continue;
+      const room = existingRooms.find(r => r.id === roomId)!;
+      matchMap.set(di, room);
+      matchedDetectedIdxs.add(di);
+      matchedExistingIds.add(roomId);
+    }
+
+    // Update matched rooms and create new ones for unmatched detections
+    for (let di = 0; di < detected.length; di++) {
+      const candidate = detected[di];
+      const bestMatch = matchMap.get(di);
 
       if (bestMatch) {
-        matchedExistingIds.add(bestMatch.id);
-        // Update polygon geometry if shape changed
         const verticesChanged = this._verticesChanged(bestMatch.polygon.vertices, candidate.vertices);
         if (verticesChanged) {
           try {
@@ -3978,7 +4137,6 @@ export class FpbCanvas extends LitElement {
           }
         }
       } else {
-        // Create new room with auto-name (increment counter to avoid duplicates)
         nextRoomNum++;
         try {
           await this.hass!.callWS({
@@ -4090,7 +4248,23 @@ export class FpbCanvas extends LitElement {
     if (!this._roomEditor || !this.hass) return;
 
     const floorPlan = currentFloorPlan.value;
-    if (!floorPlan) return;
+    const floor = currentFloor.value;
+    if (!floorPlan || !floor) return;
+
+    // Prevent deletion while the room's wall loop is still intact
+    const detected = detectRoomsFromEdges(floor.nodes, floor.edges);
+    const roomVerts = this._roomEditor.room.polygon.vertices;
+    const roomCentroid = this._getPolygonCenter(roomVerts);
+    if (roomCentroid) {
+      const loopExists = detected.some(candidate =>
+        this._pointInPolygon(roomCentroid, candidate.vertices) &&
+        candidate.vertices.length === roomVerts.length
+      );
+      if (loopExists) {
+        alert("Cannot delete a room while its walls are still connected. Remove a wall first.");
+        return;
+      }
+    }
 
     try {
       await this.hass.callWS({
@@ -4157,6 +4331,19 @@ export class FpbCanvas extends LitElement {
     else { anchorX = lx; anchorY = ly; }
     this._draggingCorner = { corner, layerIdx, anchorX, anchorY, bx, by, bw, bh, pointerId: e.pointerId };
     this._svg?.setPointerCapture(e.pointerId);
+  }
+
+  private _roomLoopExists(): boolean {
+    const floor = currentFloor.value;
+    if (!floor || !this._roomEditor) return false;
+    const roomVerts = this._roomEditor.room.polygon.vertices;
+    const roomCentroid = this._getPolygonCenter(roomVerts);
+    if (!roomCentroid) return false;
+    const detected = detectRoomsFromEdges(floor.nodes, floor.edges);
+    return detected.some(candidate =>
+      this._pointInPolygon(roomCentroid, candidate.vertices) &&
+      candidate.vertices.length === roomVerts.length
+    );
   }
 
   private _renderRoomEditor() {
@@ -4326,7 +4513,7 @@ export class FpbCanvas extends LitElement {
 
         <div class="wall-editor-actions">
           <button class="save-btn" @click=${this._handleRoomEditorSave}><ha-icon icon="mdi:check"></ha-icon> Save</button>
-          <button class="delete-btn" @click=${this._handleRoomDelete}><ha-icon icon="mdi:delete-outline"></ha-icon> Delete</button>
+          <button class="delete-btn" @click=${this._handleRoomDelete} ?disabled=${this._roomLoopExists()} title=${this._roomLoopExists() ? "Remove a wall to delete this room" : "Delete room"}><ha-icon icon="mdi:delete-outline"></ha-icon> Delete</button>
         </div>
       </div>
     `;
@@ -4898,8 +5085,7 @@ export class FpbCanvas extends LitElement {
             <path class="room ${sel.type === "room" && sel.ids.includes(room.id) ? "selected" : ""} ${frid ? (room.id === frid ? "room-focused" : "room-dimmed") : ""}"
                   d="${polygonToPath(room.polygon)}"
                   fill="${room.color}"
-                  stroke="var(--divider-color, #999)"
-                  stroke-width="1"/>
+                  stroke="none"/>
           `)}
           <!-- Room background layers -->
           ${floor.rooms.filter(r => (r.background_layers ?? []).length > 0 || (this._roomEditor?.room.id === r.id && this._roomEditor.editLayers.length > 0)).map(room => {
@@ -5665,6 +5851,46 @@ export class FpbCanvas extends LitElement {
     const sortedZones = floor.zones;
     const focusedRoom = frid ? floor.rooms.find(r => r.id === frid) : null;
 
+    // Collect unique zone border edges, deduplicating shared edges and
+    // skipping edges that overlap with walls.
+    const edgeKey = (a: Coordinates, b: Coordinates) => {
+      const ax = Math.round(a.x), ay = Math.round(a.y);
+      const bx = Math.round(b.x), by = Math.round(b.y);
+      return ax < bx || (ax === bx && ay <= by)
+        ? `${ax},${ay}-${bx},${by}` : `${bx},${by}-${ax},${ay}`;
+    };
+
+    // Build set of wall edge keys to skip zone edges that overlap walls
+    const wallEdgeKeys = new Set<string>();
+    const resolved = resolveFloorEdges(floor);
+    for (const re of resolved) {
+      wallEdgeKeys.add(edgeKey(re.startPos, re.endPos));
+    }
+
+    // Collect unique zone edges with their color
+    const seenEdges = new Map<string, { a: Coordinates; b: Coordinates; color: string; dimClass: string }>();
+    for (const zone of sortedZones) {
+      if (!zone.polygon?.vertices?.length) continue;
+      const verts = zone.polygon.vertices;
+      const center = this._getPolygonCenter(verts);
+      const zoneInFocusedRoom = frid && (
+        zone.id === frid ||
+        zone.room_id === frid ||
+        (focusedRoom && center && this._pointInOrNearPolygon(center, focusedRoom.polygon.vertices, 5))
+      );
+      const dimClass = frid ? (zoneInFocusedRoom ? "" : "room-dimmed") : "";
+      const color = zone.color || "#a1c4fd";
+      for (let i = 0; i < verts.length; i++) {
+        const a = verts[i];
+        const b = verts[(i + 1) % verts.length];
+        const key = edgeKey(a, b);
+        if (wallEdgeKeys.has(key)) continue;
+        if (!seenEdges.has(key)) {
+          seenEdges.set(key, { a, b, color, dimClass });
+        }
+      }
+    }
+
     return svg`
       <g class="furniture-layer">
         ${sortedZones.map((zone: Zone) => {
@@ -5685,8 +5911,7 @@ export class FpbCanvas extends LitElement {
                     d="${path}"
                     fill="${zone.color || "#a1c4fd"}"
                     fill-opacity="0.35"
-                    stroke="${zone.color || "#a1c4fd"}"
-                    stroke-width="1.5"/>
+                    stroke="none"/>
               ${center ? svg`
                 <text class="zone-label" x="${center.x}" y="${center.y}">${zone.name}</text>
               ` : null}
@@ -5694,6 +5919,12 @@ export class FpbCanvas extends LitElement {
             </g>
           `;
         })}
+        <!-- Deduplicated zone border edges (skip wall overlaps) -->
+        ${Array.from(seenEdges.values()).map(({ a, b, color, dimClass }) => svg`
+          <line class="zone-border ${dimClass}" x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}"
+                stroke="${color}" stroke-width="1.5" stroke-dasharray="4,3"
+                pointer-events="none"/>
+        `)}
       </g>
     `;
   }
@@ -5701,15 +5932,37 @@ export class FpbCanvas extends LitElement {
   private _renderZoneVertexHandles(zone: Zone) {
     const verts = zone.polygon?.vertices;
     if (!verts?.length) return null;
+    const color = zone.color || '#2196f3';
 
     return svg`
+      <!-- Midpoint handles for inserting new vertices -->
+      ${verts.map((v: Coordinates, i: number) => {
+        const next = verts[(i + 1) % verts.length];
+        const mx = (v.x + next.x) / 2;
+        const my = (v.y + next.y) / 2;
+        return svg`
+          <circle
+            class="zone-midpoint-handle"
+            cx="${mx}" cy="${my}" r="4"
+            fill="${color}" fill-opacity="0.3" stroke="${color}" stroke-width="1"
+            style="cursor: copy"
+            @pointerdown=${(e: PointerEvent) => {
+              e.stopPropagation();
+              e.preventDefault();
+              this._insertZoneVertex(zone, i, { x: mx, y: my }, e.pointerId);
+            }}
+          />
+        `;
+      })}
+      <!-- Vertex handles (drag to move, right-click to remove) -->
       ${verts.map((v: Coordinates, i: number) => svg`
         <circle
           class="zone-vertex-handle"
           cx="${v.x}" cy="${v.y}" r="6"
-          fill="white" stroke="${zone.color || '#2196f3'}" stroke-width="1.5"
+          fill="white" stroke="${color}" stroke-width="1.5"
           style="cursor: grab"
           @pointerdown=${(e: PointerEvent) => {
+            if (e.button === 2) return;
             e.stopPropagation();
             e.preventDefault();
             this._draggingZoneVertex = {
@@ -5720,9 +5973,71 @@ export class FpbCanvas extends LitElement {
             };
             this._svg?.setPointerCapture(e.pointerId);
           }}
+          @contextmenu=${(e: Event) => {
+            e.stopPropagation();
+            e.preventDefault();
+            if (verts.length > 3) {
+              this._removeZoneVertex(zone, i);
+            }
+          }}
         />
       `)}
     `;
+  }
+
+  private async _insertZoneVertex(zone: Zone, afterIndex: number, point: Coordinates, pointerId: number): Promise<void> {
+    if (!zone.polygon?.vertices || !this.hass) return;
+    const floorPlan = currentFloorPlan.value;
+    if (!floorPlan) return;
+
+    const newVerts = [...zone.polygon.vertices];
+    newVerts.splice(afterIndex + 1, 0, { x: point.x, y: point.y });
+
+    try {
+      await this.hass.callWS({
+        type: "inhabit/zones/update",
+        floor_plan_id: floorPlan.id,
+        zone_id: zone.id,
+        polygon: { vertices: newVerts.map(v => ({ x: v.x, y: v.y })) },
+      });
+      await reloadFloorData();
+
+      // Start dragging the new vertex immediately
+      const floor = currentFloor.value;
+      const updatedZone = floor?.zones?.find(z => z.id === zone.id);
+      if (updatedZone?.polygon?.vertices) {
+        this._draggingZoneVertex = {
+          zone: updatedZone,
+          vertexIndex: afterIndex + 1,
+          originalCoords: { x: point.x, y: point.y },
+          pointerId,
+        };
+        this._svg?.setPointerCapture(pointerId);
+      }
+    } catch (err) {
+      console.error("Error inserting zone vertex:", err);
+    }
+  }
+
+  private async _removeZoneVertex(zone: Zone, index: number): Promise<void> {
+    if (!zone.polygon?.vertices || !this.hass) return;
+    if (zone.polygon.vertices.length <= 3) return;
+    const floorPlan = currentFloorPlan.value;
+    if (!floorPlan) return;
+
+    const newVerts = zone.polygon.vertices.filter((_: Coordinates, i: number) => i !== index);
+
+    try {
+      await this.hass.callWS({
+        type: "inhabit/zones/update",
+        floor_plan_id: floorPlan.id,
+        zone_id: zone.id,
+        polygon: { vertices: newVerts.map(v => ({ x: v.x, y: v.y })) },
+      });
+      await reloadFloorData();
+    } catch (err) {
+      console.error("Error removing zone vertex:", err);
+    }
   }
 
   private _renderFurnitureDrawingPreview() {
