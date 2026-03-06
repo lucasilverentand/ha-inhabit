@@ -25,6 +25,7 @@ class Zone:
     checking_timeout: int = 30
     long_stay: bool = False  # Zone where occupants stay for hours (couch, bed, etc.)
     occupies_parent: bool = False  # When occupied, also mark parent room as occupied
+    phantom_hold_seconds: int = 0  # 0 = use default (checking_timeout)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
@@ -42,6 +43,7 @@ class Zone:
             "checking_timeout": self.checking_timeout,
             "long_stay": self.long_stay,
             "occupies_parent": self.occupies_parent,
+            "phantom_hold_seconds": self.phantom_hold_seconds,
         }
 
     @classmethod
@@ -61,4 +63,5 @@ class Zone:
             checking_timeout=int(data.get("checking_timeout", 30)),
             long_stay=data.get("long_stay", False),
             occupies_parent=data.get("occupies_parent", False),
+            phantom_hold_seconds=int(data.get("phantom_hold_seconds", 0)),
         )

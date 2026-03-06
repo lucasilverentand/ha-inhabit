@@ -408,6 +408,8 @@ class Room:
     connected_rooms: list[str] = field(
         default_factory=list
     )  # Room IDs connected via doors
+    is_transit: bool | None = None  # None = auto-detect, True/False = manual override
+    phantom_hold_seconds: int = 0  # 0 = use default (300s for transit, checking_timeout otherwise)
     ha_area_id: str | None = None
     background_layers: list[BackgroundLayer] = field(default_factory=list)
 
@@ -423,6 +425,8 @@ class Room:
             "motion_timeout": self.motion_timeout,
             "checking_timeout": self.checking_timeout,
             "connected_rooms": self.connected_rooms,
+            "is_transit": self.is_transit,
+            "phantom_hold_seconds": self.phantom_hold_seconds,
             "ha_area_id": self.ha_area_id,
             "background_layers": [l.to_dict() for l in self.background_layers],
         }
@@ -447,6 +451,8 @@ class Room:
             motion_timeout=int(data.get("motion_timeout", 120)),
             checking_timeout=int(data.get("checking_timeout", 30)),
             connected_rooms=data.get("connected_rooms", []),
+            is_transit=data.get("is_transit"),
+            phantom_hold_seconds=int(data.get("phantom_hold_seconds", 0)),
             ha_area_id=data.get("ha_area_id"),
             background_layers=[BackgroundLayer.from_dict(l) for l in layers_data],
         )

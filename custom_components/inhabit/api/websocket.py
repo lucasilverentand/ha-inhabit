@@ -160,6 +160,7 @@ def async_register_websocket_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_simulate_target_remove)
     websocket_api.async_register_command(hass, ws_simulate_target_clear)
     websocket_api.async_register_command(hass, ws_simulate_target_list)
+    websocket_api.async_register_command(hass, ws_phantom_states)
     _LOGGER.debug("Registered WebSocket commands")
 
 
@@ -666,6 +667,8 @@ def ws_rooms_add(
         vol.Optional("occupancy_sensor_enabled"): bool,
         vol.Optional("motion_timeout"): int,
         vol.Optional("checking_timeout"): int,
+        vol.Optional("is_transit"): vol.Any(bool, None),
+        vol.Optional("phantom_hold_seconds"): int,
         vol.Optional("ha_area_id"): vol.Any(str, None),
         vol.Optional("background_layers"): [dict],
     }
@@ -697,6 +700,10 @@ def ws_rooms_update(
         room.motion_timeout = msg["motion_timeout"]
     if "checking_timeout" in msg:
         room.checking_timeout = msg["checking_timeout"]
+    if "is_transit" in msg:
+        room.is_transit = msg["is_transit"]
+    if "phantom_hold_seconds" in msg:
+        room.phantom_hold_seconds = msg["phantom_hold_seconds"]
     if "ha_area_id" in msg:
         next_ha_area_id = _normalize_ha_area_id(msg["ha_area_id"])
         if not _validate_unique_ha_area(
@@ -2868,6 +2875,53 @@ def ws_occupancy_history(
     connection.send_result(
         msg["id"],
         {"history": [e.to_dict() for e in history]},
+    )
+
+
+# ==================== Phantom Presence (Transition Prediction) ====================
+
+
+@websocket_api.websocket_command(
+    {vol.Required("type"): f"{WS_PREFIX}/phantom_states"}
+)
+@callback
+def ws_phantom_states(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Get active phantom presence states and transition predictor diagnostics."""
+    sensor_engine = hass.data[DOMAIN]["sensor_engine"]
+    predictor = sensor_engine.transition_predictor
+    learner = sensor_engine.transition_learner
+
+    phantoms = {}
+    for target_id, phantom in predictor.phantoms.items():
+        phantoms[target_id] = {
+            "source_id": phantom.source_id,
+            "target_id": phantom.target_id,
+            "probability": phantom.probability,
+            "current_probability": phantom.current_probability,
+            "hold_seconds": phantom.hold_seconds,
+            "remaining_seconds": phantom.remaining,
+            "reason": phantom.reason,
+        }
+
+    door_links = {}
+    for entity_id, link in predictor.door_links.items():
+        door_links[entity_id] = {
+            "room_a": link.room_a,
+            "room_b": link.room_b,
+            "edge_id": link.door_edge_id,
+        }
+
+    connection.send_result(
+        msg["id"],
+        {
+            "phantoms": phantoms,
+            "door_links": door_links,
+            "transition_counts": dict(learner._total_counts),
+        },
     )
 
 

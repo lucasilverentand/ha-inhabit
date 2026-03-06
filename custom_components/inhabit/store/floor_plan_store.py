@@ -818,6 +818,17 @@ class FloorPlanStore:
         self._data["pattern_priors"] = data
         self.async_delay_save()
 
+    # ==================== Transition Learner ====================
+
+    def get_transition_learner_data(self) -> dict[str, Any]:
+        """Get persisted transition learner data."""
+        return self._data.get("transition_learner", {})
+
+    def save_transition_learner_data(self, data: dict[str, Any]) -> None:
+        """Save transition learner data."""
+        self._data["transition_learner"] = data
+        self.async_delay_save()
+
     # ==================== Utilities ====================
 
     def _generate_id(self) -> str:

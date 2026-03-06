@@ -26,6 +26,8 @@ from .house_occupancy_guard import HouseOccupancyGuard
 from .mmwave_target_processor import SIGNAL_MMWAVE_TARGETS_UPDATED
 from .multi_room_reasoner import MultiRoomReasoner
 from .occupancy_state_machine import OccupancyStateMachine
+from .transition_learner import TransitionLearner
+from .transition_predictor import TransitionPredictor
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -64,8 +66,19 @@ class VirtualSensorEngine:
             store=store,
             force_vacant_callback=self._force_room_vacant,
         )
+        self._transition_predictor = TransitionPredictor(
+            hass=hass,
+            store=store,
+            get_seal_state=self._is_room_sealed,
+            set_room_occupied=self._set_room_occupied,
+            get_learned_weight=lambda fr, to, hr: self._transition_learner.get_transition_weight(fr, to, hr),
+        )
+        self._transition_learner = TransitionLearner()
         self._running = False
         self._unsub_mmwave: Callable[[], None] | None = None
+
+        # Door event subscriptions for transition predictor
+        self._unsub_door_listeners: list[Callable[[], None]] = []
 
         # Per-region target tracking: {region_id: set of "placement_id:target_index" keys}
         self._mmwave_target_keys_per_region: dict[str, set[str]] = {}
@@ -102,6 +115,16 @@ class VirtualSensorEngine:
         """Get the feedback controller."""
         return self._feedback_controller
 
+    @property
+    def transition_predictor(self) -> TransitionPredictor:
+        """Get the transition predictor."""
+        return self._transition_predictor
+
+    @property
+    def transition_learner(self) -> TransitionLearner:
+        """Get the transition learner."""
+        return self._transition_learner
+
     async def async_start(self) -> None:
         """Start the engine and create state machines for all configured rooms."""
         if self._running:
@@ -121,6 +144,14 @@ class VirtualSensorEngine:
 
         # Start multi-room reasoner
         await self._multi_room_reasoner.async_start()
+
+        # Start transition predictor
+        await self._transition_predictor.async_start()
+
+        # Load transition learner data
+        learner_data = self._store.get_transition_learner_data()
+        if learner_data:
+            self._transition_learner.load_data(learner_data)
 
         # Load persisted false vacancy data
         self._false_vacancy_detector.load_data(
@@ -159,6 +190,9 @@ class VirtualSensorEngine:
         self._load_pattern_priors()
         self._start_pattern_updates()
 
+        # Subscribe to door events for transition prediction
+        self._subscribe_door_events()
+
         _LOGGER.info(
             "Virtual sensor engine started with %d state machines",
             len(self._state_machines),
@@ -191,6 +225,11 @@ class VirtualSensorEngine:
         # Persist occupancy history before stopping
         await self._save_history()
 
+        # Unsubscribe door event listeners for transition prediction
+        for unsub in self._unsub_door_listeners:
+            unsub()
+        self._unsub_door_listeners.clear()
+
         # Unsubscribe from mmWave target updates
         if self._unsub_mmwave:
             self._unsub_mmwave()
@@ -208,6 +247,14 @@ class VirtualSensorEngine:
         self._parent_zones.clear()
         self._last_transition_time.clear()
 
+        # Save and stop transition learner
+        self._store.save_transition_learner_data(
+            self._transition_learner.save_data()
+        )
+
+        # Stop transition predictor
+        await self._transition_predictor.async_stop()
+
         # Stop multi-room reasoner
         await self._multi_room_reasoner.async_stop()
 
@@ -222,6 +269,10 @@ class VirtualSensorEngine:
 
         # Re-resolve zone parents
         self._resolve_zone_parents()
+
+        # Rebuild transition predictor topology
+        self._transition_predictor.refresh_topology()
+        self._subscribe_door_events()
 
         # Get current configs
         configs = self._store.get_all_sensor_configs()
@@ -366,6 +417,60 @@ class VirtualSensorEngine:
         machine = self._state_machines.get(room_id)
         if machine:
             machine.set_state(OccupancyState.VACANT, reason)
+
+    # ------------------------------------------------------------------
+    # Door event forwarding for transition prediction
+    # ------------------------------------------------------------------
+
+    def _subscribe_door_events(self) -> None:
+        """Subscribe to door sensor events for transition prediction."""
+        from homeassistant.helpers.event import async_track_state_change_event
+
+        # Unsubscribe old listeners
+        for unsub in self._unsub_door_listeners:
+            unsub()
+        self._unsub_door_listeners.clear()
+
+        # Subscribe to all door entities known to the transition predictor
+        for entity_id in self._transition_predictor.door_links:
+            unsub = async_track_state_change_event(
+                self.hass,
+                entity_id,
+                self._handle_predictor_door_event,
+            )
+            self._unsub_door_listeners.append(unsub)
+
+        if self._unsub_door_listeners:
+            _LOGGER.debug(
+                "Subscribed to %d door sensors for transition prediction",
+                len(self._unsub_door_listeners),
+            )
+
+    @callback
+    def _handle_predictor_door_event(self, event: Any) -> None:
+        """Forward door events to the transition predictor."""
+        from homeassistant.const import STATE_ON
+
+        new_state = event.data.get("new_state")
+        if not new_state:
+            return
+
+        entity_id = event.data.get("entity_id", "")
+        is_open = new_state.state in (STATE_ON, "on", "open", "true", "1")
+        self._transition_predictor.on_door_event(entity_id, is_open)
+
+    def _is_room_sealed(self, room_id: str) -> bool:
+        """Check if a room is sealed (used by transition predictor)."""
+        machine = self._state_machines.get(room_id)
+        if machine:
+            return machine.state.sealed
+        return False
+
+    def _set_room_occupied(self, room_id: str, reason: str) -> None:
+        """Push a room to OCCUPIED state (used by transition predictor)."""
+        machine = self._state_machines.get(room_id)
+        if machine and machine.state.state == OccupancyState.VACANT:
+            machine.set_state(OccupancyState.OCCUPIED, reason)
 
     # ------------------------------------------------------------------
     # Timeout history persistence
@@ -575,6 +680,7 @@ class VirtualSensorEngine:
             ),
             can_go_vacant=self._house_guard.can_room_go_vacant,
             is_occupied_by_children=self._is_occupied_by_children,
+            has_phantom_hold=self._transition_predictor.has_active_phantom,
         )
 
         self._state_machines[config.room_id] = machine
@@ -711,6 +817,18 @@ class VirtualSensorEngine:
             new_state=state.state,
             confidence=state.confidence,
         )
+
+        # Transition prediction (phantom presence)
+        self._transition_predictor.on_room_state_changed(
+            room_id=room_id,
+            old_state=previous_state or OccupancyState.VACANT,
+            new_state=state.state,
+            confidence=state.confidence,
+        )
+
+        # Transition learning
+        if state.state == OccupancyState.OCCUPIED:
+            self._transition_learner.on_room_occupied(room_id)
 
         # Propagate zone occupancy to parent room
         self._propagate_to_parent(room_id, state.state)

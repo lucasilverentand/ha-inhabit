@@ -68,6 +68,7 @@ class OccupancyStateMachine:
         on_state_change: Callable[[OccupancyStateData, str], None],
         can_go_vacant: Callable[[str], bool] | None = None,
         is_occupied_by_children: Callable[[str], bool] | None = None,
+        has_phantom_hold: Callable[[str], bool] | None = None,
     ) -> None:
         """Initialize the state machine.
 
@@ -81,12 +82,15 @@ class OccupancyStateMachine:
                 occupied room).
             is_occupied_by_children: Optional callback that returns True if any
                 child zone with occupies_parent is currently occupied.
+            has_phantom_hold: Optional callback that returns True if a phantom
+                presence hold is active on this room (transition prediction).
         """
         self.hass = hass
         self._config = config
         self._on_state_change = on_state_change
         self._can_go_vacant = can_go_vacant
         self._is_occupied_by_children = is_occupied_by_children
+        self._has_phantom_hold = has_phantom_hold
         self._state = OccupancyStateData(state=OccupancyState.VACANT)
         self._unsub_state_listeners: list[Callable[[], None]] = []
         self._checking_timer: Callable[[], None] | None = None
@@ -826,6 +830,14 @@ class OccupancyStateMachine:
 
     def _transition_to_vacant(self, reason: str) -> None:
         """Transition to VACANT state."""
+        # Phantom hold — transition prediction keeps room from going VACANT
+        if self._has_phantom_hold and self._has_phantom_hold(self.config.room_id):
+            _LOGGER.debug(
+                "Room %s: vacancy blocked by phantom hold",
+                self.config.room_id,
+            )
+            return
+
         # Room-level seal check (probabilistic)
         if self._seal_tracker.is_effective:
             _LOGGER.debug(
@@ -923,6 +935,15 @@ class OccupancyStateMachine:
         ):
             _LOGGER.debug(
                 "Room %s: sensors clear but child zone is occupied, "
+                "staying OCCUPIED",
+                self.config.room_id,
+            )
+            return
+
+        # Phantom hold — transition prediction keeps room OCCUPIED
+        if self._has_phantom_hold and self._has_phantom_hold(self.config.room_id):
+            _LOGGER.debug(
+                "Room %s: sensors clear but phantom hold active, "
                 "staying OCCUPIED",
                 self.config.room_id,
             )

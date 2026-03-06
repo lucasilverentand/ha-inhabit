@@ -30,6 +30,13 @@ DEFAULT_LONG_STAY_SEAL_MAX_DURATION: Final = 28800  # 8 hours
 DEFAULT_SEAL_HALF_LIFE: Final = 3600  # 1 hour
 DEFAULT_HOUSE_GUARD_MAX_DURATION: Final = 86400  # 24 hours
 
+# Phantom presence (transition prediction)
+DEFAULT_TRANSIT_PHANTOM_HOLD: Final = 300  # 5 minutes for hallways/corridors
+DEFAULT_PHANTOM_HOLD: Final = 0  # 0 = use room's checking_timeout (non-transit default)
+PHANTOM_ZONE_PROXIMITY_THRESHOLD: Final = 50.0  # cm — zones closer than this are adjacent
+TRANSITION_LEARNER_HISTORY_DAYS: Final = 14
+TRANSITION_LEARNER_MIN_TRANSITIONS: Final = 50
+
 
 # Device categories
 class DeviceCategory:
