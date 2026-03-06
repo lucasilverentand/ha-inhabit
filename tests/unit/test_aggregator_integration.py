@@ -16,7 +16,6 @@ from custom_components.inhabit.const import OccupancyState
 from custom_components.inhabit.engine.occupancy_state_machine import (
     OccupancyStateMachine,
 )
-from custom_components.inhabit.engine.presence_aggregator import PresenceAggregator
 from custom_components.inhabit.models.virtual_sensor import (
     OccupancyStateData,
     SensorBinding,
@@ -107,23 +106,26 @@ class TestPresenceSensorSubscriptions:
     """Test that presence sensor subscriptions are created in async_start."""
 
     @pytest.mark.asyncio
-    async def test_presence_sensors_subscribed(self, mock_hass, config_with_presence, state_changes):
+    async def test_presence_sensors_subscribed(
+        self, mock_hass, config_with_presence, state_changes
+    ):
         """Presence sensor entity_ids are subscribed in async_start."""
         machine, changes = _make_machine(mock_hass, config_with_presence, state_changes)
 
-        with patch(
-            "custom_components.inhabit.engine.occupancy_state_machine.async_track_state_change_event",
-        ) as mock_track, patch(
-            "custom_components.inhabit.engine.occupancy_state_machine.async_call_later",
-            lambda hass, delay, cb: MagicMock(),
+        with (
+            patch(
+                "custom_components.inhabit.engine.occupancy_state_machine.async_track_state_change_event",
+            ) as mock_track,
+            patch(
+                "custom_components.inhabit.engine.occupancy_state_machine.async_call_later",
+                lambda hass, delay, cb: MagicMock(),
+            ),
         ):
             mock_track.return_value = MagicMock()
             await machine.async_start()
 
             # Collect all entity_ids that were subscribed
-            subscribed_entity_ids = [
-                call.args[1] for call in mock_track.call_args_list
-            ]
+            subscribed_entity_ids = [call.args[1] for call in mock_track.call_args_list]
 
             # Presence sensor must be in the subscribed list
             assert "binary_sensor.test_presence" in subscribed_entity_ids
@@ -135,11 +137,14 @@ class TestPresenceSensorSubscriptions:
         """Total subscription count includes motion + door + presence + exit sensors."""
         machine, changes = _make_machine(mock_hass, config_with_presence, state_changes)
 
-        with patch(
-            "custom_components.inhabit.engine.occupancy_state_machine.async_track_state_change_event",
-        ) as mock_track, patch(
-            "custom_components.inhabit.engine.occupancy_state_machine.async_call_later",
-            lambda hass, delay, cb: MagicMock(),
+        with (
+            patch(
+                "custom_components.inhabit.engine.occupancy_state_machine.async_track_state_change_event",
+            ) as mock_track,
+            patch(
+                "custom_components.inhabit.engine.occupancy_state_machine.async_call_later",
+                lambda hass, delay, cb: MagicMock(),
+            ),
         ):
             mock_track.return_value = MagicMock()
             await machine.async_start()
@@ -157,7 +162,9 @@ class TestPresenceSensorSubscriptions:
 class TestMotionEventsUpdateAggregator:
     """Test that motion events update both the aggregator and the state machine."""
 
-    def test_motion_on_updates_aggregator(self, mock_hass, config_with_presence, state_changes):
+    def test_motion_on_updates_aggregator(
+        self, mock_hass, config_with_presence, state_changes
+    ):
         """Motion ON event feeds into the aggregator."""
         machine, changes = _make_machine(mock_hass, config_with_presence, state_changes)
 
@@ -175,7 +182,9 @@ class TestMotionEventsUpdateAggregator:
             assert reading.sensor_type == "motion"
             assert reading.weight == 1.0
 
-    def test_motion_off_updates_aggregator(self, mock_hass, config_with_presence, state_changes):
+    def test_motion_off_updates_aggregator(
+        self, mock_hass, config_with_presence, state_changes
+    ):
         """Motion OFF event feeds into the aggregator."""
         machine, changes = _make_machine(mock_hass, config_with_presence, state_changes)
 
@@ -190,7 +199,9 @@ class TestMotionEventsUpdateAggregator:
             reading = machine._aggregator._readings["binary_sensor.test_motion"]
             assert reading.is_active is False
 
-    def test_presence_on_updates_aggregator(self, mock_hass, config_with_presence, state_changes):
+    def test_presence_on_updates_aggregator(
+        self, mock_hass, config_with_presence, state_changes
+    ):
         """Presence ON event feeds into the aggregator."""
         machine, changes = _make_machine(mock_hass, config_with_presence, state_changes)
 
@@ -357,7 +368,9 @@ class TestVacantThresholdBlocking:
 class TestTemporalDecay:
     """Test that aggregator temporal decay works correctly."""
 
-    def test_fresh_reading_has_full_weight(self, mock_hass, config_with_presence, state_changes):
+    def test_fresh_reading_has_full_weight(
+        self, mock_hass, config_with_presence, state_changes
+    ):
         """A just-created active reading yields high probability."""
         machine, changes = _make_machine(mock_hass, config_with_presence, state_changes)
 
@@ -474,12 +487,15 @@ class TestAggregatorCleanup:
         """Aggregator is clean after a start-stop cycle."""
         machine, changes = _make_machine(mock_hass, config_with_presence, state_changes)
 
-        with patch(
-            "custom_components.inhabit.engine.occupancy_state_machine.async_track_state_change_event",
-            return_value=MagicMock(),
-        ), patch(
-            "custom_components.inhabit.engine.occupancy_state_machine.async_call_later",
-            lambda hass, delay, cb: MagicMock(),
+        with (
+            patch(
+                "custom_components.inhabit.engine.occupancy_state_machine.async_track_state_change_event",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "custom_components.inhabit.engine.occupancy_state_machine.async_call_later",
+                lambda hass, delay, cb: MagicMock(),
+            ),
         ):
             await machine.async_start()
 
@@ -496,7 +512,9 @@ class TestAggregatorCleanup:
 class TestAggregatorInitialization:
     """Test aggregator is properly initialized with config values."""
 
-    def test_aggregator_uses_config_timeouts(self, mock_hass, config_with_presence, state_changes):
+    def test_aggregator_uses_config_timeouts(
+        self, mock_hass, config_with_presence, state_changes
+    ):
         """Aggregator decay seconds match config motion/presence timeouts."""
         machine, changes = _make_machine(mock_hass, config_with_presence, state_changes)
 
@@ -507,18 +525,27 @@ class TestAggregatorInitialization:
             config_with_presence.presence_timeout
         )
 
-    def test_aggregator_has_correct_bindings(self, mock_hass, config_with_presence, state_changes):
+    def test_aggregator_has_correct_bindings(
+        self, mock_hass, config_with_presence, state_changes
+    ):
         """Aggregator receives the correct sensor bindings from config."""
         machine, changes = _make_machine(mock_hass, config_with_presence, state_changes)
 
-        assert machine._aggregator.motion_bindings == config_with_presence.motion_sensors
-        assert machine._aggregator.presence_bindings == config_with_presence.presence_sensors
+        assert (
+            machine._aggregator.motion_bindings == config_with_presence.motion_sensors
+        )
+        assert (
+            machine._aggregator.presence_bindings
+            == config_with_presence.presence_sensors
+        )
 
 
 class TestConfidenceFromAggregator:
     """Test that confidence is now derived from the aggregator."""
 
-    def test_confidence_low_with_no_readings(self, mock_hass, config_with_presence, state_changes):
+    def test_confidence_low_with_no_readings(
+        self, mock_hass, config_with_presence, state_changes
+    ):
         """Confidence is low (prior only) when aggregator has no readings."""
         machine, changes = _make_machine(mock_hass, config_with_presence, state_changes)
 
@@ -552,11 +579,12 @@ class TestInitialStateWithAggregator:
         """_evaluate_initial_state calls aggregator.refresh_from_state."""
         machine, changes = _make_machine(mock_hass, config_with_presence, state_changes)
 
-        with patch.object(
-            machine._aggregator, "refresh_from_state"
-        ) as mock_refresh, patch(
-            "custom_components.inhabit.engine.occupancy_state_machine.async_call_later",
-            lambda hass, delay, cb: MagicMock(),
+        with (
+            patch.object(machine._aggregator, "refresh_from_state") as mock_refresh,
+            patch(
+                "custom_components.inhabit.engine.occupancy_state_machine.async_call_later",
+                lambda hass, delay, cb: MagicMock(),
+            ),
         ):
             await machine._evaluate_initial_state()
             mock_refresh.assert_called_once()

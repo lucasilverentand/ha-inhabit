@@ -6,7 +6,7 @@ import logging
 import math
 from typing import TYPE_CHECKING, Any
 
-from homeassistant.core import HomeAssistant, State, callback
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_track_state_change_event
 
@@ -144,9 +144,7 @@ class MmwaveTargetProcessor:
 
         self._unsub_listeners[placement.id] = unsubs
 
-    def _make_state_handler(
-        self, placement_id: str, target_index: int
-    ):
+    def _make_state_handler(self, placement_id: str, target_index: int):
         """Create a state change handler for a specific target."""
 
         @callback
@@ -189,7 +187,6 @@ class MmwaveTargetProcessor:
 
         # Test against rooms/zones
         region_id = self._find_containing_region(placement, world_pos)
-        old_region = self._region_hits.get(placement_id, {}).get(target_index)
         self._region_hits.setdefault(placement_id, {})[target_index] = region_id
 
         # Dispatch update signal

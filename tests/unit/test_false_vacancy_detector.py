@@ -14,9 +14,7 @@ if "homeassistant" not in sys.modules:
 
 from custom_components.inhabit.const import OccupancyState
 from custom_components.inhabit.engine.false_vacancy_detector import (
-    HIGH_RATE_THRESHOLD,
     LARGE_BUMP,
-    LOW_RATE_THRESHOLD,
     MAX_CHECKING_TIMEOUT,
     MIN_CHECKING_TIMEOUT,
     MIN_TRANSITIONS_FOR_RATE,

@@ -185,9 +185,7 @@ class TestSpatialPresenceOnStateMachine:
         machine.update_spatial_presence(target_count=1)
         assert machine.state.last_presence_at is not None
 
-    def test_custom_source_name(
-        self, mock_hass, spatial_config, state_changes
-    ):
+    def test_custom_source_name(self, mock_hass, spatial_config, state_changes):
         """Custom source name should appear in virtual entity ID."""
         mock_hass.states.get.return_value = None
         machine, changes = _make_machine(mock_hass, spatial_config, state_changes)
@@ -222,15 +220,11 @@ class TestSpatialMotionCoexistence:
             assert machine.state.state == OccupancyState.OCCUPIED
 
             # Motion sensor fires and then clears
-            machine._update_contributing_sensors(
-                "binary_sensor.room_motion", add=True
-            )
+            machine._update_contributing_sensors("binary_sensor.room_motion", add=True)
             machine._transition_to_occupied("motion from binary_sensor.room_motion")
 
             # Motion clears — _any_sensor_active still True because spatial
-            machine._update_contributing_sensors(
-                "binary_sensor.room_motion", add=False
-            )
+            machine._update_contributing_sensors("binary_sensor.room_motion", add=False)
             machine._check_all_sensors_clear()
 
             # Should still be OCCUPIED because spatial presence virtual entity
@@ -250,16 +244,14 @@ class TestSpatialMotionCoexistence:
         ):
             # Occupy via both
             machine.update_spatial_presence(target_count=1)
-            machine._update_contributing_sensors(
-                "binary_sensor.room_motion", add=True
-            )
+            machine._update_contributing_sensors("binary_sensor.room_motion", add=True)
 
             # Motion clears
-            machine._update_contributing_sensors(
-                "binary_sensor.room_motion", add=False
-            )
+            machine._update_contributing_sensors("binary_sensor.room_motion", add=False)
             machine._check_all_sensors_clear()
-            assert machine.state.state == OccupancyState.OCCUPIED  # Spatial still active
+            assert (
+                machine.state.state == OccupancyState.OCCUPIED
+            )  # Spatial still active
 
             # Spatial clears
             machine.update_spatial_presence(target_count=0)
@@ -387,15 +379,11 @@ class TestVirtualSensorEngineRouting:
         engine._state_machines["mmwave_room"] = mock_machine
 
         # Target 0 enters
-        engine._handle_mmwave_target_update(
-            "sensor1", 0, MagicMock(), "mmwave_room"
-        )
+        engine._handle_mmwave_target_update("sensor1", 0, MagicMock(), "mmwave_room")
         mock_machine.update_spatial_presence.assert_called_with(1)
 
         # Target 1 enters same region
-        engine._handle_mmwave_target_update(
-            "sensor1", 1, MagicMock(), "mmwave_room"
-        )
+        engine._handle_mmwave_target_update("sensor1", 1, MagicMock(), "mmwave_room")
         mock_machine.update_spatial_presence.assert_called_with(2)
 
     def test_target_leaving_region_decrements_count(self, mock_hass, mock_store):
@@ -410,17 +398,11 @@ class TestVirtualSensorEngineRouting:
         engine._state_machines["mmwave_room"] = mock_machine
 
         # Two targets enter
-        engine._handle_mmwave_target_update(
-            "sensor1", 0, MagicMock(), "mmwave_room"
-        )
-        engine._handle_mmwave_target_update(
-            "sensor1", 1, MagicMock(), "mmwave_room"
-        )
+        engine._handle_mmwave_target_update("sensor1", 0, MagicMock(), "mmwave_room")
+        engine._handle_mmwave_target_update("sensor1", 1, MagicMock(), "mmwave_room")
 
         # Target 0 leaves the region (goes to None)
-        engine._handle_mmwave_target_update(
-            "sensor1", 0, MagicMock(), None
-        )
+        engine._handle_mmwave_target_update("sensor1", 0, MagicMock(), None)
         mock_machine.update_spatial_presence.assert_called_with(1)
 
     def test_last_target_leaves_region_calls_with_zero(self, mock_hass, mock_store):
@@ -435,13 +417,9 @@ class TestVirtualSensorEngineRouting:
         engine._state_machines["mmwave_room"] = mock_machine
 
         # Target enters
-        engine._handle_mmwave_target_update(
-            "sensor1", 0, MagicMock(), "mmwave_room"
-        )
+        engine._handle_mmwave_target_update("sensor1", 0, MagicMock(), "mmwave_room")
         # Target leaves
-        engine._handle_mmwave_target_update(
-            "sensor1", 0, MagicMock(), None
-        )
+        engine._handle_mmwave_target_update("sensor1", 0, MagicMock(), None)
 
         # Last call should be with 0
         mock_machine.update_spatial_presence.assert_called_with(0)
@@ -476,15 +454,11 @@ class TestVirtualSensorEngineRouting:
         engine._state_machines["other_room"] = machine_b
 
         # Target enters room A
-        engine._handle_mmwave_target_update(
-            "sensor1", 0, MagicMock(), "mmwave_room"
-        )
+        engine._handle_mmwave_target_update("sensor1", 0, MagicMock(), "mmwave_room")
         machine_a.update_spatial_presence.assert_called_with(1)
 
         # Target moves to room B
-        engine._handle_mmwave_target_update(
-            "sensor1", 0, MagicMock(), "other_room"
-        )
+        engine._handle_mmwave_target_update("sensor1", 0, MagicMock(), "other_room")
         # Room A should get 0, room B should get 1
         machine_a.update_spatial_presence.assert_called_with(0)
         machine_b.update_spatial_presence.assert_called_with(1)
@@ -501,14 +475,10 @@ class TestVirtualSensorEngineRouting:
         engine._state_machines["mmwave_room"] = mock_machine
 
         # Target enters region
-        engine._handle_mmwave_target_update(
-            "sensor1", 0, MagicMock(), "mmwave_room"
-        )
+        engine._handle_mmwave_target_update("sensor1", 0, MagicMock(), "mmwave_room")
         assert mock_machine.update_spatial_presence.call_count == 1
 
         # Target moves within same region
-        engine._handle_mmwave_target_update(
-            "sensor1", 0, MagicMock(), "mmwave_room"
-        )
+        engine._handle_mmwave_target_update("sensor1", 0, MagicMock(), "mmwave_room")
         # Should still be 1 — no new call
         assert mock_machine.update_spatial_presence.call_count == 1

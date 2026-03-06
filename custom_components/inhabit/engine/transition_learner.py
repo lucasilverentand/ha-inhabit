@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -221,9 +221,7 @@ class TransitionLearner:
         if removed > 0:
             self._records = kept
             self._rebuild_counts()
-            _LOGGER.debug(
-                "Pruned %d transition records (kept %d)", removed, len(kept)
-            )
+            _LOGGER.debug("Pruned %d transition records (kept %d)", removed, len(kept))
 
         return removed
 

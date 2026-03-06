@@ -123,33 +123,39 @@ class FakeHouseSimulator:
         )
         self._add_room("ground_bathroom", "Bathroom", "ground", ["ground_hallway"])
         self._add_room(
-            "ground_dining", "Dining Room", "ground", ["ground_kitchen", "ground_living"]
+            "ground_dining",
+            "Dining Room",
+            "ground",
+            ["ground_kitchen", "ground_living"],
         )
-        self._add_room(
-            "ground_toilet", "Toilet", "ground", ["ground_hallway"]
-        )
-        self._add_room(
-            "ground_storage", "Storage", "ground", ["ground_hallway"]
-        )
+        self._add_room("ground_toilet", "Toilet", "ground", ["ground_hallway"])
+        self._add_room("ground_storage", "Storage", "ground", ["ground_hallway"])
 
         # First Floor
-        self._add_room("first_bedroom1", "Master Bedroom", "first", ["first_hallway", "first_shower"])
+        self._add_room(
+            "first_bedroom1",
+            "Master Bedroom",
+            "first",
+            ["first_hallway", "first_shower"],
+        )
         self._add_room("first_bedroom2", "Bedroom 2", "first", ["first_hallway"])
         self._add_room(
             "first_hallway",
             "Upstairs Hallway",
             "first",
-            ["first_bedroom1", "first_bedroom2", "first_bathroom", "first_toilet", "ground_hallway"],
+            [
+                "first_bedroom1",
+                "first_bedroom2",
+                "first_bathroom",
+                "first_toilet",
+                "ground_hallway",
+            ],
         )
         self._add_room(
             "first_bathroom", "Upstairs Bathroom", "first", ["first_hallway"]
         )
-        self._add_room(
-            "first_shower", "Shower Room", "first", ["first_bedroom1"]
-        )
-        self._add_room(
-            "first_toilet", "Upstairs Toilet", "first", ["first_hallway"]
-        )
+        self._add_room("first_shower", "Shower Room", "first", ["first_bedroom1"])
+        self._add_room("first_toilet", "Upstairs Toilet", "first", ["first_hallway"])
 
         # Add door sensors between connected rooms
         self._add_door_sensors()

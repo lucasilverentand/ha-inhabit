@@ -224,77 +224,55 @@ class TestFloorPlanModels:
 class TestDevicePlacementModels:
     """Test device placement models."""
 
-    def test_device_placement_creation(self):
-        """Test DevicePlacement dataclass."""
-        from custom_components.inhabit.models.device_placement import DevicePlacement
+    def test_light_placement_creation(self):
+        """Test LightPlacement dataclass."""
+        from custom_components.inhabit.models.device_placement import LightPlacement
         from custom_components.inhabit.models.floor_plan import Coordinates
 
-        device = DevicePlacement(
+        light = LightPlacement(
             entity_id="light.living_room",
             floor_id="floor_1",
             room_id="room_1",
             position=Coordinates(250, 200),
-            rotation=45,
-            show_state=True,
-            contributes_to_occupancy=False,
         )
 
-        assert device.entity_id == "light.living_room"
-        assert device.position.x == 250
-        assert device.rotation == 45
+        assert light.entity_id == "light.living_room"
+        assert light.position.x == 250
 
-    def test_sensor_coverage_creation(self):
-        """Test SensorCoverage dataclass."""
-        from custom_components.inhabit.models.device_placement import SensorCoverage
-
-        coverage = SensorCoverage(
-            type="cone",
-            angle=90,
-            range=500,
-            direction=0,
-        )
-
-        assert coverage.type == "cone"
-        assert coverage.angle == 90
-        assert coverage.range == 500
-
-    def test_device_placement_collection(self):
-        """Test DevicePlacementCollection operations."""
-        from custom_components.inhabit.models.device_placement import (
-            DevicePlacement,
-            DevicePlacementCollection,
-        )
+    def test_switch_placement_creation(self):
+        """Test SwitchPlacement dataclass."""
+        from custom_components.inhabit.models.device_placement import SwitchPlacement
         from custom_components.inhabit.models.floor_plan import Coordinates
 
-        collection = DevicePlacementCollection(floor_plan_id="fp_1")
+        switch = SwitchPlacement(
+            entity_id="switch.fan",
+            floor_id="floor_1",
+            position=Coordinates(100, 100),
+            label="Fan",
+        )
 
-        device1 = DevicePlacement(
+        assert switch.entity_id == "switch.fan"
+        assert switch.label == "Fan"
+
+    def test_placement_serialization(self):
+        """Test LightPlacement round-trip serialization."""
+        from custom_components.inhabit.models.device_placement import LightPlacement
+        from custom_components.inhabit.models.floor_plan import Coordinates
+
+        light = LightPlacement(
             id="dev_1",
             entity_id="light.room1",
             floor_id="floor_1",
             room_id="room_1",
             position=Coordinates(100, 100),
         )
-        device2 = DevicePlacement(
-            id="dev_2",
-            entity_id="sensor.room1_temp",
-            floor_id="floor_1",
-            room_id="room_1",
-            position=Coordinates(200, 100),
-            contributes_to_occupancy=True,
-        )
 
-        collection.add_device(device1)
-        collection.add_device(device2)
+        data = light.to_dict()
+        restored = LightPlacement.from_dict(data)
 
-        assert len(collection.devices) == 2
-        assert collection.get_device("dev_1") is not None
-        assert len(collection.get_devices_in_room("room_1")) == 2
-        assert len(collection.get_occupancy_contributors("room_1")) == 1
-
-        # Remove device
-        assert collection.remove_device("dev_1") is True
-        assert len(collection.devices) == 1
+        assert restored.id == "dev_1"
+        assert restored.entity_id == "light.room1"
+        assert restored.position.x == 100
 
 
 class TestVirtualSensorModels:

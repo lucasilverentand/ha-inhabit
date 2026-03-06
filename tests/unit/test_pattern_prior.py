@@ -14,7 +14,6 @@ if "homeassistant" not in sys.modules:
 
 from custom_components.inhabit.engine.pattern_prior import OccupancyPatternPrior
 from custom_components.inhabit.engine.presence_aggregator import PresenceAggregator
-from custom_components.inhabit.models.virtual_sensor import SensorBinding
 
 
 class TestOccupancyPatternPrior:

@@ -11,8 +11,13 @@ from homeassistant.helpers.storage import Store
 
 from ..const import STORAGE_KEY, STORAGE_VERSION
 from ..models.automation_rule import VisualRule
-from ..models.device_placement import ButtonPlacement, LightPlacement, OtherPlacement, SwitchPlacement
-from ..models.floor_plan import Door, Edge, Floor, FloorPlan, Node, Room, Wall, Window
+from ..models.device_placement import (
+    ButtonPlacement,
+    LightPlacement,
+    OtherPlacement,
+    SwitchPlacement,
+)
+from ..models.floor_plan import Edge, Floor, FloorPlan, Room
 from ..models.mmwave_sensor import MmwavePlacement
 from ..models.virtual_sensor import VirtualSensorConfig
 from ..models.zone import Zone
@@ -112,9 +117,18 @@ class FloorPlanStore:
         del self._data["floor_plans"][floor_plan_id]
 
         # Clean up associated data
-        for key in ("light_placements", "switch_placements", "button_placements", "other_placements"):
+        for key in (
+            "light_placements",
+            "switch_placements",
+            "button_placements",
+            "other_placements",
+        ):
             placements = self._data.get(key, {})
-            to_del = [k for k, v in placements.items() if v.get("floor_plan_id") == floor_plan_id]
+            to_del = [
+                k
+                for k, v in placements.items()
+                if v.get("floor_plan_id") == floor_plan_id
+            ]
             for k in to_del:
                 del placements[k]
 
@@ -261,9 +275,7 @@ class FloorPlanStore:
 
     # ==================== Zones ====================
 
-    def add_zone(
-        self, floor_plan_id: str, floor_id: str, zone: Zone
-    ) -> Zone | None:
+    def add_zone(self, floor_plan_id: str, floor_id: str, zone: Zone) -> Zone | None:
         """Add a zone to a floor."""
         floor_plan = self.get_floor_plan(floor_plan_id)
         if not floor_plan:
@@ -382,9 +394,7 @@ class FloorPlanStore:
                 placements.append(LightPlacement.from_dict(data))
         return placements
 
-    def place_light(
-        self, floor_plan_id: str, light: LightPlacement
-    ) -> LightPlacement:
+    def place_light(self, floor_plan_id: str, light: LightPlacement) -> LightPlacement:
         """Place a light on a floor plan."""
         if "light_placements" not in self._data:
             self._data["light_placements"] = {}
@@ -394,9 +404,7 @@ class FloorPlanStore:
         self.async_delay_save()
         return light
 
-    def update_light_placement(
-        self, light: LightPlacement
-    ) -> LightPlacement | None:
+    def update_light_placement(self, light: LightPlacement) -> LightPlacement | None:
         """Update a light placement."""
         if light.id not in self._data.get("light_placements", {}):
             return None
@@ -532,9 +540,7 @@ class FloorPlanStore:
                 placements.append(OtherPlacement.from_dict(data))
         return placements
 
-    def place_other(
-        self, floor_plan_id: str, other: OtherPlacement
-    ) -> OtherPlacement:
+    def place_other(self, floor_plan_id: str, other: OtherPlacement) -> OtherPlacement:
         """Place an other device on a floor plan."""
         if "other_placements" not in self._data:
             self._data["other_placements"] = {}
@@ -544,9 +550,7 @@ class FloorPlanStore:
         self.async_delay_save()
         return other
 
-    def update_other_placement(
-        self, other: OtherPlacement
-    ) -> OtherPlacement | None:
+    def update_other_placement(self, other: OtherPlacement) -> OtherPlacement | None:
         """Update an other placement."""
         if other.id not in self._data.get("other_placements", {}):
             return None

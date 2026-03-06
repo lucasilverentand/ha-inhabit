@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import sys
-from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -13,11 +12,8 @@ if "homeassistant" not in sys.modules:
     from tests.conftest import *  # noqa: F401, F403
 
 from custom_components.inhabit.engine.sensor_reliability import (
-    CORRELATION_WINDOW,
     CorrelationRecord,
     SensorCorrelationTracker,
-    SensorAccuracyRecord,
-    MIN_WEIGHT_MULTIPLIER,
 )
 from custom_components.inhabit.models.virtual_sensor import (
     SensorBinding,

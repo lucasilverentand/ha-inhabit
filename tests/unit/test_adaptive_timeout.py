@@ -38,7 +38,6 @@ from custom_components.inhabit.engine.adaptive_timeout import (
     ADAPTIVE_MAX_TIMEOUT,
     ADAPTIVE_MIN_TIMEOUT,
     MAX_SESSION_HISTORY,
-    MIN_SESSIONS_FOR_ADAPTIVE,
     AdaptiveTimeoutManager,
     OccupancyDurationRecord,
     TimeOfDayProfile,
@@ -249,12 +248,8 @@ class TestAdaptiveTimeoutManagerProfiles:
             base_checking_timeout=30,
             base_motion_timeout=120,
             time_of_day_profiles=[
-                TimeOfDayProfile(
-                    start_hour=8, end_hour=20, checking_timeout=60
-                ),
-                TimeOfDayProfile(
-                    start_hour=10, end_hour=14, checking_timeout=120
-                ),
+                TimeOfDayProfile(start_hour=8, end_hour=20, checking_timeout=60),
+                TimeOfDayProfile(start_hour=10, end_hour=14, checking_timeout=120),
             ],
         )
 
@@ -289,9 +284,7 @@ class TestAdaptiveTimeoutManagerProfiles:
             base_checking_timeout=30,
             base_motion_timeout=120,
             time_of_day_profiles=[
-                TimeOfDayProfile(
-                    start_hour=0, end_hour=24, checking_timeout=60
-                ),
+                TimeOfDayProfile(start_hour=0, end_hour=24, checking_timeout=60),
             ],
         )
 
@@ -364,9 +357,7 @@ class TestAdaptiveTimeoutManagerLearning:
     def test_adaptive_clamped_to_maximum(self, adaptive_manager):
         """Learned timeout is clamped to ADAPTIVE_MAX_TIMEOUT (600s)."""
         # Record very long sessions (1 hour each)
-        self._record_sessions(
-            adaptive_manager, hour=10, count=6, duration_seconds=3600
-        )
+        self._record_sessions(adaptive_manager, hour=10, count=6, duration_seconds=3600)
 
         with patch(
             "custom_components.inhabit.engine.adaptive_timeout.datetime"
@@ -413,9 +404,7 @@ class TestAdaptiveTimeoutManagerLearning:
             base_checking_timeout=30,
             base_motion_timeout=120,
             time_of_day_profiles=[
-                TimeOfDayProfile(
-                    start_hour=8, end_hour=12, checking_timeout=90
-                ),
+                TimeOfDayProfile(start_hour=8, end_hour=12, checking_timeout=90),
             ],
             adaptive_enabled=True,
         )
@@ -434,9 +423,7 @@ class TestAdaptiveTimeoutManagerLearning:
         """Sessions with zero or negative duration are not recorded."""
         now = datetime(2024, 6, 1, 10, 0, 0)
         # Zero duration
-        adaptive_manager.record_occupancy_session(
-            started_at=now, ended_at=now
-        )
+        adaptive_manager.record_occupancy_session(started_at=now, ended_at=now)
         # Negative duration
         adaptive_manager.record_occupancy_session(
             started_at=now, ended_at=now - timedelta(seconds=10)
@@ -525,8 +512,18 @@ class TestVirtualSensorConfigAdaptiveFields:
     def test_serialization_round_trip(self):
         """Adaptive fields survive to_dict/from_dict round trip."""
         profiles = [
-            {"start_hour": 22, "end_hour": 6, "checking_timeout": 90, "motion_timeout": None},
-            {"start_hour": 8, "end_hour": 17, "checking_timeout": 60, "motion_timeout": 200},
+            {
+                "start_hour": 22,
+                "end_hour": 6,
+                "checking_timeout": 90,
+                "motion_timeout": None,
+            },
+            {
+                "start_hour": 8,
+                "end_hour": 17,
+                "checking_timeout": 60,
+                "motion_timeout": 200,
+            },
         ]
         config = VirtualSensorConfig(
             room_id="test",

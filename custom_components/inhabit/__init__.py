@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import logging
 
-from homeassistant.config_entries import ConfigEntry
-
 from homeassistant.components.frontend import async_register_built_in_panel
+from homeassistant.config_entries import ConfigEntry
 
 try:
     from homeassistant.components.http import StaticPathConfig
@@ -17,7 +16,8 @@ except ImportError:
     HAS_STATIC_PATH_CONFIG = False
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import device_registry as dr, entity_registry as er
+from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.typing import ConfigType
 
 from .api import http as http_api
@@ -54,7 +54,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Clean up orphaned sensor configs (rooms/zones deleted in a previous session)
     orphaned = floor_plan_store.cleanup_orphaned_sensor_configs()
     if orphaned:
-        _LOGGER.info("Cleaned up %d orphaned sensor configs: %s", len(orphaned), orphaned)
+        _LOGGER.info(
+            "Cleaned up %d orphaned sensor configs: %s", len(orphaned), orphaned
+        )
 
     # Clean up orphaned entity and device registry entries
     ent_reg = er.async_get(hass)
@@ -127,9 +129,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if HAS_STATIC_PATH_CONFIG:
         await hass.http.async_register_static_paths(
             [
-                StaticPathConfig(
-                    "/inhabit/panel.js", panel_path, cache_headers=False
-                ),
+                StaticPathConfig("/inhabit/panel.js", panel_path, cache_headers=False),
             ]
         )
     else:

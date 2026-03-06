@@ -14,10 +14,7 @@ from custom_components.inhabit.models.automation_rule import (
     RuleAction,
     VisualRule,
 )
-from custom_components.inhabit.models.device_placement import (
-    Coordinates,
-    DevicePlacement,
-)
+from custom_components.inhabit.models.device_placement import LightPlacement
 from custom_components.inhabit.models.floor_plan import Coordinates as FPCoordinates
 from custom_components.inhabit.models.floor_plan import (
     Floor,
@@ -302,10 +299,10 @@ class TestCardExporter:
         mock_store.get_floor_plan.return_value = floor_plan
 
         # Mock device placements
-        device = DevicePlacement(
+        device = LightPlacement(
             id="d1",
             entity_id="light.bedroom",
-            position=Coordinates(100, 100),
+            position=FPCoordinates(100, 100),
             floor_id="floor_1",
             room_id="room_1",
         )

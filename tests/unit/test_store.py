@@ -10,16 +10,15 @@ from custom_components.inhabit.models.automation_rule import (
     RuleAction,
     VisualRule,
 )
-from custom_components.inhabit.models.device_placement import DevicePlacement
+from custom_components.inhabit.models.device_placement import LightPlacement
 from custom_components.inhabit.models.floor_plan import (
     Coordinates,
-    Door,
+    Edge,
     Floor,
     FloorPlan,
+    Node,
     Polygon,
     Room,
-    Wall,
-    Window,
 )
 from custom_components.inhabit.models.virtual_sensor import (
     SensorBinding,
@@ -395,12 +394,12 @@ class TestHaAreaAssignments:
             assert assignment is None
 
 
-class TestWallOperations:
-    """Test wall operations."""
+class TestEdgeOperations:
+    """Test edge operations."""
 
     @pytest.mark.asyncio
-    async def test_add_wall(self, mock_hass):
-        """Test adding a wall."""
+    async def test_add_wall_edge(self, mock_hass):
+        """Test adding a wall edge."""
         with patch(
             "custom_components.inhabit.store.floor_plan_store.Store",
             return_value=create_mock_store(),
@@ -409,25 +408,30 @@ class TestWallOperations:
             await store.async_load()
 
             fp = store.create_floor_plan(FloorPlan(name="House"))
-            floor = store.add_floor(fp.id, Floor(name="Ground", level=0))
+            floor = store.add_floor(
+                fp.id,
+                Floor(
+                    name="Ground",
+                    level=0,
+                    nodes=[Node(id="n1", x=0, y=0), Node(id="n2", x=500, y=0)],
+                ),
+            )
 
-            wall = Wall(
-                start=Coordinates(0, 0),
-                end=Coordinates(500, 0),
+            edge = Edge(
+                start_node="n1",
+                end_node="n2",
+                type="wall",
                 thickness=10,
             )
-            added = store.add_wall(fp.id, floor.id, wall)
+            added = store.add_edge(fp.id, floor.id, edge)
 
             assert added is not None
             assert added.thickness == 10
-
-
-class TestDoorOperations:
-    """Test door operations."""
+            assert added.type == "wall"
 
     @pytest.mark.asyncio
-    async def test_add_door(self, mock_hass):
-        """Test adding a door."""
+    async def test_add_door_edge(self, mock_hass):
+        """Test adding a door edge."""
         with patch(
             "custom_components.inhabit.store.floor_plan_store.Store",
             return_value=create_mock_store(),
@@ -436,28 +440,30 @@ class TestDoorOperations:
             await store.async_load()
 
             fp = store.create_floor_plan(FloorPlan(name="House"))
-            floor = store.add_floor(fp.id, Floor(name="Ground", level=0))
-            wall = store.add_wall(
-                fp.id, floor.id, Wall(start=Coordinates(0, 0), end=Coordinates(500, 0))
+            floor = store.add_floor(
+                fp.id,
+                Floor(
+                    name="Ground",
+                    level=0,
+                    nodes=[Node(id="n1", x=0, y=0), Node(id="n2", x=80, y=0)],
+                ),
             )
 
-            door = Door(
-                position=Coordinates(100, 0),
-                width=80,
-                wall_id=wall.id,
+            edge = Edge(
+                start_node="n1",
+                end_node="n2",
+                type="door",
+                swing_direction="left",
             )
-            added = store.add_door(fp.id, floor.id, door)
+            added = store.add_edge(fp.id, floor.id, edge)
 
             assert added is not None
-            assert added.width == 80
-
-
-class TestWindowOperations:
-    """Test window operations."""
+            assert added.type == "door"
+            assert added.swing_direction == "left"
 
     @pytest.mark.asyncio
-    async def test_add_window(self, mock_hass):
-        """Test adding a window."""
+    async def test_add_window_edge(self, mock_hass):
+        """Test adding a window edge."""
         with patch(
             "custom_components.inhabit.store.floor_plan_store.Store",
             return_value=create_mock_store(),
@@ -466,29 +472,34 @@ class TestWindowOperations:
             await store.async_load()
 
             fp = store.create_floor_plan(FloorPlan(name="House"))
-            floor = store.add_floor(fp.id, Floor(name="Ground", level=0))
-            wall = store.add_wall(
-                fp.id, floor.id, Wall(start=Coordinates(0, 0), end=Coordinates(500, 0))
+            floor = store.add_floor(
+                fp.id,
+                Floor(
+                    name="Ground",
+                    level=0,
+                    nodes=[Node(id="n1", x=0, y=0), Node(id="n2", x=120, y=0)],
+                ),
             )
 
-            window = Window(
-                position=Coordinates(200, 0),
-                width=120,
+            edge = Edge(
+                start_node="n1",
+                end_node="n2",
+                type="window",
                 height=100,
-                wall_id=wall.id,
             )
-            added = store.add_window(fp.id, floor.id, window)
+            added = store.add_edge(fp.id, floor.id, edge)
 
             assert added is not None
-            assert added.width == 120
+            assert added.type == "window"
+            assert added.height == 100
 
 
-class TestDevicePlacementOperations:
-    """Test device placement operations."""
+class TestLightPlacementOperations:
+    """Test light placement operations."""
 
     @pytest.mark.asyncio
-    async def test_place_device(self, mock_hass):
-        """Test placing a device."""
+    async def test_place_light(self, mock_hass):
+        """Test placing a light."""
         with patch(
             "custom_components.inhabit.store.floor_plan_store.Store",
             return_value=create_mock_store(),
@@ -499,19 +510,19 @@ class TestDevicePlacementOperations:
             fp = store.create_floor_plan(FloorPlan(name="House"))
             floor = store.add_floor(fp.id, Floor(name="Ground", level=0))
 
-            device = DevicePlacement(
+            light = LightPlacement(
                 entity_id="light.living_room",
                 floor_id=floor.id,
                 position=Coordinates(250, 200),
             )
-            placed = store.place_device(fp.id, device)
+            placed = store.place_light(fp.id, light)
 
             assert placed is not None
             assert placed.entity_id == "light.living_room"
 
     @pytest.mark.asyncio
-    async def test_get_device_placements(self, mock_hass):
-        """Test getting device placements."""
+    async def test_get_light_placements(self, mock_hass):
+        """Test getting light placements."""
         with patch(
             "custom_components.inhabit.store.floor_plan_store.Store",
             return_value=create_mock_store(),
@@ -522,25 +533,25 @@ class TestDevicePlacementOperations:
             fp = store.create_floor_plan(FloorPlan(name="House"))
             floor = store.add_floor(fp.id, Floor(name="Ground", level=0))
 
-            store.place_device(
+            store.place_light(
                 fp.id,
-                DevicePlacement(
+                LightPlacement(
                     entity_id="light.1", floor_id=floor.id, position=Coordinates(0, 0)
                 ),
             )
-            store.place_device(
+            store.place_light(
                 fp.id,
-                DevicePlacement(
+                LightPlacement(
                     entity_id="light.2", floor_id=floor.id, position=Coordinates(100, 0)
                 ),
             )
 
-            collection = store.get_device_placements(fp.id)
-            assert len(collection.devices) == 2
+            lights = store.get_light_placements(fp.id)
+            assert len(lights) == 2
 
     @pytest.mark.asyncio
-    async def test_update_device_placement(self, mock_hass):
-        """Test updating a device placement."""
+    async def test_remove_light_placement(self, mock_hass):
+        """Test removing a light placement."""
         with patch(
             "custom_components.inhabit.store.floor_plan_store.Store",
             return_value=create_mock_store(),
@@ -550,44 +561,16 @@ class TestDevicePlacementOperations:
 
             fp = store.create_floor_plan(FloorPlan(name="House"))
             floor = store.add_floor(fp.id, Floor(name="Ground", level=0))
-            device = store.place_device(
+            light = store.place_light(
                 fp.id,
-                DevicePlacement(
+                LightPlacement(
                     entity_id="light.test",
                     floor_id=floor.id,
                     position=Coordinates(0, 0),
                 ),
             )
 
-            device.position = Coordinates(100, 100)
-            device.rotation = 45
-            updated = store.update_device_placement(fp.id, device)
-
-            assert updated.position.x == 100
-            assert updated.rotation == 45
-
-    @pytest.mark.asyncio
-    async def test_remove_device_placement(self, mock_hass):
-        """Test removing a device placement."""
-        with patch(
-            "custom_components.inhabit.store.floor_plan_store.Store",
-            return_value=create_mock_store(),
-        ):
-            store = FloorPlanStore(mock_hass)
-            await store.async_load()
-
-            fp = store.create_floor_plan(FloorPlan(name="House"))
-            floor = store.add_floor(fp.id, Floor(name="Ground", level=0))
-            device = store.place_device(
-                fp.id,
-                DevicePlacement(
-                    entity_id="light.test",
-                    floor_id=floor.id,
-                    position=Coordinates(0, 0),
-                ),
-            )
-
-            removed = store.remove_device_placement(fp.id, device.id)
+            removed = store.remove_light_placement(light.id)
             assert removed is True
 
 

@@ -11,7 +11,7 @@ import pytest
 if "homeassistant" not in sys.modules:
     from tests.conftest import *  # noqa: F401, F403
 
-from custom_components.inhabit.const import ATTR_SENSOR_DIAGNOSTICS, OccupancyState
+from custom_components.inhabit.const import ATTR_SENSOR_DIAGNOSTICS
 from custom_components.inhabit.engine.sensor_reliability import SensorAccuracyRecord
 from custom_components.inhabit.models.virtual_sensor import (
     OccupancyStateData,
@@ -200,9 +200,7 @@ class TestBuildSensorDiagnostics:
 
         assert diagnostics["light.room"]["sensor_type"] == "hint"
 
-    def test_presence_sensor_type(
-        self, mock_hass, multi_sensor_config, state_changes
-    ):
+    def test_presence_sensor_type(self, mock_hass, multi_sensor_config, state_changes):
         """Presence sensors have sensor_type='presence'."""
         machine, changes = _make_machine(mock_hass, multi_sensor_config, state_changes)
         diagnostics = machine._build_sensor_diagnostics()

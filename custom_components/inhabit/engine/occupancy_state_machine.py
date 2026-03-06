@@ -16,7 +16,7 @@ from homeassistant.helpers.event import (
 
 from ..const import EVENT_CHECKING_RESOLVED, EVENT_CHECKING_STARTED, OccupancyState
 from ..models.virtual_sensor import OccupancyStateData, VirtualSensorConfig
-from .adaptive_timeout import AdaptiveTimeoutManager, TimeOfDayProfile
+from .adaptive_timeout import AdaptiveTimeoutManager
 from .presence_aggregator import PresenceAggregator
 from .seal_probability import SealProbabilityTracker
 from .sensor_reliability import SensorCorrelationTracker, SensorReliabilityTracker
@@ -305,7 +305,9 @@ class OccupancyStateMachine:
     # Spatial presence (mmWave)
     # ------------------------------------------------------------------
 
-    def update_spatial_presence(self, target_count: int, source: str = "mmwave") -> None:
+    def update_spatial_presence(
+        self, target_count: int, source: str = "mmwave"
+    ) -> None:
         """Update occupancy based on spatial presence targets (e.g., mmWave).
 
         Spatial presence is treated as a high-confidence signal (weight=2.0)
@@ -384,9 +386,7 @@ class OccupancyStateMachine:
         )
 
         # Feed into aggregator
-        self._aggregator.update_reading(
-            entity_id, is_active, "motion", binding.weight
-        )
+        self._aggregator.update_reading(entity_id, is_active, "motion", binding.weight)
 
         # Feed the reliability tracker
         if is_active:
@@ -493,9 +493,7 @@ class OccupancyStateMachine:
                     self._state.state == OccupancyState.OCCUPIED
                     and not self._any_sensor_active()
                 ):
-                    self._transition_to_checking(
-                        "seal broken, sensors already clear"
-                    )
+                    self._transition_to_checking("seal broken, sensors already clear")
         else:
             # Door closed — try to re-establish seal if currently occupied
             # with active sensors
@@ -636,7 +634,11 @@ class OccupancyStateMachine:
         sensor_type = binding.sensor_type
 
         if sensor_type == "light":
-            brightness = state.attributes.get("brightness") if hasattr(state, "attributes") else None
+            brightness = (
+                state.attributes.get("brightness")
+                if hasattr(state, "attributes")
+                else None
+            )
             return SoftHintProcessor.process_light_state(state.state, brightness)
         elif sensor_type == "power":
             try:
@@ -710,9 +712,7 @@ class OccupancyStateMachine:
         self._state.sealed = False
         self._state.seal_probability = 0.0
         self._state.seal_broken_at = datetime.now()
-        _LOGGER.info(
-            "Room %s: seal broken (%s)", self.config.room_id, reason
-        )
+        _LOGGER.info("Room %s: seal broken (%s)", self.config.room_id, reason)
 
     def _snapshot_door_states(self) -> None:
         """Record current open/closed state of all doors."""
@@ -810,7 +810,10 @@ class OccupancyStateMachine:
         self._state.checking_started_at = datetime.now()
         self._start_checking_timer()
 
-        effective_timeout = self._timeout_manager.get_effective_checking_timeout() + self._checking_timeout_bump
+        effective_timeout = (
+            self._timeout_manager.get_effective_checking_timeout()
+            + self._checking_timeout_bump
+        )
         self.hass.bus.async_fire(
             EVENT_CHECKING_STARTED,
             {
@@ -848,9 +851,8 @@ class OccupancyStateMachine:
             return
 
         # Child zone check — child zones with occupies_parent keep parent occupied
-        if (
-            self._is_occupied_by_children
-            and self._is_occupied_by_children(self.config.room_id)
+        if self._is_occupied_by_children and self._is_occupied_by_children(
+            self.config.room_id
         ):
             _LOGGER.debug(
                 "Room %s: vacancy blocked by occupied child zone",
@@ -929,9 +931,8 @@ class OccupancyStateMachine:
             return
 
         # Child zones with occupies_parent keep parent room OCCUPIED
-        if (
-            self._is_occupied_by_children
-            and self._is_occupied_by_children(self.config.room_id)
+        if self._is_occupied_by_children and self._is_occupied_by_children(
+            self.config.room_id
         ):
             _LOGGER.debug(
                 "Room %s: sensors clear but child zone is occupied, "
@@ -943,8 +944,7 @@ class OccupancyStateMachine:
         # Phantom hold — transition prediction keeps room OCCUPIED
         if self._has_phantom_hold and self._has_phantom_hold(self.config.room_id):
             _LOGGER.debug(
-                "Room %s: sensors clear but phantom hold active, "
-                "staying OCCUPIED",
+                "Room %s: sensors clear but phantom hold active, " "staying OCCUPIED",
                 self.config.room_id,
             )
             return
@@ -1115,9 +1115,7 @@ class OccupancyStateMachine:
                 binding.entity_id, binding.weight
             )
             # Penalize sensors with high solo-fire rate (discount by up to 50%)
-            solo_rate = self._correlation_tracker.get_solo_fire_rate(
-                binding.entity_id
-            )
+            solo_rate = self._correlation_tracker.get_solo_fire_rate(binding.entity_id)
             correlation_factor = 1.0 - (solo_rate * 0.5)
             effective_weight *= correlation_factor
 

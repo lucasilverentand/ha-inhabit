@@ -297,10 +297,14 @@ class FeedbackController:
         Returns the created OverrideEvent, or None if no override detected.
         """
         # Determine override type
-        if previous_state in (
-            OccupancyState.OCCUPIED,
-            OccupancyState.CHECKING,
-        ) and new_state == OccupancyState.VACANT:
+        if (
+            previous_state
+            in (
+                OccupancyState.OCCUPIED,
+                OccupancyState.CHECKING,
+            )
+            and new_state == OccupancyState.VACANT
+        ):
             override_type = "false_occupancy"
         elif previous_state == OccupancyState.VACANT and new_state in (
             OccupancyState.OCCUPIED,
@@ -413,7 +417,9 @@ class FeedbackController:
             state.checking_timeout_delta,
         )
 
-    def get_adjusted_config(self, room_id: str, base_config: dict[str, Any]) -> dict[str, Any]:
+    def get_adjusted_config(
+        self, room_id: str, base_config: dict[str, Any]
+    ) -> dict[str, Any]:
         """Apply learned adjustments to a base config dict.
 
         Returns a new dict with adjusted values (does not modify original).
@@ -605,9 +611,7 @@ class FeedbackController:
         """Get the seal accuracy tracker for a room."""
         return self._seal_accuracy.get(room_id)
 
-    def get_adjusted_seal_half_life(
-        self, room_id: str, base_half_life: float
-    ) -> float:
+    def get_adjusted_seal_half_life(self, room_id: str, base_half_life: float) -> float:
         """Get the adjusted seal half-life for a room.
 
         Returns the learned half-life if available, otherwise base_half_life.
@@ -644,14 +648,18 @@ class FeedbackController:
             return
 
         # Start from current adjusted value or default (3600s = 1 hour)
-        current = tracker.adjusted_half_life if tracker.adjusted_half_life is not None else 3600.0
+        current = (
+            tracker.adjusted_half_life
+            if tracker.adjusted_half_life is not None
+            else 3600.0
+        )
 
         if tracker.false_seal_count > tracker.false_break_count:
             # Too many false seals -> shorten half-life
-            current *= (1.0 - SEAL_HALF_LIFE_ADJUST_FACTOR)
+            current *= 1.0 - SEAL_HALF_LIFE_ADJUST_FACTOR
         elif tracker.false_break_count > tracker.false_seal_count:
             # Too many false breaks -> lengthen half-life
-            current *= (1.0 + SEAL_HALF_LIFE_ADJUST_FACTOR)
+            current *= 1.0 + SEAL_HALF_LIFE_ADJUST_FACTOR
 
         # Clamp to bounds
         tracker.adjusted_half_life = max(
@@ -701,14 +709,8 @@ class FeedbackController:
                 (OverrideEvent.from_dict(e) for e in events), maxlen=100
             )
         for room_id, state_data in data.get("adjustment_states", {}).items():
-            self._adjustment_states[room_id] = RoomAdjustmentState.from_dict(
-                state_data
-            )
+            self._adjustment_states[room_id] = RoomAdjustmentState.from_dict(state_data)
         for room_id, state_data in data.get("threshold_states", {}).items():
-            self._threshold_states[room_id] = ThresholdState.from_dict(
-                state_data
-            )
+            self._threshold_states[room_id] = ThresholdState.from_dict(state_data)
         for room_id, tracker_data in data.get("seal_accuracy", {}).items():
-            self._seal_accuracy[room_id] = SealAccuracyTracker.from_dict(
-                tracker_data
-            )
+            self._seal_accuracy[room_id] = SealAccuracyTracker.from_dict(tracker_data)

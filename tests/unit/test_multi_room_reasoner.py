@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sys
 from datetime import datetime, timedelta
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -67,31 +67,37 @@ class TestBuildAdjacencyGraph:
 
     def test_two_rooms_connected(self):
         """Two connected rooms form a symmetric graph."""
-        store = _make_mock_store({
-            "room_a": ["room_b"],
-            "room_b": ["room_a"],
-        })
+        store = _make_mock_store(
+            {
+                "room_a": ["room_b"],
+                "room_b": ["room_a"],
+            }
+        )
         graph = build_adjacency_graph(store)
         assert "room_b" in graph["room_a"]
         assert "room_a" in graph["room_b"]
 
     def test_one_directional_connection_becomes_symmetric(self):
         """A one-directional connection is made symmetric."""
-        store = _make_mock_store({
-            "room_a": ["room_b"],
-            "room_b": [],
-        })
+        store = _make_mock_store(
+            {
+                "room_a": ["room_b"],
+                "room_b": [],
+            }
+        )
         graph = build_adjacency_graph(store)
         assert "room_b" in graph["room_a"]
         assert "room_a" in graph["room_b"]
 
     def test_three_room_chain(self):
         """A -> B -> C chain."""
-        store = _make_mock_store({
-            "room_a": ["room_b"],
-            "room_b": ["room_a", "room_c"],
-            "room_c": ["room_b"],
-        })
+        store = _make_mock_store(
+            {
+                "room_a": ["room_b"],
+                "room_b": ["room_a", "room_c"],
+                "room_c": ["room_b"],
+            }
+        )
         graph = build_adjacency_graph(store)
         assert graph["room_a"] == {"room_b"}
         assert graph["room_b"] == {"room_a", "room_c"}
@@ -104,10 +110,12 @@ class TestMultiRoomReasonerLifecycle:
     @pytest.mark.asyncio
     async def test_start_builds_graph(self):
         """Starting the reasoner builds the adjacency graph."""
-        store = _make_mock_store({
-            "room_a": ["room_b"],
-            "room_b": ["room_a"],
-        })
+        store = _make_mock_store(
+            {
+                "room_a": ["room_b"],
+                "room_b": ["room_a"],
+            }
+        )
         reasoner = MultiRoomReasoner(store)
         await reasoner.async_start()
         assert len(reasoner.adjacency_graph) == 2
@@ -119,7 +127,9 @@ class TestMultiRoomReasonerLifecycle:
         store = _make_mock_store({"room_a": ["room_b"], "room_b": ["room_a"]})
         reasoner = MultiRoomReasoner(store)
         await reasoner.async_start()
-        reasoner.on_room_state_changed("room_a", OccupancyState.VACANT, OccupancyState.OCCUPIED)
+        reasoner.on_room_state_changed(
+            "room_a", OccupancyState.VACANT, OccupancyState.OCCUPIED
+        )
         await reasoner.async_stop()
         assert reasoner.adjacency_graph == {}
         assert reasoner.room_states == {}
@@ -135,10 +145,12 @@ class TestTransitionInference:
         def force_vacant(room_id, reason):
             forced.append((room_id, reason))
 
-        store = _make_mock_store({
-            "room_a": ["room_b"],
-            "room_b": ["room_a"],
-        })
+        store = _make_mock_store(
+            {
+                "room_a": ["room_b"],
+                "room_b": ["room_a"],
+            }
+        )
         reasoner = MultiRoomReasoner(store, force_vacant_callback=force_vacant)
         reasoner._adjacency = build_adjacency_graph(store)
         reasoner._running = True
@@ -164,11 +176,13 @@ class TestTransitionInference:
         def force_vacant(room_id, reason):
             forced.append((room_id, reason))
 
-        store = _make_mock_store({
-            "room_a": ["room_b"],
-            "room_b": ["room_a"],
-            "room_c": [],
-        })
+        store = _make_mock_store(
+            {
+                "room_a": ["room_b"],
+                "room_b": ["room_a"],
+                "room_c": [],
+            }
+        )
         reasoner = MultiRoomReasoner(store, force_vacant_callback=force_vacant)
         reasoner._adjacency = build_adjacency_graph(store)
         reasoner._running = True
@@ -192,10 +206,12 @@ class TestTransitionInference:
         def force_vacant(room_id, reason):
             forced.append((room_id, reason))
 
-        store = _make_mock_store({
-            "room_a": ["room_b"],
-            "room_b": ["room_a"],
-        })
+        store = _make_mock_store(
+            {
+                "room_a": ["room_b"],
+                "room_b": ["room_a"],
+            }
+        )
         reasoner = MultiRoomReasoner(store, force_vacant_callback=force_vacant)
         reasoner._adjacency = build_adjacency_graph(store)
         reasoner._running = True
@@ -228,19 +244,27 @@ class TestPersonCountConstraint:
         def force_vacant(room_id, reason):
             forced.append((room_id, reason))
 
-        store = _make_mock_store({
-            "room_a": [],
-            "room_b": [],
-            "room_c": [],
-        })
+        store = _make_mock_store(
+            {
+                "room_a": [],
+                "room_b": [],
+                "room_c": [],
+            }
+        )
         reasoner = MultiRoomReasoner(store, force_vacant_callback=force_vacant)
         reasoner._adjacency = build_adjacency_graph(store)
         reasoner._running = True
 
         # Three rooms occupied
-        reasoner.on_room_state_changed("room_a", OccupancyState.VACANT, OccupancyState.OCCUPIED)
-        reasoner.on_room_state_changed("room_b", OccupancyState.VACANT, OccupancyState.OCCUPIED)
-        reasoner.on_room_state_changed("room_c", OccupancyState.VACANT, OccupancyState.OCCUPIED)
+        reasoner.on_room_state_changed(
+            "room_a", OccupancyState.VACANT, OccupancyState.OCCUPIED
+        )
+        reasoner.on_room_state_changed(
+            "room_b", OccupancyState.VACANT, OccupancyState.OCCUPIED
+        )
+        reasoner.on_room_state_changed(
+            "room_c", OccupancyState.VACANT, OccupancyState.OCCUPIED
+        )
 
         # Set person count to 1 -> 2 rooms should be pushed vacant
         reasoner.set_person_count(1)
@@ -258,8 +282,12 @@ class TestPersonCountConstraint:
         reasoner._adjacency = build_adjacency_graph(store)
         reasoner._running = True
 
-        reasoner.on_room_state_changed("room_a", OccupancyState.VACANT, OccupancyState.OCCUPIED)
-        reasoner.on_room_state_changed("room_b", OccupancyState.VACANT, OccupancyState.OCCUPIED)
+        reasoner.on_room_state_changed(
+            "room_a", OccupancyState.VACANT, OccupancyState.OCCUPIED
+        )
+        reasoner.on_room_state_changed(
+            "room_b", OccupancyState.VACANT, OccupancyState.OCCUPIED
+        )
 
         assert len(forced) == 0  # No person count set
 
@@ -291,10 +319,12 @@ class TestPathPlausibility:
 
     def test_adjacent_rooms_plausible(self):
         """Adjacent rooms are plausible transitions."""
-        store = _make_mock_store({
-            "room_a": ["room_b"],
-            "room_b": ["room_a"],
-        })
+        store = _make_mock_store(
+            {
+                "room_a": ["room_b"],
+                "room_b": ["room_a"],
+            }
+        )
         reasoner = MultiRoomReasoner(store)
         reasoner._adjacency = build_adjacency_graph(store)
 
@@ -302,11 +332,13 @@ class TestPathPlausibility:
 
     def test_non_adjacent_rooms_not_plausible(self):
         """Non-adjacent rooms are not plausible transitions."""
-        store = _make_mock_store({
-            "room_a": ["room_b"],
-            "room_b": ["room_a"],
-            "room_c": [],
-        })
+        store = _make_mock_store(
+            {
+                "room_a": ["room_b"],
+                "room_b": ["room_a"],
+                "room_c": [],
+            }
+        )
         reasoner = MultiRoomReasoner(store)
         reasoner._adjacency = build_adjacency_graph(store)
 

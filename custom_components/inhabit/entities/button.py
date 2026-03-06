@@ -12,8 +12,6 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from ..const import DOMAIN, OccupancyState
-from ..engine.virtual_sensor_engine import SIGNAL_OCCUPANCY_STATE_CHANGED
-from ..models.virtual_sensor import OccupancyStateData
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -108,9 +106,7 @@ async def async_setup_entry(
         """Handle sensor removal for a room or zone."""
         entity = entity_map.pop(region_id, None)
         if entity:
-            _LOGGER.info(
-                "Removing occupancy override button for region %s", region_id
-            )
+            _LOGGER.info("Removing occupancy override button for region %s", region_id)
             hass.async_create_task(entity.async_remove())
 
     async_dispatcher_connect(

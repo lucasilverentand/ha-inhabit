@@ -28,12 +28,12 @@ class OccupancyPatternPrior:
     room_id: str = ""
 
     # 7x24 matrix: _counts[day_of_week][hour] = (occupied_count, total_count)
-    _occupied_counts: list[list[int]] = field(default_factory=lambda: [
-        [0] * 24 for _ in range(7)
-    ])
-    _total_counts: list[list[int]] = field(default_factory=lambda: [
-        [0] * 24 for _ in range(7)
-    ])
+    _occupied_counts: list[list[int]] = field(
+        default_factory=lambda: [[0] * 24 for _ in range(7)]
+    )
+    _total_counts: list[list[int]] = field(
+        default_factory=lambda: [[0] * 24 for _ in range(7)]
+    )
 
     def record_observation(self, timestamp: datetime, is_occupied: bool) -> None:
         """Record an occupancy observation at the given time.
@@ -85,15 +85,13 @@ class OccupancyPatternPrior:
         occupied = data.get("occupied_counts")
         if occupied and len(occupied) == 7:
             prior._occupied_counts = [
-                list(row) if len(row) == 24 else [0] * 24
-                for row in occupied
+                list(row) if len(row) == 24 else [0] * 24 for row in occupied
             ]
 
         total = data.get("total_counts")
         if total and len(total) == 7:
             prior._total_counts = [
-                list(row) if len(row) == 24 else [0] * 24
-                for row in total
+                list(row) if len(row) == 24 else [0] * 24 for row in total
             ]
 
         return prior

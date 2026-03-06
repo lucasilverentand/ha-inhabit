@@ -200,14 +200,14 @@ class TestFullWorkflow:
         assert result["success"] is True
 
     @pytest.mark.asyncio
-    async def test_device_placement_workflow(self, mock_hass):
-        """Test device placement CRUD workflow."""
+    async def test_light_placement_workflow(self, mock_hass):
+        """Test light placement CRUD workflow."""
         with patch(
             "custom_components.inhabit.store.floor_plan_store.Store",
             return_value=create_mock_store(),
         ):
             from custom_components.inhabit.models.device_placement import (
-                DevicePlacement,
+                LightPlacement,
             )
             from custom_components.inhabit.models.floor_plan import Coordinates
 
@@ -218,32 +218,23 @@ class TestFullWorkflow:
             fp = store.create_floor_plan(FloorPlan(name="Test"))
             floor = store.add_floor(fp.id, Floor(name="Ground"))
 
-            # Place device
-            device = DevicePlacement(
+            # Place light
+            light = LightPlacement(
                 entity_id="light.living_room",
                 floor_id=floor.id,
                 room_id=None,
                 position=Coordinates(250, 200),
-                rotation=0,
-                scale=1,
-                show_state=True,
-                contributes_to_occupancy=False,
             )
-            placed = store.place_device(fp.id, device)
+            placed = store.place_light(fp.id, light)
 
             assert placed.entity_id == "light.living_room"
 
             # Get placements
-            collection = store.get_device_placements(fp.id)
-            assert len(collection.devices) == 1
-
-            # Update placement
-            device.position = Coordinates(300, 250)
-            updated = store.update_device_placement(fp.id, device)
-            assert updated.position.x == 300
+            lights = store.get_light_placements(fp.id)
+            assert len(lights) == 1
 
             # Remove placement
-            removed = store.remove_device_placement(fp.id, device.id)
+            removed = store.remove_light_placement(placed.id)
             assert removed is True
 
     @pytest.mark.asyncio

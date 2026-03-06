@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import math
 import sys
-from datetime import datetime, timedelta
+from datetime import timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -14,11 +13,6 @@ if "homeassistant" not in sys.modules:
     from tests.conftest import *  # noqa: F401, F403
 
 from custom_components.inhabit.engine.seal_probability import SealProbabilityTracker
-from custom_components.inhabit.const import (
-    DEFAULT_SEAL_HALF_LIFE,
-    DEFAULT_SEAL_MAX_DURATION,
-    DEFAULT_LONG_STAY_SEAL_MAX_DURATION,
-)
 from custom_components.inhabit.models.virtual_sensor import (
     OccupancyStateData,
     SensorBinding,
@@ -463,9 +457,7 @@ class TestStateMachineSealIntegration:
             assert machine.state.seal_probability == 0.0
             assert machine.state.sealed is False
 
-    def test_decayed_seal_allows_vacancy(
-        self, mock_hass, seal_config, state_changes
-    ):
+    def test_decayed_seal_allows_vacancy(self, mock_hass, seal_config, state_changes):
         """A seal that has decayed below threshold allows vacancy transition."""
         machine, _ = self._make_machine(mock_hass, seal_config, state_changes)
 
@@ -494,9 +486,7 @@ class TestStateMachineSealIntegration:
                 # Should succeed — seal decayed below threshold
                 assert machine.state.state == OccupancyState.VACANT
 
-    def test_active_seal_blocks_vacancy(
-        self, mock_hass, seal_config, state_changes
-    ):
+    def test_active_seal_blocks_vacancy(self, mock_hass, seal_config, state_changes):
         """A seal that hasn't decayed blocks vacancy transition."""
         machine, _ = self._make_machine(mock_hass, seal_config, state_changes)
 
@@ -514,16 +504,12 @@ class TestStateMachineSealIntegration:
             # Should be blocked
             assert machine.state.state == OccupancyState.CHECKING
 
-    def test_no_expiry_timer_needed(
-        self, mock_hass, seal_config, state_changes
-    ):
+    def test_no_expiry_timer_needed(self, mock_hass, seal_config, state_changes):
         """The seal expiry timer is no longer used (replaced by decay)."""
         machine, _ = self._make_machine(mock_hass, seal_config, state_changes)
         assert not hasattr(machine, "_seal_expiry_timer")
 
-    def test_re_detection_resets_decay(
-        self, mock_hass, seal_config, state_changes
-    ):
+    def test_re_detection_resets_decay(self, mock_hass, seal_config, state_changes):
         """New detection while sealed resets the decay timer."""
         machine, _ = self._make_machine(mock_hass, seal_config, state_changes)
 
@@ -545,9 +531,7 @@ class TestStateMachineSealIntegration:
             # sealed_at should be updated
             assert machine._seal_tracker._sealed_at > first_sealed_at
 
-    def test_max_duration_safety_valve(
-        self, mock_hass, seal_config, state_changes
-    ):
+    def test_max_duration_safety_valve(self, mock_hass, seal_config, state_changes):
         """Hard max_duration cutoff returns probability 0 regardless of half_life."""
         machine, _ = self._make_machine(mock_hass, seal_config, state_changes)
 

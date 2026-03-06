@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import statistics
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 

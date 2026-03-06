@@ -9,11 +9,16 @@ import voluptuous as vol
 from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
-from homeassistant.helpers.dispatcher import async_dispatcher_connect
 
 from ..const import DOMAIN, WS_PREFIX
+from ..engine.simulated_target_processor import SimulatedTargetProcessor
 from ..models.automation_rule import VisualRule
-from ..models.device_placement import ButtonPlacement, LightPlacement, OtherPlacement, SwitchPlacement
+from ..models.device_placement import (
+    ButtonPlacement,
+    LightPlacement,
+    OtherPlacement,
+    SwitchPlacement,
+)
 from ..models.floor_plan import (
     BackgroundLayer,
     Coordinates,
@@ -25,7 +30,6 @@ from ..models.floor_plan import (
     Room,
     _generate_id,
 )
-from ..engine.simulated_target_processor import SimulatedTargetProcessor
 from ..models.mmwave_sensor import MmwavePlacement
 from ..models.virtual_sensor import SensorBinding, VirtualSensorConfig
 from ..models.zone import Zone
@@ -453,8 +457,16 @@ def ws_floors_export(
         return
 
     # Gather light and switch placements on this floor
-    lights = [d.to_dict() for d in store.get_light_placements(msg["floor_plan_id"]) if d.floor_id == floor.id]
-    switches = [d.to_dict() for d in store.get_switch_placements(msg["floor_plan_id"]) if d.floor_id == floor.id]
+    lights = [
+        d.to_dict()
+        for d in store.get_light_placements(msg["floor_plan_id"])
+        if d.floor_id == floor.id
+    ]
+    switches = [
+        d.to_dict()
+        for d in store.get_switch_placements(msg["floor_plan_id"])
+        if d.floor_id == floor.id
+    ]
 
     # Gather sensor configs for rooms on this floor
     room_ids = {r.id for r in floor.rooms}
@@ -509,9 +521,7 @@ def _remap_floor_ids(floor: Floor) -> dict[str, str]:
     # Room references: second pass remaps floor_id and connected_rooms
     for room in floor.rooms:
         room.floor_id = floor.id
-        room.connected_rooms = [
-            id_map.get(cid, cid) for cid in room.connected_rooms
-        ]
+        room.connected_rooms = [id_map.get(cid, cid) for cid in room.connected_rooms]
 
     # Zone IDs
     for zone in floor.zones:
@@ -551,7 +561,9 @@ def ws_floors_import(
     data = msg["data"]
     floor_data = data.get("floor")
     if not floor_data or not isinstance(floor_data, dict):
-        connection.send_error(msg["id"], "invalid_format", "Missing 'floor' key in import data")
+        connection.send_error(
+            msg["id"], "invalid_format", "Missing 'floor' key in import data"
+        )
         return
 
     # Parse floor and remap all IDs to avoid collisions
@@ -568,7 +580,9 @@ def ws_floors_import(
         light = LightPlacement.from_dict(dev_data)
         light.id = _generate_id()
         light.floor_id = floor.id
-        light.room_id = id_map.get(light.room_id, light.room_id) if light.room_id else None
+        light.room_id = (
+            id_map.get(light.room_id, light.room_id) if light.room_id else None
+        )
         store.place_light(floor_plan_id, light)
 
     # Import switch placements
@@ -576,7 +590,9 @@ def ws_floors_import(
         switch = SwitchPlacement.from_dict(dev_data)
         switch.id = _generate_id()
         switch.floor_id = floor.id
-        switch.room_id = id_map.get(switch.room_id, switch.room_id) if switch.room_id else None
+        switch.room_id = (
+            id_map.get(switch.room_id, switch.room_id) if switch.room_id else None
+        )
         store.place_switch(floor_plan_id, switch)
 
     # Import sensor configs
@@ -718,7 +734,7 @@ def ws_rooms_update(
         room.ha_area_id = next_ha_area_id
     if "background_layers" in msg:
         room.background_layers = [
-            BackgroundLayer.from_dict(l) for l in msg["background_layers"]
+            BackgroundLayer.from_dict(layer) for layer in msg["background_layers"]
         ]
 
     result = store.update_room(msg["floor_plan_id"], room)
@@ -919,7 +935,12 @@ def ws_zones_update(
     result = store.update_zone(msg["floor_plan_id"], zone)
     if result:
         # Sync zone config fields to sensor config when occupancy is active
-        zone_config_fields = {"motion_timeout", "checking_timeout", "long_stay", "occupies_parent"}
+        zone_config_fields = {
+            "motion_timeout",
+            "checking_timeout",
+            "long_stay",
+            "occupies_parent",
+        }
         if zone.occupancy_sensor_enabled and zone_config_fields & msg.keys():
             config = store.get_sensor_config(zone.id)
             if config:
@@ -1059,7 +1080,7 @@ def _split_edges_at_node(floor: Floor, node: Node) -> None:
             direction=edge.direction,
             angle_group=edge.angle_group,
         )
-        floor.edges[i:i + 1] = [edge1, edge2]
+        floor.edges[i : i + 1] = [edge1, edge2]
 
 
 def _cleanup_orphan_nodes(floor: Floor) -> list[str]:
@@ -1116,8 +1137,12 @@ def ws_edges_add(
 
     start_coords = msg["start"]
     end_coords = msg["end"]
-    start_node = _get_or_create_node(floor, float(start_coords["x"]), float(start_coords["y"]))
-    end_node = _get_or_create_node(floor, float(end_coords["x"]), float(end_coords["y"]))
+    start_node = _get_or_create_node(
+        floor, float(start_coords["x"]), float(start_coords["y"])
+    )
+    end_node = _get_or_create_node(
+        floor, float(end_coords["x"]), float(end_coords["y"])
+    )
 
     # Split any existing edges that the new nodes land on
     _split_edges_at_node(floor, start_node)
@@ -1137,10 +1162,13 @@ def ws_edges_add(
 
     result = store.update_floor_plan(floor_plan)
     if result:
-        connection.send_result(msg["id"], {
-            "edge": edge.to_dict(),
-            "nodes": [start_node.to_dict(), end_node.to_dict()],
-        })
+        connection.send_result(
+            msg["id"],
+            {
+                "edge": edge.to_dict(),
+                "nodes": [start_node.to_dict(), end_node.to_dict()],
+            },
+        )
     else:
         connection.send_error(msg["id"], "add_failed", "Failed to add edge")
 
@@ -1293,7 +1321,9 @@ def ws_edges_delete(
 
     # Same for collinear group
     if deleted_edge.collinear_group:
-        siblings = [e for e in floor.edges if e.collinear_group == deleted_edge.collinear_group]
+        siblings = [
+            e for e in floor.edges if e.collinear_group == deleted_edge.collinear_group
+        ]
         if len(siblings) == 1:
             siblings[0].collinear_group = None
 
@@ -1307,10 +1337,13 @@ def ws_edges_delete(
 
     result = store.update_floor_plan(floor_plan)
     if result:
-        connection.send_result(msg["id"], {
-            "success": True,
-            "removed_node_ids": removed_nodes,
-        })
+        connection.send_result(
+            msg["id"],
+            {
+                "success": True,
+                "removed_node_ids": removed_nodes,
+            },
+        )
     else:
         connection.send_error(msg["id"], "delete_failed", "Failed to delete edge")
 
@@ -1366,10 +1399,13 @@ def ws_edges_link(
 
     result = store.update_floor_plan(floor_plan)
     if result:
-        connection.send_result(msg["id"], {
-            "link_group": link_group,
-            "edge_ids": edge_ids,
-        })
+        connection.send_result(
+            msg["id"],
+            {
+                "link_group": link_group,
+                "edge_ids": edge_ids,
+            },
+        )
     else:
         connection.send_error(msg["id"], "link_failed", "Failed to link edges")
 
@@ -1469,12 +1505,17 @@ def ws_edges_collinear_link(
 
     result = store.update_floor_plan(floor_plan)
     if result:
-        connection.send_result(msg["id"], {
-            "collinear_group": collinear_group,
-            "edge_ids": edge_ids,
-        })
+        connection.send_result(
+            msg["id"],
+            {
+                "collinear_group": collinear_group,
+                "edge_ids": edge_ids,
+            },
+        )
     else:
-        connection.send_error(msg["id"], "link_failed", "Failed to collinear link edges")
+        connection.send_error(
+            msg["id"], "link_failed", "Failed to collinear link edges"
+        )
 
 
 @websocket_api.websocket_command(
@@ -1523,7 +1564,9 @@ def ws_edges_collinear_unlink(
     if result:
         connection.send_result(msg["id"], {"success": True})
     else:
-        connection.send_error(msg["id"], "unlink_failed", "Failed to collinear unlink edges")
+        connection.send_error(
+            msg["id"], "unlink_failed", "Failed to collinear unlink edges"
+        )
 
 
 @websocket_api.websocket_command(
@@ -1580,10 +1623,13 @@ def ws_edges_angle_link(
 
     result = store.update_floor_plan(floor_plan)
     if result:
-        connection.send_result(msg["id"], {
-            "angle_group": angle_group,
-            "edge_ids": edge_ids,
-        })
+        connection.send_result(
+            msg["id"],
+            {
+                "angle_group": angle_group,
+                "edge_ids": edge_ids,
+            },
+        )
     else:
         connection.send_error(msg["id"], "link_failed", "Failed to angle link edges")
 
@@ -1634,7 +1680,9 @@ def ws_edges_angle_unlink(
     if result:
         connection.send_result(msg["id"], {"success": True})
     else:
-        connection.send_error(msg["id"], "unlink_failed", "Failed to angle unlink edges")
+        connection.send_error(
+            msg["id"], "unlink_failed", "Failed to angle unlink edges"
+        )
 
 
 @websocket_api.websocket_command(
@@ -1719,16 +1767,18 @@ def ws_edges_split(
     # Build the 3 replacement edges
     new_edges = []
     if has_before:
-        new_edges.append(Edge(
-            start_node=edge.start_node,
-            end_node=n1.id,
-            type="wall",
-            thickness=edge.thickness,
-            is_exterior=edge.is_exterior,
-            direction=edge.direction,
-            link_group=edge.link_group,
-            collinear_group=collinear,
-        ))
+        new_edges.append(
+            Edge(
+                start_node=edge.start_node,
+                end_node=n1.id,
+                type="wall",
+                thickness=edge.thickness,
+                is_exterior=edge.is_exterior,
+                direction=edge.direction,
+                link_group=edge.link_group,
+                collinear_group=collinear,
+            )
+        )
     opening_edge = Edge(
         start_node=n1.id,
         end_node=n2.id,
@@ -1745,16 +1795,18 @@ def ws_edges_split(
     )
     new_edges.append(opening_edge)
     if has_after:
-        new_edges.append(Edge(
-            start_node=n2.id,
-            end_node=edge.end_node,
-            type="wall",
-            thickness=edge.thickness,
-            is_exterior=edge.is_exterior,
-            direction=edge.direction,
-            link_group=edge.link_group,
-            collinear_group=collinear,
-        ))
+        new_edges.append(
+            Edge(
+                start_node=n2.id,
+                end_node=edge.end_node,
+                type="wall",
+                thickness=edge.thickness,
+                is_exterior=edge.is_exterior,
+                direction=edge.direction,
+                link_group=edge.link_group,
+                collinear_group=collinear,
+            )
+        )
 
     # Replace old edge with new edges
     floor.edges = [e for e in floor.edges if e.id != edge.id] + new_edges
@@ -1762,10 +1814,13 @@ def ws_edges_split(
 
     result = store.update_floor_plan(floor_plan)
     if result:
-        connection.send_result(msg["id"], {
-            "edges": [e.to_dict() for e in new_edges],
-            "nodes": [n1.to_dict(), n2.to_dict()],
-        })
+        connection.send_result(
+            msg["id"],
+            {
+                "edges": [e.to_dict() for e in new_edges],
+                "nodes": [n1.to_dict(), n2.to_dict()],
+            },
+        )
     else:
         connection.send_error(msg["id"], "split_failed", "Failed to split edge")
 
@@ -1873,7 +1928,9 @@ def ws_nodes_merge(
 
     result = store.update_floor_plan(floor_plan)
     if result:
-        connection.send_result(msg["id"], {"success": True, "removed_node_id": remove_id})
+        connection.send_result(
+            msg["id"], {"success": True, "removed_node_id": remove_id}
+        )
     else:
         connection.send_error(msg["id"], "merge_failed", "Failed to merge nodes")
 
@@ -1913,12 +1970,15 @@ def ws_nodes_dissolve(
         return
 
     # Find all edges connected to this node
-    connected = [e for e in floor.edges if e.start_node == node_id or e.end_node == node_id]
+    connected = [
+        e for e in floor.edges if e.start_node == node_id or e.end_node == node_id
+    ]
 
     if len(connected) != 2:
         connection.send_error(
-            msg["id"], "invalid_state",
-            f"Node must have exactly 2 connected edges to dissolve, found {len(connected)}"
+            msg["id"],
+            "invalid_state",
+            f"Node must have exactly 2 connected edges to dissolve, found {len(connected)}",
         )
         return
 
@@ -1928,7 +1988,11 @@ def ws_nodes_dissolve(
     other2 = e2.end_node if e2.start_node == node_id else e2.start_node
 
     if other1 == other2:
-        connection.send_error(msg["id"], "invalid_state", "Cannot dissolve: both edges connect to the same node")
+        connection.send_error(
+            msg["id"],
+            "invalid_state",
+            "Cannot dissolve: both edges connect to the same node",
+        )
         return
 
     # Create merged edge inheriting properties from the first wall-type edge
@@ -1953,12 +2017,15 @@ def ws_nodes_dissolve(
 
     result = store.update_floor_plan(floor_plan)
     if result:
-        connection.send_result(msg["id"], {
-            "success": True,
-            "merged_edge": merged.to_dict(),
-            "removed_edge_ids": list(old_ids),
-            "removed_node_id": node_id,
-        })
+        connection.send_result(
+            msg["id"],
+            {
+                "success": True,
+                "merged_edge": merged.to_dict(),
+                "removed_edge_ids": list(old_ids),
+                "removed_node_id": node_id,
+            },
+        )
     else:
         connection.send_error(msg["id"], "dissolve_failed", "Failed to dissolve node")
 
@@ -2052,11 +2119,14 @@ def ws_edges_split_at_point(
 
     result = store.update_floor_plan(floor_plan)
     if result:
-        connection.send_result(msg["id"], {
-            "new_node": new_node.to_dict(),
-            "edges": [edge1.to_dict(), edge2.to_dict()],
-            "removed_edge_id": edge.id,
-        })
+        connection.send_result(
+            msg["id"],
+            {
+                "new_node": new_node.to_dict(),
+                "edges": [edge1.to_dict(), edge2.to_dict()],
+                "removed_edge_id": edge.id,
+            },
+        )
     else:
         connection.send_error(msg["id"], "split_failed", "Failed to split edge")
 
@@ -2482,7 +2552,9 @@ def ws_others_update(
     if result:
         connection.send_result(msg["id"], result.to_dict())
     else:
-        connection.send_error(msg["id"], "update_failed", "Failed to update other placement")
+        connection.send_error(
+            msg["id"], "update_failed", "Failed to update other placement"
+        )
 
 
 @websocket_api.websocket_command(
@@ -2881,9 +2953,7 @@ def ws_occupancy_history(
 # ==================== Phantom Presence (Transition Prediction) ====================
 
 
-@websocket_api.websocket_command(
-    {vol.Required("type"): f"{WS_PREFIX}/phantom_states"}
-)
+@websocket_api.websocket_command({vol.Required("type"): f"{WS_PREFIX}/phantom_states"})
 @callback
 def ws_phantom_states(
     hass: HomeAssistant,

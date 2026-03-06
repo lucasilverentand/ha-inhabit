@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
-from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from datetime import datetime
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -208,12 +208,10 @@ class MultiRoomReasoner:
         # Push CHECKING rooms first (they're already on their way out),
         # then OCCUPIED rooms
         checking_rooms = [
-            r for r in occupied
-            if self._room_states.get(r) == OccupancyState.CHECKING
+            r for r in occupied if self._room_states.get(r) == OccupancyState.CHECKING
         ]
         occupied_rooms = [
-            r for r in occupied
-            if self._room_states.get(r) == OccupancyState.OCCUPIED
+            r for r in occupied if self._room_states.get(r) == OccupancyState.OCCUPIED
         ]
 
         to_vacate = checking_rooms[:excess]

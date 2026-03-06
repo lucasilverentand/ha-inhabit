@@ -9,8 +9,8 @@ from custom_components.inhabit.models.automation_rule import (
     VisualRule,
 )
 from custom_components.inhabit.models.device_placement import (
-    DevicePlacement,
-    DevicePlacementCollection,
+    LightPlacement,
+    SwitchPlacement,
 )
 from custom_components.inhabit.models.floor_plan import (
     BoundingBox,
@@ -661,83 +661,67 @@ class TestFloorPlan:
         assert restored.floors[0].rooms[0].name == "Living Room"
 
 
-class TestDevicePlacement:
-    """Test DevicePlacement model."""
+class TestLightPlacement:
+    """Test LightPlacement model."""
 
     def test_creation(self):
         """Test basic creation."""
-        device = DevicePlacement(
+        light = LightPlacement(
             entity_id="light.living_room",
             floor_id="floor_1",
             position=Coordinates(100, 100),
         )
-        assert device.entity_id == "light.living_room"
+        assert light.entity_id == "light.living_room"
 
-    def test_creation_with_options(self):
-        """Test creation with all options."""
-        device = DevicePlacement(
-            entity_id="binary_sensor.motion",
+    def test_creation_with_all_fields(self):
+        """Test creation with all fields."""
+        light = LightPlacement(
+            id="light_1",
+            entity_id="light.bedroom",
             floor_id="floor_1",
             room_id="room_1",
             position=Coordinates(50, 50),
-            rotation=45,
-            scale=1.5,
-            show_state=True,
-            show_label=True,
-            contributes_to_occupancy=True,
+            label="Bedroom Light",
         )
-        assert device.rotation == 45
-        assert device.scale == 1.5
-        assert device.contributes_to_occupancy is True
+        assert light.room_id == "room_1"
+        assert light.label == "Bedroom Light"
 
     def test_to_dict(self):
         """Test serialization."""
-        device = DevicePlacement(
-            entity_id="switch.fan",
+        light = LightPlacement(
+            entity_id="light.fan",
             floor_id="floor_1",
             position=Coordinates(0, 0),
         )
-        data = device.to_dict()
-        assert data["entity_id"] == "switch.fan"
+        data = light.to_dict()
+        assert data["entity_id"] == "light.fan"
 
     def test_from_dict(self):
         """Test deserialization."""
         data = {
-            "id": "dev_1",
+            "id": "light_1",
             "entity_id": "light.test",
             "floor_id": "floor_1",
             "position": {"x": 10, "y": 20},
-            "rotation": 90,
         }
-        device = DevicePlacement.from_dict(data)
-        assert device.rotation == 90
+        light = LightPlacement.from_dict(data)
+        assert light.position.x == 10
+        assert light.position.y == 20
 
 
-class TestDevicePlacementCollection:
-    """Test DevicePlacementCollection model."""
+class TestSwitchPlacement:
+    """Test SwitchPlacement model."""
 
-    def test_creation(self):
-        """Test basic creation."""
-        collection = DevicePlacementCollection(floor_plan_id="fp_1")
-        assert collection.floor_plan_id == "fp_1"
-        assert collection.devices == []
-
-    def test_add_device(self):
-        """Test adding device."""
-        collection = DevicePlacementCollection(floor_plan_id="fp_1")
-        device = DevicePlacement(
-            entity_id="light.test",
+    def test_round_trip(self):
+        """Test round-trip serialization."""
+        switch = SwitchPlacement(
+            entity_id="switch.test",
             floor_id="floor_1",
             position=Coordinates(0, 0),
         )
-        collection.devices.append(device)
-        assert len(collection.devices) == 1
-
-    def test_to_dict(self):
-        """Test serialization."""
-        collection = DevicePlacementCollection(floor_plan_id="fp_1")
-        data = collection.to_dict()
-        assert data["floor_plan_id"] == "fp_1"
+        data = switch.to_dict()
+        restored = SwitchPlacement.from_dict(data)
+        assert restored.entity_id == "switch.test"
 
 
 class TestSensorBinding:

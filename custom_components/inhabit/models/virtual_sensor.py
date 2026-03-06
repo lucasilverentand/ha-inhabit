@@ -218,7 +218,9 @@ class VirtualSensorConfig:
 
     # Door seal logic
     door_seals_room: bool = True  # Enable door seal (closed doors prevent vacancy)
-    seal_max_duration: int = 14400  # Max seconds a seal holds (safety valve, 4h default)
+    seal_max_duration: int = (
+        14400  # Max seconds a seal holds (safety valve, 4h default)
+    )
     seal_half_life: int = 3600  # Half-life for seal probability decay (seconds)
     long_stay: bool = False  # Zone where occupants stay for hours (couch, bed, etc.)
 
@@ -241,7 +243,10 @@ class VirtualSensorConfig:
     @property
     def effective_seal_max_duration(self) -> int:
         """Get effective seal max duration, accounting for long-stay zones."""
-        from ..const import DEFAULT_LONG_STAY_SEAL_MAX_DURATION, DEFAULT_SEAL_MAX_DURATION
+        from ..const import (
+            DEFAULT_LONG_STAY_SEAL_MAX_DURATION,
+            DEFAULT_SEAL_MAX_DURATION,
+        )
 
         if self.long_stay and self.seal_max_duration == DEFAULT_SEAL_MAX_DURATION:
             return DEFAULT_LONG_STAY_SEAL_MAX_DURATION

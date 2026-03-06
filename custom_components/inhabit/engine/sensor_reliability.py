@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 
 _LOGGER = logging.getLogger(__name__)
@@ -113,9 +113,7 @@ class SensorReliabilityTracker:
                     self._records[entity_id].true_positives += 1
 
         # Add this as a new pending activation
-        self._pending.append(
-            PendingActivation(entity_id=entity_id, activated_at=now)
-        )
+        self._pending.append(PendingActivation(entity_id=entity_id, activated_at=now))
 
         # Expire old pending activations
         self._expire_pending(now)
@@ -148,8 +146,7 @@ class SensorReliabilityTracker:
     def save_records(self) -> dict[str, dict]:
         """Save records for persistence."""
         return {
-            entity_id: record.to_dict()
-            for entity_id, record in self._records.items()
+            entity_id: record.to_dict() for entity_id, record in self._records.items()
         }
 
     def _ensure_record(self, entity_id: str) -> None:
@@ -276,8 +273,7 @@ class SensorCorrelationTracker:
     def save_records(self) -> dict[str, dict]:
         """Save records for persistence."""
         return {
-            entity_id: record.to_dict()
-            for entity_id, record in self._records.items()
+            entity_id: record.to_dict() for entity_id, record in self._records.items()
         }
 
     def load_records(self, data: dict[str, dict]) -> None:

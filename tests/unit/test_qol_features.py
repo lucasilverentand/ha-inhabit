@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import sys
-from collections import deque
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
 
@@ -132,7 +131,9 @@ class TestCheckingEvents:
             machine._transition_to_checking("all sensors clear")
 
         # Find the checking_started event
-        events = [e for e in mock_hass._fired_events if e["type"] == EVENT_CHECKING_STARTED]
+        events = [
+            e for e in mock_hass._fired_events if e["type"] == EVENT_CHECKING_STARTED
+        ]
         assert len(events) == 1
 
         data = events[0]["data"]
@@ -154,7 +155,9 @@ class TestCheckingEvents:
             machine._state.state = OccupancyState.CHECKING
             machine._transition_to_vacant("checking timeout")
 
-        events = [e for e in mock_hass._fired_events if e["type"] == EVENT_CHECKING_RESOLVED]
+        events = [
+            e for e in mock_hass._fired_events if e["type"] == EVENT_CHECKING_RESOLVED
+        ]
         assert len(events) == 1
 
         data = events[0]["data"]
@@ -176,7 +179,9 @@ class TestCheckingEvents:
             machine._state.state = OccupancyState.CHECKING
             machine._transition_to_occupied("motion re-detected")
 
-        events = [e for e in mock_hass._fired_events if e["type"] == EVENT_CHECKING_RESOLVED]
+        events = [
+            e for e in mock_hass._fired_events if e["type"] == EVENT_CHECKING_RESOLVED
+        ]
         assert len(events) == 1
 
         data = events[0]["data"]
@@ -196,7 +201,9 @@ class TestCheckingEvents:
         ):
             machine._transition_to_occupied("motion detected")
 
-        events = [e for e in mock_hass._fired_events if e["type"] == EVENT_CHECKING_RESOLVED]
+        events = [
+            e for e in mock_hass._fired_events if e["type"] == EVENT_CHECKING_RESOLVED
+        ]
         assert len(events) == 0
 
     def test_no_checking_resolved_from_occupied_to_vacant(
@@ -209,7 +216,9 @@ class TestCheckingEvents:
         machine._state.state = OccupancyState.OCCUPIED
         machine._transition_to_vacant("manual override")
 
-        events = [e for e in mock_hass._fired_events if e["type"] == EVENT_CHECKING_RESOLVED]
+        events = [
+            e for e in mock_hass._fired_events if e["type"] == EVENT_CHECKING_RESOLVED
+        ]
         assert len(events) == 0
 
     def test_event_constants_correct(self):

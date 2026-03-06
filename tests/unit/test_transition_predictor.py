@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sys
 from datetime import datetime, timedelta
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -13,17 +13,15 @@ if "homeassistant" not in sys.modules:
     from tests.conftest import *  # noqa: F401, F403
 
 from custom_components.inhabit.const import OccupancyState
+from custom_components.inhabit.engine.transition_learner import (
+    TransitionLearner,
+)
 from custom_components.inhabit.engine.transition_predictor import (
     DoorLink,
     PhantomPresence,
     TransitionPredictor,
 )
-from custom_components.inhabit.engine.transition_learner import (
-    TransitionLearner,
-    TransitionRecord,
-)
 from custom_components.inhabit.models.floor_plan import Coordinates, Polygon
-
 
 # ------------------------------------------------------------------
 # Helpers
@@ -256,7 +254,9 @@ class TestTransitionPredictorPhantom:
         await predictor.async_start()
 
         # Hallway goes OCCUPIED → CHECKING
-        predictor.on_room_state_changed("hallway", OccupancyState.OCCUPIED, OccupancyState.CHECKING)
+        predictor.on_room_state_changed(
+            "hallway", OccupancyState.OCCUPIED, OccupancyState.CHECKING
+        )
 
         assert predictor.has_active_phantom("bathroom")
         # Should have tried to push bathroom to OCCUPIED
@@ -278,7 +278,9 @@ class TestTransitionPredictorPhantom:
         # Bathroom is already occupied
         predictor._room_states["bathroom"] = OccupancyState.OCCUPIED
 
-        predictor.on_room_state_changed("hallway", OccupancyState.OCCUPIED, OccupancyState.CHECKING)
+        predictor.on_room_state_changed(
+            "hallway", OccupancyState.OCCUPIED, OccupancyState.CHECKING
+        )
 
         assert not predictor.has_active_phantom("bathroom")
 
@@ -297,7 +299,9 @@ class TestTransitionPredictorPhantom:
         await predictor.async_start()
 
         # Bathroom goes CHECKING but is sealed
-        predictor.on_room_state_changed("bathroom", OccupancyState.OCCUPIED, OccupancyState.CHECKING)
+        predictor.on_room_state_changed(
+            "bathroom", OccupancyState.OCCUPIED, OccupancyState.CHECKING
+        )
 
         # No phantom should be created (person is still in bathroom)
         assert not predictor.has_active_phantom("hallway")
@@ -316,11 +320,15 @@ class TestTransitionPredictorPhantom:
         await predictor.async_start()
 
         # Create phantom on bathroom
-        predictor.on_room_state_changed("hallway", OccupancyState.OCCUPIED, OccupancyState.CHECKING)
+        predictor.on_room_state_changed(
+            "hallway", OccupancyState.OCCUPIED, OccupancyState.CHECKING
+        )
         assert predictor.has_active_phantom("bathroom")
 
         # Real presence detected in bathroom
-        predictor.on_room_state_changed("bathroom", OccupancyState.VACANT, OccupancyState.OCCUPIED)
+        predictor.on_room_state_changed(
+            "bathroom", OccupancyState.VACANT, OccupancyState.OCCUPIED
+        )
         assert not predictor.has_active_phantom("bathroom")
 
     @pytest.mark.asyncio
@@ -434,15 +442,23 @@ class TestTransitionPredictorDoorGeometry:
         """Door edges should be linked to rooms via polygon containment."""
         # Create two rooms with polygons and a door between them
         room_a = _make_room("room_a", ["room_b"])
-        room_a.polygon = Polygon(vertices=[
-            Coordinates(0, 0), Coordinates(100, 0),
-            Coordinates(100, 100), Coordinates(0, 100),
-        ])
+        room_a.polygon = Polygon(
+            vertices=[
+                Coordinates(0, 0),
+                Coordinates(100, 0),
+                Coordinates(100, 100),
+                Coordinates(0, 100),
+            ]
+        )
         room_b = _make_room("room_b", ["room_a"])
-        room_b.polygon = Polygon(vertices=[
-            Coordinates(100, 0), Coordinates(200, 0),
-            Coordinates(200, 100), Coordinates(100, 100),
-        ])
+        room_b.polygon = Polygon(
+            vertices=[
+                Coordinates(100, 0),
+                Coordinates(200, 0),
+                Coordinates(200, 100),
+                Coordinates(100, 100),
+            ]
+        )
 
         # Door at x=100 (boundary between rooms)
         nodes = [
@@ -471,8 +487,12 @@ class TestTransitionPredictorZoneAdjacency:
     @pytest.mark.asyncio
     async def test_close_zones_are_adjacent(self):
         """Zones with vertices within threshold should be adjacent."""
-        zone_a = _make_zone("zone_a", "room_1", vertices=[(0, 0), (50, 0), (50, 50), (0, 50)])
-        zone_b = _make_zone("zone_b", "room_1", vertices=[(50, 0), (100, 0), (100, 50), (50, 50)])
+        zone_a = _make_zone(
+            "zone_a", "room_1", vertices=[(0, 0), (50, 0), (50, 50), (0, 50)]
+        )
+        zone_b = _make_zone(
+            "zone_b", "room_1", vertices=[(50, 0), (100, 0), (100, 50), (50, 50)]
+        )
 
         rooms = [_make_room("room_1")]
         store = _make_store(rooms, zones=[zone_a, zone_b])
@@ -487,8 +507,14 @@ class TestTransitionPredictorZoneAdjacency:
     @pytest.mark.asyncio
     async def test_far_zones_not_adjacent(self):
         """Zones far apart should not be adjacent."""
-        zone_a = _make_zone("zone_a", "room_1", vertices=[(0, 0), (50, 0), (50, 50), (0, 50)])
-        zone_b = _make_zone("zone_b", "room_1", vertices=[(200, 200), (250, 200), (250, 250), (200, 250)])
+        zone_a = _make_zone(
+            "zone_a", "room_1", vertices=[(0, 0), (50, 0), (50, 50), (0, 50)]
+        )
+        zone_b = _make_zone(
+            "zone_b",
+            "room_1",
+            vertices=[(200, 200), (250, 200), (250, 250), (200, 250)],
+        )
 
         rooms = [_make_room("room_1")]
         store = _make_store(rooms, zones=[zone_a, zone_b])
@@ -502,8 +528,12 @@ class TestTransitionPredictorZoneAdjacency:
     @pytest.mark.asyncio
     async def test_different_room_zones_not_adjacent(self):
         """Zones in different rooms should not be adjacent (even if close)."""
-        zone_a = _make_zone("zone_a", "room_1", vertices=[(0, 0), (50, 0), (50, 50), (0, 50)])
-        zone_b = _make_zone("zone_b", "room_2", vertices=[(50, 0), (100, 0), (100, 50), (50, 50)])
+        zone_a = _make_zone(
+            "zone_a", "room_1", vertices=[(0, 0), (50, 0), (50, 50), (0, 50)]
+        )
+        zone_b = _make_zone(
+            "zone_b", "room_2", vertices=[(50, 0), (100, 0), (100, 50), (50, 50)]
+        )
 
         rooms = [_make_room("room_1"), _make_room("room_2")]
         store = _make_store(rooms, zones=[zone_a, zone_b])

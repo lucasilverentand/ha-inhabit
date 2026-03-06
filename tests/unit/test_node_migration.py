@@ -6,7 +6,9 @@ import sys
 from unittest.mock import MagicMock
 
 # Mock homeassistant modules before importing our code
-if "homeassistant" not in sys.modules or isinstance(sys.modules["homeassistant"], MagicMock):
+if "homeassistant" not in sys.modules or isinstance(
+    sys.modules["homeassistant"], MagicMock
+):
     sys.modules.setdefault("homeassistant", MagicMock())
     sys.modules.setdefault("homeassistant.core", MagicMock())
     sys.modules.setdefault("homeassistant.const", MagicMock())
@@ -40,7 +42,11 @@ class TestOldFormatMigration:
             "name": "Test Floor",
             "walls": [
                 {"id": "w1", "start": {"x": 0, "y": 0}, "end": {"x": 100, "y": 0}},
-                {"id": "w2", "start": {"x": 200, "y": 200}, "end": {"x": 300, "y": 200}},
+                {
+                    "id": "w2",
+                    "start": {"x": 200, "y": 200},
+                    "end": {"x": 300, "y": 200},
+                },
             ],
         }
         floor = Floor.from_dict(data)
@@ -114,10 +120,21 @@ class TestOldFormatMigration:
             "id": "f1",
             "name": "Door Test",
             "walls": [
-                {"id": "w1", "start": {"x": 0, "y": 0}, "end": {"x": 500, "y": 0}, "thickness": 10},
+                {
+                    "id": "w1",
+                    "start": {"x": 0, "y": 0},
+                    "end": {"x": 500, "y": 0},
+                    "thickness": 10,
+                },
             ],
             "doors": [
-                {"id": "d1", "wall_id": "w1", "position": 0.5, "width": 80, "swing_direction": "left"},
+                {
+                    "id": "d1",
+                    "wall_id": "w1",
+                    "position": 0.5,
+                    "width": 80,
+                    "swing_direction": "left",
+                },
             ],
         }
         floor = Floor.from_dict(data)
@@ -140,10 +157,21 @@ class TestOldFormatMigration:
             "id": "f1",
             "name": "Window Test",
             "walls": [
-                {"id": "w1", "start": {"x": 0, "y": 0}, "end": {"x": 400, "y": 0}, "thickness": 12},
+                {
+                    "id": "w1",
+                    "start": {"x": 0, "y": 0},
+                    "end": {"x": 400, "y": 0},
+                    "thickness": 12,
+                },
             ],
             "windows": [
-                {"id": "win1", "wall_id": "w1", "position": 0.5, "width": 100, "height": 120},
+                {
+                    "id": "win1",
+                    "wall_id": "w1",
+                    "position": 0.5,
+                    "width": 100,
+                    "height": 120,
+                },
             ],
         }
         floor = Floor.from_dict(data)
@@ -161,8 +189,13 @@ class TestOldFormatMigration:
             "id": "f1",
             "name": "Props Test",
             "walls": [
-                {"id": "w1", "start": {"x": 0, "y": 0}, "end": {"x": 500, "y": 0},
-                 "thickness": 15, "is_exterior": True},
+                {
+                    "id": "w1",
+                    "start": {"x": 0, "y": 0},
+                    "end": {"x": 500, "y": 0},
+                    "thickness": 15,
+                    "is_exterior": True,
+                },
             ],
             "doors": [
                 {"id": "d1", "wall_id": "w1", "position": 0.5, "width": 80},
@@ -180,8 +213,14 @@ class TestOldFormatMigration:
             "id": "f1",
             "name": "Test",
             "walls": [
-                {"id": "w1", "start": {"x": 0, "y": 0}, "end": {"x": 100, "y": 0},
-                 "length_locked": True, "direction": "horizontal", "angle_group": "abc12345"},
+                {
+                    "id": "w1",
+                    "start": {"x": 0, "y": 0},
+                    "end": {"x": 100, "y": 0},
+                    "length_locked": True,
+                    "direction": "horizontal",
+                    "angle_group": "abc12345",
+                },
             ],
         }
         floor = Floor.from_dict(data)
@@ -304,9 +343,17 @@ class TestFloorRoundTrip:
                 Node(id="n3", x=100, y=80),
             ],
             edges=[
-                Edge(id="e1", start_node="n1", end_node="n2", type="wall", thickness=12),
-                Edge(id="e2", start_node="n2", end_node="n3", type="door",
-                     swing_direction="left", entity_id="sensor.door"),
+                Edge(
+                    id="e1", start_node="n1", end_node="n2", type="wall", thickness=12
+                ),
+                Edge(
+                    id="e2",
+                    start_node="n2",
+                    end_node="n3",
+                    type="door",
+                    swing_direction="left",
+                    entity_id="sensor.door",
+                ),
             ],
         )
         data = floor.to_dict()

@@ -20,12 +20,12 @@ from ..models.virtual_sensor import (
     VirtualSensorConfig,
 )
 from .false_vacancy_detector import FalseVacancyDetector
-from .pattern_prior import OccupancyPatternPrior
 from .feedback_controller import FeedbackController
 from .house_occupancy_guard import HouseOccupancyGuard
 from .mmwave_target_processor import SIGNAL_MMWAVE_TARGETS_UPDATED
 from .multi_room_reasoner import MultiRoomReasoner
 from .occupancy_state_machine import OccupancyStateMachine
+from .pattern_prior import OccupancyPatternPrior
 from .transition_learner import TransitionLearner
 from .transition_predictor import TransitionPredictor
 
@@ -71,7 +71,9 @@ class VirtualSensorEngine:
             store=store,
             get_seal_state=self._is_room_sealed,
             set_room_occupied=self._set_room_occupied,
-            get_learned_weight=lambda fr, to, hr: self._transition_learner.get_transition_weight(fr, to, hr),
+            get_learned_weight=lambda fr, to, hr: self._transition_learner.get_transition_weight(
+                fr, to, hr
+            ),
         )
         self._transition_learner = TransitionLearner()
         self._running = False
@@ -154,9 +156,7 @@ class VirtualSensorEngine:
             self._transition_learner.load_data(learner_data)
 
         # Load persisted false vacancy data
-        self._false_vacancy_detector.load_data(
-            self._store.get_false_vacancy_data()
-        )
+        self._false_vacancy_detector.load_data(self._store.get_false_vacancy_data())
 
         # Resolve parent_room_id for zones with occupies_parent
         self._resolve_zone_parents()
@@ -215,9 +215,7 @@ class VirtualSensorEngine:
         self._running = False
 
         # Persist false vacancy data before stopping
-        self._store.save_false_vacancy_data(
-            self._false_vacancy_detector.save_data()
-        )
+        self._store.save_false_vacancy_data(self._false_vacancy_detector.save_data())
 
         # Save timeout histories before stopping
         self._save_timeout_histories()
@@ -248,9 +246,7 @@ class VirtualSensorEngine:
         self._last_transition_time.clear()
 
         # Save and stop transition learner
-        self._store.save_transition_learner_data(
-            self._transition_learner.save_data()
-        )
+        self._store.save_transition_learner_data(self._transition_learner.save_data())
 
         # Stop transition predictor
         await self._transition_predictor.async_stop()
@@ -360,9 +356,7 @@ class VirtualSensorEngine:
                         config.occupies_parent = True
                         config.parent_room_id = zone.room_id
 
-                    self._parent_zones.setdefault(zone.room_id, set()).add(
-                        zone.id
-                    )
+                    self._parent_zones.setdefault(zone.room_id, set()).add(zone.id)
 
         if self._parent_zones:
             _LOGGER.debug(
@@ -486,9 +480,7 @@ class VirtualSensorEngine:
                 timeout_history[room_id] = [r.to_dict() for r in records]
 
         self._store.save_timeout_history(timeout_history)
-        _LOGGER.debug(
-            "Saved timeout histories for %d rooms", len(timeout_history)
-        )
+        _LOGGER.debug("Saved timeout histories for %d rooms", len(timeout_history))
 
     def _load_timeout_histories(self) -> None:
         """Load timeout histories from the store and distribute to managers."""
@@ -503,9 +495,7 @@ class VirtualSensorEngine:
                 machine.timeout_manager.load_session_history(records)
                 loaded_count += 1
 
-        _LOGGER.debug(
-            "Loaded timeout histories for %d rooms", loaded_count
-        )
+        _LOGGER.debug("Loaded timeout histories for %d rooms", loaded_count)
 
     # ------------------------------------------------------------------
     # mmWave spatial presence
@@ -601,9 +591,7 @@ class VirtualSensorEngine:
 
         if reliability_data:
             self._store.save_sensor_reliability(reliability_data)
-            _LOGGER.debug(
-                "Saved reliability data for %d rooms", len(reliability_data)
-            )
+            _LOGGER.debug("Saved reliability data for %d rooms", len(reliability_data))
 
     # ------------------------------------------------------------------
     # Pattern priors
@@ -613,17 +601,14 @@ class VirtualSensorEngine:
         """Load persisted pattern prior data."""
         data = self._store.get_pattern_priors()
         for room_id, prior_data in data.items():
-            self._pattern_priors[room_id] = OccupancyPatternPrior.from_dict(
-                prior_data
-            )
+            self._pattern_priors[room_id] = OccupancyPatternPrior.from_dict(prior_data)
         if data:
             _LOGGER.debug("Loaded pattern priors for %d rooms", len(data))
 
     def _save_pattern_priors(self) -> None:
         """Save pattern prior data to the store."""
         data = {
-            room_id: prior.to_dict()
-            for room_id, prior in self._pattern_priors.items()
+            room_id: prior.to_dict() for room_id, prior in self._pattern_priors.items()
         }
         if data:
             self._store.save_pattern_priors(data)

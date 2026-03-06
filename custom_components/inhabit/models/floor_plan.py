@@ -409,7 +409,9 @@ class Room:
         default_factory=list
     )  # Room IDs connected via doors
     is_transit: bool | None = None  # None = auto-detect, True/False = manual override
-    phantom_hold_seconds: int = 0  # 0 = use default (300s for transit, checking_timeout otherwise)
+    phantom_hold_seconds: int = (
+        0  # 0 = use default (300s for transit, checking_timeout otherwise)
+    )
     ha_area_id: str | None = None
     background_layers: list[BackgroundLayer] = field(default_factory=list)
 
@@ -428,7 +430,7 @@ class Room:
             "is_transit": self.is_transit,
             "phantom_hold_seconds": self.phantom_hold_seconds,
             "ha_area_id": self.ha_area_id,
-            "background_layers": [l.to_dict() for l in self.background_layers],
+            "background_layers": [layer.to_dict() for layer in self.background_layers],
         }
 
     @classmethod
@@ -438,7 +440,11 @@ class Room:
         layers_data = data.get("background_layers", [])
         if not layers_data and data.get("background_image"):
             layers_data = [
-                {"id": _generate_id(), "name": "Background", "url": data["background_image"]}
+                {
+                    "id": _generate_id(),
+                    "name": "Background",
+                    "url": data["background_image"],
+                }
             ]
 
         return cls(
@@ -454,7 +460,9 @@ class Room:
             is_transit=data.get("is_transit"),
             phantom_hold_seconds=int(data.get("phantom_hold_seconds", 0)),
             ha_area_id=data.get("ha_area_id"),
-            background_layers=[BackgroundLayer.from_dict(l) for l in layers_data],
+            background_layers=[
+                BackgroundLayer.from_dict(layer) for layer in layers_data
+            ],
         )
 
 
@@ -471,7 +479,9 @@ class Floor:
     rooms: list[Room] = field(default_factory=list)
     nodes: list[Node] = field(default_factory=list)
     edges: list[Edge] = field(default_factory=list)
-    zones: list[Any] = field(default_factory=list)  # list[Zone], Any avoids circular import
+    zones: list[Any] = field(
+        default_factory=list
+    )  # list[Zone], Any avoids circular import
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
@@ -597,24 +607,28 @@ def _migrate_walls_to_graph(
     openings: list[tuple[str, str, float, float, dict[str, Any]]] = []
     # Collect all openings: (wall_id, type, position, width, extra_attrs)
     for door in doors:
-        openings.append((
-            door.wall_id,
-            "door",
-            door.position,
-            door.width,
-            {
-                "swing_direction": door.swing_direction,
-                "entity_id": door.entity_id,
-            },
-        ))
+        openings.append(
+            (
+                door.wall_id,
+                "door",
+                door.position,
+                door.width,
+                {
+                    "swing_direction": door.swing_direction,
+                    "entity_id": door.entity_id,
+                },
+            )
+        )
     for window in windows:
-        openings.append((
-            window.wall_id,
-            "window",
-            window.position,
-            window.width,
-            {"height": window.height},
-        ))
+        openings.append(
+            (
+                window.wall_id,
+                "window",
+                window.position,
+                window.width,
+                {"height": window.height},
+            )
+        )
 
     # Group openings by wall_id
     openings_by_wall: dict[str, list[tuple[str, float, float, dict[str, Any]]]] = {}
@@ -647,8 +661,6 @@ def _migrate_walls_to_graph(
         end_node_id = parent_edge.end_node
 
         # Unit vector along wall
-        ux = wall_dx / wall_length
-        uy = wall_dy / wall_length
 
         segments: list[tuple[str, float, float, dict[str, Any]]] = []
         # segments: (type, start_t, end_t, extra_attrs)
@@ -669,13 +681,15 @@ def _migrate_walls_to_graph(
                 nx = wall.start.x + t_start * wall_dx
                 ny = wall.start.y + t_start * wall_dy
                 new_node = _get_or_create_node(nx, ny)
-                edges.append(Edge(
-                    start_node=current_node_id,
-                    end_node=new_node.id,
-                    type="wall",
-                    thickness=parent_edge.thickness,
-                    is_exterior=parent_edge.is_exterior,
-                ))
+                edges.append(
+                    Edge(
+                        start_node=current_node_id,
+                        end_node=new_node.id,
+                        type="wall",
+                        thickness=parent_edge.thickness,
+                        is_exterior=parent_edge.is_exterior,
+                    )
+                )
                 current_node_id = new_node.id
             elif t_start <= current_t + 1e-9:
                 # Opening starts at current position, no gap
@@ -712,13 +726,15 @@ def _migrate_walls_to_graph(
 
         # Remaining wall segment after last opening
         if current_t < 1.0 - 1e-9:
-            edges.append(Edge(
-                start_node=current_node_id,
-                end_node=end_node_id,
-                type="wall",
-                thickness=parent_edge.thickness,
-                is_exterior=parent_edge.is_exterior,
-            ))
+            edges.append(
+                Edge(
+                    start_node=current_node_id,
+                    end_node=end_node_id,
+                    type="wall",
+                    thickness=parent_edge.thickness,
+                    is_exterior=parent_edge.is_exterior,
+                )
+            )
 
     nodes = list(node_map.values())
     return nodes, edges

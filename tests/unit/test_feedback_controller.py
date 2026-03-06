@@ -528,7 +528,9 @@ class TestDataclassSerialization:
         assert restored.previous_state == event.previous_state
         assert restored.new_state == event.new_state
         assert restored.confidence_at_override == event.confidence_at_override
-        assert restored.seal_probability_at_override == event.seal_probability_at_override
+        assert (
+            restored.seal_probability_at_override == event.seal_probability_at_override
+        )
         assert restored.contributing_sensors == event.contributing_sensors
 
     def test_room_adjustment_state_round_trip(self):
@@ -551,9 +553,13 @@ class TestDataclassSerialization:
         assert restored.room_id == state.room_id
         assert restored.checking_timeout_delta == state.checking_timeout_delta
         assert restored.motion_timeout_delta == state.motion_timeout_delta
-        assert restored.vacant_threshold_delta == pytest.approx(state.vacant_threshold_delta)
+        assert restored.vacant_threshold_delta == pytest.approx(
+            state.vacant_threshold_delta
+        )
         assert restored.occupied_threshold_delta == state.occupied_threshold_delta
-        assert restored.seal_half_life_factor == pytest.approx(state.seal_half_life_factor)
+        assert restored.seal_half_life_factor == pytest.approx(
+            state.seal_half_life_factor
+        )
         assert restored.last_adjustment_at == state.last_adjustment_at
         assert restored.false_occupancy_count == state.false_occupancy_count
         assert restored.false_vacancy_count == state.false_vacancy_count

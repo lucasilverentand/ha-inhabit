@@ -2,16 +2,12 @@
 
 from __future__ import annotations
 
-import time
-from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from custom_components.inhabit.engine.sensor_reliability import (
-    CONFIRMATION_WINDOW,
     MIN_WEIGHT_MULTIPLIER,
-    PendingActivation,
     SensorAccuracyRecord,
     SensorReliabilityTracker,
 )
@@ -270,7 +266,9 @@ class TestSensorReliabilityTracker:
         tracker2 = SensorReliabilityTracker()
         tracker2.load_records(saved)
 
-        assert tracker2.get_reliability("sensor.a") == tracker.get_reliability("sensor.a")
+        assert tracker2.get_reliability("sensor.a") == tracker.get_reliability(
+            "sensor.a"
+        )
         records2 = tracker2.get_all_records()
         assert records2["sensor.a"].true_positives == 10
         assert records2["sensor.a"].false_positives == 2
@@ -451,9 +449,7 @@ class TestSensorReliabilityInStateMachine:
 
         # With motion_a unreliable (weight * 0.3) and motion_b not contributing,
         # confidence = (1.0 * 0.3) / (1.0 * 0.3 + 1.0 * 1.0) = 0.3 / 1.3
-        expected = (1.0 * MIN_WEIGHT_MULTIPLIER) / (
-            1.0 * MIN_WEIGHT_MULTIPLIER + 1.0
-        )
+        expected = (1.0 * MIN_WEIGHT_MULTIPLIER) / (1.0 * MIN_WEIGHT_MULTIPLIER + 1.0)
         assert confidence == pytest.approx(expected, abs=0.01)
 
     def test_state_change_includes_reliability(

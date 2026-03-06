@@ -189,9 +189,7 @@ class HouseOccupancyGuard:
                         seen.add(edge.entity_id)
 
         if not self._exterior_door_bindings:
-            _LOGGER.debug(
-                "House guard: no exterior door sensors found in floor plan"
-            )
+            _LOGGER.debug("House guard: no exterior door sensors found in floor plan")
 
     @callback
     def _handle_exterior_door_event(self, event: Event) -> None:
@@ -225,7 +223,11 @@ class HouseOccupancyGuard:
                 self._break_seal(f"exterior door {entity_id} opened")
         else:
             # Door closed — re-establish seal if there are occupied rooms
-            if not self._sealed and self._occupied_rooms and self._all_exterior_doors_closed():
+            if (
+                not self._sealed
+                and self._occupied_rooms
+                and self._all_exterior_doors_closed()
+            ):
                 self._establish_seal(f"exterior door {entity_id} closed")
 
     # ------------------------------------------------------------------
@@ -261,9 +263,7 @@ class HouseOccupancyGuard:
                 )
                 self._break_seal(f"expired after {self._max_duration}s")
 
-        self._expiry_timer = async_call_later(
-            self.hass, self._max_duration, _expired
-        )
+        self._expiry_timer = async_call_later(self.hass, self._max_duration, _expired)
 
     def _cancel_expiry_timer(self) -> None:
         """Cancel the expiry timer."""

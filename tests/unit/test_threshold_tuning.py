@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
 from unittest.mock import MagicMock
 
 import pytest
@@ -10,10 +9,8 @@ import pytest
 from custom_components.inhabit.const import OccupancyState
 from custom_components.inhabit.engine.feedback_controller import (
     MAX_OCCUPIED_THRESHOLD,
-    MIN_COOLDOWN_SECONDS,
     MIN_VACANT_THRESHOLD,
     THRESHOLD_OCCUPIED_STEP,
-    THRESHOLD_TUNING_MIN_TRANSITIONS,
     THRESHOLD_VACANT_STEP,
     FeedbackController,
     ThresholdState,
@@ -115,9 +112,7 @@ class TestTuneThresholds:
         original = ts.vacant_threshold
 
         controller.tune_thresholds("room_1")
-        assert ts.vacant_threshold == pytest.approx(
-            original - THRESHOLD_VACANT_STEP
-        )
+        assert ts.vacant_threshold == pytest.approx(original - THRESHOLD_VACANT_STEP)
 
     def test_occupied_threshold_clamped_at_max(self, controller):
         """occupied_threshold is clamped at MAX_OCCUPIED_THRESHOLD."""

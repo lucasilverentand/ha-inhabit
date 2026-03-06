@@ -9,8 +9,8 @@ from uuid import uuid4
 
 from homeassistant.core import HomeAssistant
 
-from ..const import DOMAIN, OccupancyState
-from ..models.floor_plan import Coordinates, Polygon
+from ..const import OccupancyState
+from ..models.floor_plan import Coordinates
 
 if TYPE_CHECKING:
     from ..engine.virtual_sensor_engine import VirtualSensorEngine
@@ -85,9 +85,7 @@ class SimulatedTargetProcessor:
             self._targets_per_region[region_id] = set()
 
         self._targets_per_region[region_id].add(target_id)
-        self._sensor_engine.set_room_occupancy(
-            region_id, OccupancyState.OCCUPIED
-        )
+        self._sensor_engine.set_room_occupancy(region_id, OccupancyState.OCCUPIED)
         _LOGGER.debug(
             "Target %s entered region %s — set OCCUPIED (%d targets)",
             target_id,

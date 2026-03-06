@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 
 _LOGGER = logging.getLogger(__name__)
@@ -93,7 +93,9 @@ class FalseVacancyDetector:
     def __init__(self, hass):
         self._hass = hass
         self._room_stats: dict[str, RoomVacancyStats] = {}
-        self._last_vacant_time: dict[str, datetime] = {}  # room_id -> when it went vacant
+        self._last_vacant_time: dict[str, datetime] = (
+            {}
+        )  # room_id -> when it went vacant
         self._false_vacancy_events: dict[str, deque[FalseVacancyEvent]] = {}
 
     def on_state_change(
@@ -121,7 +123,10 @@ class FalseVacancyDetector:
             return None
 
         # Check for rapid re-occupancy
-        if new_state == OccupancyState.OCCUPIED and previous_state == OccupancyState.VACANT:
+        if (
+            new_state == OccupancyState.OCCUPIED
+            and previous_state == OccupancyState.VACANT
+        ):
             last_vacant = self._last_vacant_time.get(room_id)
             if last_vacant is None:
                 return None
@@ -206,8 +211,7 @@ class FalseVacancyDetector:
     def save_data(self) -> dict:
         return {
             "room_stats": {
-                room_id: stats.to_dict()
-                for room_id, stats in self._room_stats.items()
+                room_id: stats.to_dict() for room_id, stats in self._room_stats.items()
             },
             "false_vacancy_events": {
                 room_id: [e.to_dict() for e in events]

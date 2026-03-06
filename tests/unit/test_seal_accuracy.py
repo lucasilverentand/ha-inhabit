@@ -11,15 +11,14 @@ import pytest
 if "homeassistant" not in sys.modules:
     from tests.conftest import *  # noqa: F401, F403
 
+from custom_components.inhabit.const import OccupancyState
 from custom_components.inhabit.engine.feedback_controller import (
     MAX_SEAL_HALF_LIFE,
     MIN_SEAL_HALF_LIFE,
     SEAL_ACCURACY_MIN_EVENTS,
-    SEAL_HALF_LIFE_ADJUST_FACTOR,
     FeedbackController,
     SealAccuracyTracker,
 )
-from custom_components.inhabit.const import OccupancyState
 
 
 class TestSealAccuracyTracker:

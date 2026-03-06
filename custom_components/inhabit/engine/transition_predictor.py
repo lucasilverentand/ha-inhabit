@@ -18,24 +18,22 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.event import async_call_later
 
 from ..const import (
-    DEFAULT_PHANTOM_HOLD,
     DEFAULT_TRANSIT_PHANTOM_HOLD,
-    OccupancyState,
     PHANTOM_ZONE_PROXIMITY_THRESHOLD,
+    OccupancyState,
 )
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from ..models.floor_plan import Coordinates, Edge, Floor, Node, Room
-    from ..models.zone import Zone
+    from ..models.floor_plan import Floor
     from ..store.floor_plan_store import FloorPlanStore
 
 _LOGGER = logging.getLogger(__name__)

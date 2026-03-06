@@ -455,6 +455,7 @@ class TestDoorSealLogic:
 
         By default: motion active (ON), door closed (OFF).
         """
+
         def get_state(entity_id):
             if "motion" in entity_id:
                 return MagicMock(state=motion_state)
@@ -468,7 +469,9 @@ class TestDoorSealLogic:
         self, mock_hass, seal_config, state_changes
     ):
         """Seal is established when entering OCCUPIED with all doors closed."""
-        self._setup_sensor_states(mock_hass, motion_state=STATE_ON, door_state=STATE_OFF)
+        self._setup_sensor_states(
+            mock_hass, motion_state=STATE_ON, door_state=STATE_OFF
+        )
         machine, changes = self._make_machine(mock_hass, seal_config, state_changes)
 
         machine._aggregator.update_reading(
@@ -497,7 +500,9 @@ class TestDoorSealLogic:
         self, mock_hass, seal_config, state_changes
     ):
         """A sealed room stays OCCUPIED when all sensors clear."""
-        self._setup_sensor_states(mock_hass, motion_state=STATE_ON, door_state=STATE_OFF)
+        self._setup_sensor_states(
+            mock_hass, motion_state=STATE_ON, door_state=STATE_OFF
+        )
         machine, changes = self._make_machine(mock_hass, seal_config, state_changes)
 
         # Enter occupied (seal established)
@@ -508,18 +513,20 @@ class TestDoorSealLogic:
         assert machine.state.sealed is True
 
         # All sensors clear
-        self._setup_sensor_states(mock_hass, motion_state=STATE_OFF, door_state=STATE_OFF)
+        self._setup_sensor_states(
+            mock_hass, motion_state=STATE_OFF, door_state=STATE_OFF
+        )
         machine._aggregator.update_reading(
             "binary_sensor.room_motion", False, "motion", 1.0
         )
         machine._check_all_sensors_clear()
         assert machine.state.state == OccupancyState.OCCUPIED
 
-    def test_seal_broken_when_door_opens(
-        self, mock_hass, seal_config, state_changes
-    ):
+    def test_seal_broken_when_door_opens(self, mock_hass, seal_config, state_changes):
         """Seal is broken when the door opens."""
-        self._setup_sensor_states(mock_hass, motion_state=STATE_ON, door_state=STATE_OFF)
+        self._setup_sensor_states(
+            mock_hass, motion_state=STATE_ON, door_state=STATE_OFF
+        )
         machine, changes = self._make_machine(mock_hass, seal_config, state_changes)
 
         machine._aggregator.update_reading(
@@ -537,7 +544,9 @@ class TestDoorSealLogic:
         self, mock_hass, seal_config, state_changes
     ):
         """After seal breaks, sensors clearing transitions to CHECKING."""
-        self._setup_sensor_states(mock_hass, motion_state=STATE_ON, door_state=STATE_OFF)
+        self._setup_sensor_states(
+            mock_hass, motion_state=STATE_ON, door_state=STATE_OFF
+        )
         machine, changes = self._make_machine(mock_hass, seal_config, state_changes)
 
         with patch(
@@ -552,7 +561,9 @@ class TestDoorSealLogic:
 
             # Break seal and clear sensors
             machine._break_seal("door opened")
-            self._setup_sensor_states(mock_hass, motion_state=STATE_OFF, door_state=STATE_OFF)
+            self._setup_sensor_states(
+                mock_hass, motion_state=STATE_OFF, door_state=STATE_OFF
+            )
             machine._aggregator.update_reading(
                 "binary_sensor.room_motion", False, "motion", 1.0
             )
@@ -563,7 +574,9 @@ class TestDoorSealLogic:
         self, mock_hass, seal_config, state_changes
     ):
         """Door opens and closes with active sensor re-establishes seal."""
-        self._setup_sensor_states(mock_hass, motion_state=STATE_ON, door_state=STATE_OFF)
+        self._setup_sensor_states(
+            mock_hass, motion_state=STATE_ON, door_state=STATE_OFF
+        )
         machine, changes = self._make_machine(mock_hass, seal_config, state_changes)
 
         with patch(
@@ -581,18 +594,20 @@ class TestDoorSealLogic:
             assert machine.state.sealed is False
 
             # Motion re-detected with door still open — no seal
-            self._setup_sensor_states(mock_hass, motion_state=STATE_ON, door_state=STATE_ON)
+            self._setup_sensor_states(
+                mock_hass, motion_state=STATE_ON, door_state=STATE_ON
+            )
             machine._transition_to_occupied("motion re-detected")
             assert machine.state.sealed is False
 
             # Door closes + re-detection
-            self._setup_sensor_states(mock_hass, motion_state=STATE_ON, door_state=STATE_OFF)
+            self._setup_sensor_states(
+                mock_hass, motion_state=STATE_ON, door_state=STATE_OFF
+            )
             machine._transition_to_occupied("motion re-detected again")
             assert machine.state.sealed is True
 
-    def test_no_seal_without_door_sensors(
-        self, mock_hass, state_changes
-    ):
+    def test_no_seal_without_door_sensors(self, mock_hass, state_changes):
         """No seal logic when room has no door sensors."""
         config = VirtualSensorConfig(
             room_id="no_door_room",
@@ -617,12 +632,12 @@ class TestDoorSealLogic:
         machine._transition_to_occupied("motion detected")
         assert machine.state.sealed is False
 
-    def test_no_seal_when_disabled(
-        self, mock_hass, seal_config, state_changes
-    ):
+    def test_no_seal_when_disabled(self, mock_hass, seal_config, state_changes):
         """No seal when door_seals_room is False."""
         seal_config.door_seals_room = False
-        self._setup_sensor_states(mock_hass, motion_state=STATE_ON, door_state=STATE_OFF)
+        self._setup_sensor_states(
+            mock_hass, motion_state=STATE_ON, door_state=STATE_OFF
+        )
         machine, changes = self._make_machine(mock_hass, seal_config, state_changes)
 
         machine._aggregator.update_reading(
@@ -635,7 +650,9 @@ class TestDoorSealLogic:
         self, mock_hass, seal_config, state_changes
     ):
         """Manual state override to VACANT clears the seal."""
-        self._setup_sensor_states(mock_hass, motion_state=STATE_ON, door_state=STATE_OFF)
+        self._setup_sensor_states(
+            mock_hass, motion_state=STATE_ON, door_state=STATE_OFF
+        )
         machine, changes = self._make_machine(mock_hass, seal_config, state_changes)
 
         with patch(
@@ -652,9 +669,7 @@ class TestDoorSealLogic:
             assert machine.state.sealed is False
             assert machine.state.state == OccupancyState.VACANT
 
-    def test_vacancy_blocked_by_seal(
-        self, mock_hass, seal_config, state_changes
-    ):
+    def test_vacancy_blocked_by_seal(self, mock_hass, seal_config, state_changes):
         """Transition to VACANT is blocked when room is sealed."""
         mock_hass.states.get.return_value = MagicMock(state=STATE_OFF)
         machine, changes = self._make_machine(mock_hass, seal_config, state_changes)
@@ -673,11 +688,11 @@ class TestDoorSealLogic:
             # Should be blocked — still OCCUPIED
             assert machine.state.state == OccupancyState.OCCUPIED
 
-    def test_house_guard_blocks_vacancy(
-        self, mock_hass, seal_config, state_changes
-    ):
+    def test_house_guard_blocks_vacancy(self, mock_hass, seal_config, state_changes):
         """House guard can block vacancy for the last occupied room."""
-        mock_hass.states.get.return_value = MagicMock(state=STATE_ON)  # Door open (no seal)
+        mock_hass.states.get.return_value = MagicMock(
+            state=STATE_ON
+        )  # Door open (no seal)
         guard_called = []
 
         def mock_guard(room_id):
@@ -735,11 +750,11 @@ class TestDoorSealLogic:
         )
         assert config3.effective_seal_max_duration == 43200
 
-    def test_door_states_snapshot(
-        self, mock_hass, seal_config, state_changes
-    ):
+    def test_door_states_snapshot(self, mock_hass, seal_config, state_changes):
         """Door states are snapshotted on entering OCCUPIED."""
-        self._setup_sensor_states(mock_hass, motion_state=STATE_ON, door_state=STATE_OFF)
+        self._setup_sensor_states(
+            mock_hass, motion_state=STATE_ON, door_state=STATE_OFF
+        )
         machine, changes = self._make_machine(mock_hass, seal_config, state_changes)
 
         with patch(
@@ -752,7 +767,10 @@ class TestDoorSealLogic:
             machine._transition_to_occupied("motion detected")
             assert "binary_sensor.room_door" in machine.state.door_states_at_detection
             # Door was closed (not active) at detection time
-            assert machine.state.door_states_at_detection["binary_sensor.room_door"] is False
+            assert (
+                machine.state.door_states_at_detection["binary_sensor.room_door"]
+                is False
+            )
 
 
 class TestHoldUntilExit:
@@ -811,6 +829,7 @@ class TestHoldUntilExit:
     @staticmethod
     def _setup_sensor_states(mock_hass, mmwave_state=STATE_ON, door_state=STATE_OFF):
         """Set up per-entity mock states for hold-until-exit tests."""
+
         def get_state(entity_id):
             if "bed_mmwave" in entity_id:
                 return MagicMock(state=mmwave_state)
@@ -824,7 +843,9 @@ class TestHoldUntilExit:
         self, mock_hass, bed_config, state_changes
     ):
         """Bed zone stays OCCUPIED when mmWave clears (hold_until_exit)."""
-        self._setup_sensor_states(mock_hass, mmwave_state=STATE_ON, door_state=STATE_OFF)
+        self._setup_sensor_states(
+            mock_hass, mmwave_state=STATE_ON, door_state=STATE_OFF
+        )
         machine, changes = self._make_machine(mock_hass, bed_config, state_changes)
 
         with patch(
@@ -838,18 +859,20 @@ class TestHoldUntilExit:
             assert machine.state.state == OccupancyState.OCCUPIED
 
             # mmWave clears but hold_until_exit keeps OCCUPIED
-            self._setup_sensor_states(mock_hass, mmwave_state=STATE_OFF, door_state=STATE_OFF)
+            self._setup_sensor_states(
+                mock_hass, mmwave_state=STATE_OFF, door_state=STATE_OFF
+            )
             machine._aggregator.update_reading(
                 "binary_sensor.bed_mmwave", False, "motion", 1.0
             )
             machine._check_all_sensors_clear()
             assert machine.state.state == OccupancyState.OCCUPIED
 
-    def test_exit_sensor_releases_hold(
-        self, mock_hass, bed_config, state_changes
-    ):
+    def test_exit_sensor_releases_hold(self, mock_hass, bed_config, state_changes):
         """Exit sensor firing transitions bed to CHECKING."""
-        self._setup_sensor_states(mock_hass, mmwave_state=STATE_ON, door_state=STATE_OFF)
+        self._setup_sensor_states(
+            mock_hass, mmwave_state=STATE_ON, door_state=STATE_OFF
+        )
         machine, changes = self._make_machine(mock_hass, bed_config, state_changes)
 
         with patch(
@@ -867,11 +890,11 @@ class TestHoldUntilExit:
             assert machine.state.state == OccupancyState.CHECKING
             assert machine.state.sealed is False
 
-    def test_exit_sensor_off_ignored(
-        self, mock_hass, bed_config, state_changes
-    ):
+    def test_exit_sensor_off_ignored(self, mock_hass, bed_config, state_changes):
         """Exit sensor going OFF does not release hold."""
-        self._setup_sensor_states(mock_hass, mmwave_state=STATE_ON, door_state=STATE_OFF)
+        self._setup_sensor_states(
+            mock_hass, mmwave_state=STATE_ON, door_state=STATE_OFF
+        )
         machine, changes = self._make_machine(mock_hass, bed_config, state_changes)
 
         with patch(
@@ -900,9 +923,7 @@ class TestHoldUntilExit:
 
         assert machine.state.state == OccupancyState.VACANT
 
-    def test_hold_works_with_door_open(
-        self, mock_hass, bed_config, state_changes
-    ):
+    def test_hold_works_with_door_open(self, mock_hass, bed_config, state_changes):
         """Hold-until-exit keeps zone OCCUPIED even when door is open (no seal)."""
         self._setup_sensor_states(mock_hass, mmwave_state=STATE_ON, door_state=STATE_ON)
         machine, changes = self._make_machine(mock_hass, bed_config, state_changes)
@@ -918,7 +939,9 @@ class TestHoldUntilExit:
             assert machine.state.sealed is False  # Door open -> no seal
 
             # mmWave clears
-            self._setup_sensor_states(mock_hass, mmwave_state=STATE_OFF, door_state=STATE_ON)
+            self._setup_sensor_states(
+                mock_hass, mmwave_state=STATE_OFF, door_state=STATE_ON
+            )
             machine._aggregator.update_reading(
                 "binary_sensor.bed_mmwave", False, "motion", 1.0
             )
