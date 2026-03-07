@@ -507,41 +507,41 @@ class VirtualSensorEngine:
         placement_id: str,
         target_index: int,
         world_pos: Coordinates,
-        region_id: str | None,
+        region_ids: list[str],
     ) -> None:
         """Handle an mmWave target position update from MmwaveTargetProcessor.
 
+        A target can be inside multiple regions (e.g. a zone inside a room).
         Tracks which targets are in which regions and feeds the target count
         into each region's state machine via update_spatial_presence().
         """
         target_key = f"{placement_id}:{target_index}"
+        new_regions = set(region_ids)
 
-        # Find the old region this target was in (if any)
-        old_region: str | None = None
+        # Find all old regions this target was in
+        old_regions: set[str] = set()
         for rid, target_keys in self._mmwave_target_keys_per_region.items():
             if target_key in target_keys:
-                old_region = rid
-                break
+                old_regions.add(rid)
 
-        if old_region == region_id:
-            # Target stayed in the same region — nothing to do
+        if old_regions == new_regions:
             return
 
-        # Remove target from old region
-        if old_region:
-            self._mmwave_target_keys_per_region[old_region].discard(target_key)
-            old_count = len(self._mmwave_target_keys_per_region[old_region])
-            if old_count == 0:
-                del self._mmwave_target_keys_per_region[old_region]
-            self._route_spatial_presence(old_region, old_count)
+        # Remove target from regions it left
+        for rid in old_regions - new_regions:
+            self._mmwave_target_keys_per_region[rid].discard(target_key)
+            count = len(self._mmwave_target_keys_per_region[rid])
+            if count == 0:
+                del self._mmwave_target_keys_per_region[rid]
+            self._route_spatial_presence(rid, count)
 
-        # Add target to new region
-        if region_id:
-            self._mmwave_target_keys_per_region.setdefault(region_id, set()).add(
+        # Add target to regions it entered
+        for rid in new_regions - old_regions:
+            self._mmwave_target_keys_per_region.setdefault(rid, set()).add(
                 target_key
             )
-            new_count = len(self._mmwave_target_keys_per_region[region_id])
-            self._route_spatial_presence(region_id, new_count)
+            new_count = len(self._mmwave_target_keys_per_region[rid])
+            self._route_spatial_presence(rid, new_count)
 
     def _route_spatial_presence(self, region_id: str, target_count: int) -> None:
         """Route a spatial presence update to the correct state machine.

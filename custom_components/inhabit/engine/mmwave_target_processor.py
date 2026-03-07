@@ -39,8 +39,8 @@ class MmwaveTargetProcessor:
         self._placements: dict[str, MmwavePlacement] = {}
         # target positions: {placement_id: {target_index: Coordinates}}
         self._target_positions: dict[str, dict[int, Coordinates]] = {}
-        # region hits: {placement_id: {target_index: region_id or None}}
-        self._region_hits: dict[str, dict[int, str | None]] = {}
+        # region hits: {placement_id: {target_index: list of region_ids}}
+        self._region_hits: dict[str, dict[int, list[str]]] = {}
         self._unsub_listeners: dict[str, list] = {}
         self._running = False
 
@@ -102,11 +102,13 @@ class MmwaveTargetProcessor:
         for pid, targets in self._target_positions.items():
             result[pid] = {}
             for tidx, coord in targets.items():
-                region = self._region_hits.get(pid, {}).get(tidx)
+                region_ids = self._region_hits.get(pid, {}).get(tidx, [])
                 result[pid][tidx] = {
                     "world_x": coord.x,
                     "world_y": coord.y,
-                    "region_id": region,
+                    "region_ids": region_ids,
+                    # Keep backward compat: first region or None
+                    "region_id": region_ids[0] if region_ids else None,
                 }
         return result
 
@@ -114,8 +116,8 @@ class MmwaveTargetProcessor:
         """Return {region_id: set of placement_ids that have targets inside}."""
         regions: dict[str, set[str]] = {}
         for pid, hits in self._region_hits.items():
-            for _tidx, region_id in hits.items():
-                if region_id:
+            for _tidx, region_ids in hits.items():
+                for region_id in region_ids:
                     regions.setdefault(region_id, set()).add(pid)
         return regions
 
@@ -185,18 +187,18 @@ class MmwaveTargetProcessor:
         world_pos = self._transform_to_world(placement, local_x, local_y)
         self._target_positions[placement_id][target_index] = world_pos
 
-        # Test against rooms/zones
-        region_id = self._find_containing_region(placement, world_pos)
-        self._region_hits.setdefault(placement_id, {})[target_index] = region_id
+        # Test against all rooms/zones
+        region_ids = self._find_containing_regions(placement, world_pos)
+        self._region_hits.setdefault(placement_id, {})[target_index] = region_ids
 
-        # Dispatch update signal
+        # Dispatch update signal with all matching regions
         async_dispatcher_send(
             self.hass,
             SIGNAL_MMWAVE_TARGETS_UPDATED,
             placement_id,
             target_index,
             world_pos,
-            region_id,
+            region_ids,
         )
 
     def _transform_to_world(
@@ -221,26 +223,28 @@ class MmwaveTargetProcessor:
 
         return Coordinates(x=world_x, y=world_y)
 
-    def _find_containing_region(
+    def _find_containing_regions(
         self, placement: MmwavePlacement, point: Coordinates
-    ) -> str | None:
-        """Find which room or zone contains the given world point."""
+    ) -> list[str]:
+        """Find all rooms and zones that contain the given world point."""
         floor_plan = self._store.get_floor_plan(placement.floor_plan_id)
         if not floor_plan:
-            return None
+            return []
 
         floor = floor_plan.get_floor(placement.floor_id)
         if not floor:
-            return None
+            return []
 
-        # Check zones first (more specific)
+        region_ids: list[str] = []
+
+        # Check zones
         for zone in floor.zones:
             if zone.polygon and zone.polygon.contains_point(point):
-                return zone.id
+                region_ids.append(zone.id)
 
-        # Then rooms
+        # Check rooms
         for room in floor.rooms:
             if room.polygon and room.polygon.contains_point(point):
-                return room.id
+                region_ids.append(room.id)
 
-        return None
+        return region_ids

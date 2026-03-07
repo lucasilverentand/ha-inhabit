@@ -32,8 +32,18 @@ class SimulatedTarget:
     floor_plan_id: str = ""
     floor_id: str = ""
     position: Coordinates = field(default_factory=lambda: Coordinates(0, 0))
-    region_id: str | None = None
-    region_name: str | None = None
+    region_ids: list[str] = field(default_factory=list)
+    region_names: list[str] = field(default_factory=list)
+
+    @property
+    def region_id(self) -> str | None:
+        """First region for backward compat."""
+        return self.region_ids[0] if self.region_ids else None
+
+    @property
+    def region_name(self) -> str | None:
+        """First region name for backward compat."""
+        return self.region_names[0] if self.region_names else None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
@@ -43,7 +53,9 @@ class SimulatedTarget:
             "floor_id": self.floor_id,
             "position": self.position.to_dict(),
             "region_id": self.region_id,
+            "region_ids": self.region_ids,
             "region_name": self.region_name,
+            "region_names": self.region_names,
         }
 
 
@@ -118,7 +130,7 @@ class SimulatedTargetProcessor:
         position: Coordinates,
         hitbox: bool = True,
     ) -> SimulatedTarget:
-        """Place a new target. If hitbox is True, detect containing region."""
+        """Place a new target. If hitbox is True, detect containing regions."""
         target = SimulatedTarget(
             floor_plan_id=floor_plan_id,
             floor_id=floor_id,
@@ -126,19 +138,19 @@ class SimulatedTargetProcessor:
         )
 
         if hitbox:
-            region = self._find_containing_region(floor_plan_id, floor_id, position)
-            if region:
-                target.region_id = region["id"]
-                target.region_name = region["name"]
-                self._handle_region_enter(region["id"], target.id)
+            regions = self._find_containing_regions(floor_plan_id, floor_id, position)
+            target.region_ids = [r["id"] for r in regions]
+            target.region_names = [r["name"] for r in regions]
+            for r in regions:
+                self._handle_region_enter(r["id"], target.id)
 
         self._targets[target.id] = target
         _LOGGER.debug(
-            "Added simulated target %s at (%.1f, %.1f) in region %s",
+            "Added simulated target %s at (%.1f, %.1f) in regions %s",
             target.id,
             position.x,
             position.y,
-            target.region_name,
+            target.region_names,
         )
         return target
 
@@ -148,32 +160,31 @@ class SimulatedTargetProcessor:
         position: Coordinates,
         hitbox: bool = True,
     ) -> SimulatedTarget | None:
-        """Move a target. If hitbox is True, re-detect containing region."""
+        """Move a target. If hitbox is True, re-detect containing regions."""
         target = self._targets.get(target_id)
         if not target:
             return None
 
-        old_region_id = target.region_id
+        old_region_ids = set(target.region_ids)
         target.position = position
 
         if hitbox:
-            region = self._find_containing_region(
+            regions = self._find_containing_regions(
                 target.floor_plan_id, target.floor_id, position
             )
-            target.region_id = region["id"] if region else None
-            target.region_name = region["name"] if region else None
+            target.region_ids = [r["id"] for r in regions]
+            target.region_names = [r["name"] for r in regions]
         else:
-            target.region_id = None
-            target.region_name = None
+            target.region_ids = []
+            target.region_names = []
 
-        new_region_id = target.region_id
+        new_region_ids = set(target.region_ids)
 
         # Handle region transitions
-        if old_region_id != new_region_id:
-            if old_region_id:
-                self._handle_region_leave(old_region_id, target_id)
-            if new_region_id:
-                self._handle_region_enter(new_region_id, target_id)
+        for rid in old_region_ids - new_region_ids:
+            self._handle_region_leave(rid, target_id)
+        for rid in new_region_ids - old_region_ids:
+            self._handle_region_enter(rid, target_id)
 
         return target
 
@@ -183,8 +194,8 @@ class SimulatedTargetProcessor:
         if not target:
             return False
 
-        if target.region_id:
-            self._handle_region_leave(target.region_id, target_id)
+        for rid in target.region_ids:
+            self._handle_region_leave(rid, target_id)
 
         _LOGGER.debug("Removed simulated target %s", target_id)
         return True
@@ -205,32 +216,31 @@ class SimulatedTargetProcessor:
         """Get all active targets."""
         return list(self._targets.values())
 
-    def _find_containing_region(
+    def _find_containing_regions(
         self, floor_plan_id: str, floor_id: str, point: Coordinates
-    ) -> dict[str, str] | None:
-        """Find the zone or room containing a point.
+    ) -> list[dict[str, str]]:
+        """Find all zones and rooms containing a point.
 
-        Checks zones first (more specific), then rooms.
-        Returns {"id": ..., "name": ...} or None.
+        Returns list of {"id": ..., "name": ...} dicts.
         """
         floor_plan = self._store.get_floor_plan(floor_plan_id)
         if not floor_plan:
-            return None
+            return []
 
         floor = floor_plan.get_floor(floor_id)
         if not floor:
-            return None
+            return []
 
-        # Check zones first (more specific regions)
+        regions: list[dict[str, str]] = []
+
         for zone in floor.zones:
             if zone.polygon and zone.polygon.vertices:
                 if zone.polygon.contains_point(point):
-                    return {"id": zone.id, "name": zone.name}
+                    regions.append({"id": zone.id, "name": zone.name})
 
-        # Then check rooms
         for room in floor.rooms:
             if room.polygon and room.polygon.vertices:
                 if room.polygon.contains_point(point):
-                    return {"id": room.id, "name": room.name}
+                    regions.append({"id": room.id, "name": room.name})
 
-        return None
+        return regions
