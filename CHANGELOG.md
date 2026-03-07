@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.0](https://github.com/lucasilverentand/ha-inhabit/compare/v0.11.0...v0.12.0) (2026-03-07)
+
+
+### Features
+
+* color device icons by type in view mode ([412aecd](https://github.com/lucasilverentand/ha-inhabit/commit/412aecdad615526061fe6ec6a944f904ee6adf24))
+
 ## [0.11.0](https://github.com/lucasilverentand/ha-inhabit/compare/v0.10.0...v0.11.0) (2026-03-07)
 
 
