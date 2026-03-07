@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.11.0](https://github.com/lucasilverentand/ha-inhabit/compare/v0.10.0...v0.11.0) (2026-03-07)
+
+
+### Features
+
+* mmWave targets match all overlapping rooms and zones ([0a86956](https://github.com/lucasilverentand/ha-inhabit/commit/0a86956736c04791f22b574dca0c29ab64fff989))
+* refine view mode — hide labels, sweeps, and clean up device icons ([4110c4c](https://github.com/lucasilverentand/ha-inhabit/commit/4110c4cc798646bc9bcc22e8f075d98c0063cbae))
+
 ## [0.10.0](https://github.com/lucasilverentand/ha-inhabit/compare/v0.9.0...v0.10.0) (2026-03-06)
 
 
