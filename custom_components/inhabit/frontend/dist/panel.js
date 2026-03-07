@@ -1755,8 +1755,8 @@ function ut(t,e){return(e,i,o)=>((t,e,i)=>(i.configurable=!0,i.enumerable=!0,Ref
           stroke-width="${c?0:2}"/>
         ${u?.path?H`
           <svg x="${-p/2}" y="${-p/2}" width="${p}" height="${p}" viewBox="${f}">
-            <path d="${u.path}" fill="${a}"></path>
-            ${u.secondaryPath?H`<path d="${u.secondaryPath}" fill="${a}"></path>`:null}
+            <path d="${u.path}" fill="${c&&i?r:a}"></path>
+            ${u.secondaryPath?H`<path d="${u.secondaryPath}" fill="${c&&i?r:a}"></path>`:null}
           </svg>
         `:null}
         ${c?null:H`<text y="${h+12}" text-anchor="middle" font-size="10" fill="#333">${s}</text>`}

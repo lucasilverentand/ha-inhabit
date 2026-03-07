@@ -5257,8 +5257,8 @@ export class FpbCanvas extends LitElement {
           stroke-width="${viewing ? 0 : 2}"/>
         ${resolvedIcon?.path ? svg`
           <svg x="${-iconSize / 2}" y="${-iconSize / 2}" width="${iconSize}" height="${iconSize}" viewBox="${viewBox}">
-            <path d="${resolvedIcon.path}" fill="${iconColor}"></path>
-            ${resolvedIcon.secondaryPath ? svg`<path d="${resolvedIcon.secondaryPath}" fill="${iconColor}"></path>` : null}
+            <path d="${resolvedIcon.path}" fill="${viewing && isOn ? bgOnColor : iconColor}"></path>
+            ${resolvedIcon.secondaryPath ? svg`<path d="${resolvedIcon.secondaryPath}" fill="${viewing && isOn ? bgOnColor : iconColor}"></path>` : null}
           </svg>
         ` : null}
         ${!viewing ? svg`<text y="${r + 12}" text-anchor="middle" font-size="10" fill="#333">${label}</text>` : null}
