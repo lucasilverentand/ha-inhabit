@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.10.0](https://github.com/lucasilverentand/ha-inhabit/compare/v0.9.0...v0.10.0) (2026-03-06)
+
+
+### Features
+
+* add transition predictor with phantom presence for zone chaining ([a25fc28](https://github.com/lucasilverentand/ha-inhabit/commit/a25fc282beecd2c8f0a71faccd5a9ee6fadb48b4))
+* improve zone vertex editing, snapping, and canvas UX ([9a1d329](https://github.com/lucasilverentand/ha-inhabit/commit/9a1d329da403e2d266028ac1a0de575b158a9e86))
+
+
+### Bug Fixes
+
+* resolve all lint violations and broken tests ([8daf6e9](https://github.com/lucasilverentand/ha-inhabit/commit/8daf6e93a192684e1b97728d4535236656978ef1))
+
 ## [0.9.0](https://github.com/lucasilverentand/ha-inhabit/compare/v0.8.0...v0.9.0) (2026-03-05)
 
 
