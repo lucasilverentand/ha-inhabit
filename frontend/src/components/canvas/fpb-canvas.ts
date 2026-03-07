@@ -422,16 +422,15 @@ export class FpbCanvas extends LitElement {
       stroke: none;
     }
 
-    svg.mode-viewing .door,
-    svg.mode-viewing .window {
-      fill: none;
-      stroke: var(--primary-text-color, #333);
-    }
-
+    svg.mode-viewing .window,
     svg.mode-viewing .window-pane,
     svg.mode-viewing .window-closed-segment {
       fill: none;
       stroke: var(--primary-text-color, #333);
+    }
+
+    svg.mode-viewing .zone-label {
+      display: none;
     }
 
     svg.mode-viewing .door-swing,
@@ -439,9 +438,13 @@ export class FpbCanvas extends LitElement {
     svg.mode-viewing .window-swing-wedge,
     svg.mode-viewing .door-leaf-panel,
     svg.mode-viewing .window-leaf-panel,
+    svg.mode-viewing .door-jamb,
     svg.mode-viewing .hinge-dot,
     svg.mode-viewing .hinge-glow,
-    svg.mode-viewing .sliding-arrow {
+    svg.mode-viewing .sliding-arrow,
+    svg.mode-viewing .opening-stop,
+    svg.mode-viewing .metal-hinge,
+    svg.mode-viewing .swing-wedge-fill {
       display: none;
     }
 
@@ -597,6 +600,11 @@ export class FpbCanvas extends LitElement {
 
     .device-marker.off circle {
       fill: var(--disabled-text-color, #bdbdbd);
+    }
+
+    svg.mode-viewing .device-marker.on circle,
+    svg.mode-viewing .device-marker.off circle {
+      fill: #fff;
     }
 
     .room-label-group {
@@ -1954,6 +1962,8 @@ export class FpbCanvas extends LitElement {
       } else if (dx < threshold && dy > threshold) {
         snapped = { x: last.x, y: snapped.y };
       }
+      // Re-snap to nearby nodes/edges after axis constraint
+      snapped = this._getSnappedPoint(snapped, true);
     }
 
     this._cursorPos = snapped;
@@ -4670,6 +4680,7 @@ export class FpbCanvas extends LitElement {
         const parts = edge.opening_parts ?? "single";
         const oType = edge.opening_type ?? "swing";
         const cls = edge.type === "window" ? "window" : "door";
+        const overlayClass = `opening-overlay ${cls}-opening`;
 
 // Swing-type: always render via closed-state style (posts, segment, hinge)
         // with segment rotated by swingAngle for animation.
@@ -4728,7 +4739,7 @@ export class FpbCanvas extends LitElement {
             const animSegPath = this._singleEdgePath({ start: rSegStart, end: rSegEnd, thickness: edge.thickness });
 
             return svg`
-              <g class="${dimClass}">
+              <g class="${dimClass} ${overlayClass}">
                 ${this._fadedWedge(edge.id, wedgePath_c, hX_c, hY_c, edgeLen, 'rgba(120, 144, 156, 0.08)')}
                 <path class="door-swing"
                       d="M${fX_c},${fY_c} C${arc_c.cp1x},${arc_c.cp1y} ${arc_c.cp2x},${arc_c.cp2y} ${arc_c.ox},${arc_c.oy}"/>
@@ -4802,7 +4813,7 @@ export class FpbCanvas extends LitElement {
             const rSegPathL = this._singleEdgePath({ start: rotPt(segStart, hcLx, hcLy, 1), end: rotPt(segEndL, hcLx, hcLy, 1), thickness: edge.thickness });
             const rSegPathR = this._singleEdgePath({ start: rotPt(segStartR, hcRx, hcRy, -1), end: rotPt(segEnd, hcRx, hcRy, -1), thickness: edge.thickness });
             return svg`
-              <g class="${dimClass}">
+              <g class="${dimClass} ${overlayClass}">
                 ${this._fadedWedge(`${edge.id}-l`, wedgeL, hL_X, hL_Y, halfLen_d, 'rgba(100, 181, 246, 0.06)')}
                 ${this._fadedWedge(`${edge.id}-r`, wedgeR, hR_X, hR_Y, halfLen_d, 'rgba(100, 181, 246, 0.06)')}
                 <path class="door-swing"
@@ -4825,7 +4836,7 @@ export class FpbCanvas extends LitElement {
           };
           const wSegPath = this._singleEdgePath({ start: rotW(segStart), end: rotW(segEnd), thickness: edge.thickness });
           return svg`
-            <g class="${dimClass}">
+            <g class="${dimClass} ${overlayClass}">
               ${this._fadedWedge(edge.id, wedgePath_w, hX_w, hY_w, edgeLen, 'rgba(100, 181, 246, 0.06)')}
               <path class="door-swing" d="${arcPath_w}"/>
               <path class="opening-stop" d="${postPath(edge.startPos, 1)}"/>
@@ -4846,7 +4857,7 @@ export class FpbCanvas extends LitElement {
           const a2x = edge.startPos.x - nx * offset;
           const a2y = edge.startPos.y - ny * offset;
           return svg`
-            <g class="${dimClass}">
+            <g class="${dimClass} ${overlayClass}">
               <path class="${cls}" d="${rectPath}"/>
               <line class="door-swing"
                     x1="${edge.startPos.x + nx * offset}" y1="${edge.startPos.y + ny * offset}"
@@ -4875,7 +4886,7 @@ export class FpbCanvas extends LitElement {
           const midY = (edge.startPos.y + edge.endPos.y) / 2;
           const tiltH = edgeLen * 0.25;
           return svg`
-            <g class="${dimClass}">
+            <g class="${dimClass} ${overlayClass}">
               <path class="${cls}" d="${rectPath}"/>
               <line class="window-pane"
                     x1="${edge.startPos.x}" y1="${edge.startPos.y}"
@@ -4933,7 +4944,7 @@ export class FpbCanvas extends LitElement {
           <stop offset="100%" stop-color="${color}"/>
         </radialGradient>
       </defs>
-      <path d="${path}" fill="url(#wg-${id})" stroke="none"/>
+      <path class="swing-wedge-fill" d="${path}" fill="url(#wg-${id})" stroke="none"/>
     `;
   }
 
@@ -5147,8 +5158,8 @@ export class FpbCanvas extends LitElement {
       ${showZonesAboveWalls ? wallsBlock : furnitureBlock}
       ${showZonesAboveWalls ? furnitureBlock : wallsBlock}
 
-      <!-- Labels layer -->
-      ${labelsLayer?.visible ? svg`
+      <!-- Labels layer (hidden in viewing mode) -->
+      ${labelsLayer?.visible && this._canvasMode !== "viewing" ? svg`
         <g class="labels-layer" opacity="${labelsLayer.opacity ?? 1}">
           ${floor.rooms.map(room => {
             const center = this._getPolygonCenter(room.polygon.vertices);
@@ -5231,22 +5242,26 @@ export class FpbCanvas extends LitElement {
 
   private _renderDeviceIcon(x: number, y: number, isOn: boolean, selType: string, selId: string, label: string, bgOnColor: string, iconColor: string, iconData?: IconData) {
     const sel = selection.value;
-    const r = 14;
-    const iconSize = 18;
+    const viewing = this._canvasMode === "viewing";
+    const r = viewing ? 16 : 14;
+    const iconSize = viewing ? 16 : 18;
     const fallback = this._getIconData("mdi:devices");
     const resolvedIcon = iconData ?? fallback;
     const viewBox = resolvedIcon?.viewBox ?? "0 0 24 24";
     return svg`
       <g class="device-marker ${isOn ? "on" : "off"} ${sel.type === selType && sel.ids.includes(selId) ? "selected" : ""}"
          transform="translate(${x}, ${y})">
-        <circle r="${r}" fill="${isOn ? bgOnColor : "#e0e0e0"}" stroke="#333" stroke-width="2"/>
+        <circle r="${r}"
+          fill="${viewing ? "#fff" : (isOn ? bgOnColor : "#e0e0e0")}"
+          stroke="${viewing ? "none" : "#333"}"
+          stroke-width="${viewing ? 0 : 2}"/>
         ${resolvedIcon?.path ? svg`
           <svg x="${-iconSize / 2}" y="${-iconSize / 2}" width="${iconSize}" height="${iconSize}" viewBox="${viewBox}">
             <path d="${resolvedIcon.path}" fill="${iconColor}"></path>
             ${resolvedIcon.secondaryPath ? svg`<path d="${resolvedIcon.secondaryPath}" fill="${iconColor}"></path>` : null}
           </svg>
         ` : null}
-        <text y="${r + 12}" text-anchor="middle" font-size="10" fill="#333">${label}</text>
+        ${!viewing ? svg`<text y="${r + 12}" text-anchor="middle" font-size="10" fill="#333">${label}</text>` : null}
       </g>
     `;
   }
@@ -5284,6 +5299,7 @@ export class FpbCanvas extends LitElement {
   }
 
   private _renderMmwaveLayer(floor: Floor) {
+    if (this._canvasMode === "viewing") return null;
     const placements = mmwavePlacements.value.filter(p => p.floor_id === floor.id);
     if (placements.length === 0) return null;
 
@@ -5860,12 +5876,48 @@ export class FpbCanvas extends LitElement {
         ? `${ax},${ay}-${bx},${by}` : `${bx},${by}-${ax},${ay}`;
     };
 
-    // Build set of wall edge keys to skip zone edges that overlap walls
-    const wallEdgeKeys = new Set<string>();
+    // Build list of wall segments to skip zone edges that overlap walls
+    // (including when a wall is split into segments by doors/windows)
     const resolved = resolveFloorEdges(floor);
+    const wallSegments = resolved.map(re => ({
+      x1: Math.round(re.startPos.x), y1: Math.round(re.startPos.y),
+      x2: Math.round(re.endPos.x), y2: Math.round(re.endPos.y),
+    }));
+    const wallEdgeKeys = new Set<string>();
     for (const re of resolved) {
       wallEdgeKeys.add(edgeKey(re.startPos, re.endPos));
     }
+
+    // Check if a zone edge is collinear with and fully covered by wall segments
+    // (handles walls split by doors/windows — merges collinear segment intervals)
+    const isOnWall = (a: Coordinates, b: Coordinates): boolean => {
+      if (wallEdgeKeys.has(edgeKey(a, b))) return true;
+      const dx = b.x - a.x, dy = b.y - a.y;
+      const len2 = dx * dx + dy * dy;
+      if (len2 < 1) return false;
+      const len = Math.sqrt(len2);
+      // Collect projected intervals of all collinear wall segments
+      const intervals: [number, number][] = [];
+      for (const w of wallSegments) {
+        // Collinearity: both wall endpoints must be close to the zone edge line
+        const cross1 = Math.abs(dx * (w.y1 - a.y) - dy * (w.x1 - a.x)) / len;
+        const cross2 = Math.abs(dx * (w.y2 - a.y) - dy * (w.x2 - a.x)) / len;
+        if (cross1 > 5 || cross2 > 5) continue;
+        const t1 = (dx * (w.x1 - a.x) + dy * (w.y1 - a.y)) / len2;
+        const t2 = (dx * (w.x2 - a.x) + dy * (w.y2 - a.y)) / len2;
+        intervals.push([Math.min(t1, t2), Math.max(t1, t2)]);
+      }
+      if (intervals.length === 0) return false;
+      // Merge intervals and check if they cover [0, 1]
+      intervals.sort((x, y) => x[0] - y[0]);
+      let covered = intervals[0][0];
+      if (covered > 0.05) return false;
+      for (const [lo, hi] of intervals) {
+        if (lo > covered + 0.05) return false;
+        covered = Math.max(covered, hi);
+      }
+      return covered >= 0.95;
+    };
 
     // Collect unique zone edges with their color
     const seenEdges = new Map<string, { a: Coordinates; b: Coordinates; color: string; dimClass: string }>();
@@ -5884,7 +5936,7 @@ export class FpbCanvas extends LitElement {
         const a = verts[i];
         const b = verts[(i + 1) % verts.length];
         const key = edgeKey(a, b);
-        if (wallEdgeKeys.has(key)) continue;
+        if (isOnWall(a, b)) continue;
         if (!seenEdges.has(key)) {
           seenEdges.set(key, { a, b, color, dimClass });
         }
