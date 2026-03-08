@@ -482,3 +482,258 @@ class TestVirtualSensorEngineRouting:
         engine._handle_mmwave_target_update("sensor1", 0, MagicMock(), ["mmwave_room"])
         # Should still be 1 — no new call
         assert mock_machine.update_spatial_presence.call_count == 1
+
+    def test_target_in_overlapping_room_and_zone(self, mock_hass, mock_store, spatial_config):
+        """A single target triggers both a room and an overlapping zone."""
+        from custom_components.inhabit.engine.virtual_sensor_engine import (
+            VirtualSensorEngine,
+        )
+
+        # Add a zone config
+        zone_config = VirtualSensorConfig(
+            room_id="zone_inside_room",
+            floor_plan_id="test_fp",
+            enabled=True,
+            presence_affects=True,
+        )
+        original_get = mock_store.get_sensor_config
+
+        def patched_get(room_id):
+            if room_id == "zone_inside_room":
+                return zone_config
+            return original_get(room_id)
+
+        mock_store.get_sensor_config = patched_get
+
+        engine = VirtualSensorEngine(mock_hass, mock_store)
+
+        room_machine = MagicMock()
+        zone_machine = MagicMock()
+        engine._state_machines["mmwave_room"] = room_machine
+        engine._state_machines["zone_inside_room"] = zone_machine
+
+        # Target enters both room and zone simultaneously
+        engine._handle_mmwave_target_update(
+            "sensor1", 0, MagicMock(),
+            ["mmwave_room", "zone_inside_room"],
+        )
+
+        room_machine.update_spatial_presence.assert_called_with(1)
+        zone_machine.update_spatial_presence.assert_called_with(1)
+
+
+# --------------------------------------------------------------------------
+# MmwaveTargetProcessor unit-conversion and zero-handling
+# --------------------------------------------------------------------------
+
+
+class TestMmwaveTargetProcessor:
+    """Tests for MmwaveTargetProcessor coordinate conversion."""
+
+    @pytest.fixture
+    def mock_store(self):
+        """Create a mock store with a floor plan that has rooms."""
+        from custom_components.inhabit.models.floor_plan import (
+            Coordinates,
+            Floor,
+            FloorPlan,
+            Polygon,
+            Room,
+        )
+
+        room = Room(
+            id="room1",
+            name="Living Room",
+            polygon=Polygon(vertices=[
+                Coordinates(x=0, y=0),
+                Coordinates(x=500, y=0),
+                Coordinates(x=500, y=500),
+                Coordinates(x=0, y=500),
+            ]),
+        )
+        floor = Floor(id="floor1", name="Ground", rooms=[room])
+        fp = FloorPlan(id="fp1", name="Home", unit="cm", floors=[floor])
+
+        store = MagicMock()
+        store.get_floor_plans.return_value = [fp]
+        store.get_floor_plan.return_value = fp
+        store.get_mmwave_placements.return_value = []
+        return store
+
+    def test_mm_to_cm_conversion(self, mock_hass, mock_store):
+        """Sensor values in mm are converted to cm before world transform."""
+        from custom_components.inhabit.engine.mmwave_target_processor import (
+            MmwaveTargetProcessor,
+        )
+        from custom_components.inhabit.models.floor_plan import Coordinates
+        from custom_components.inhabit.models.mmwave_sensor import MmwavePlacement
+
+        processor = MmwaveTargetProcessor(mock_hass, mock_store)
+
+        placement = MmwavePlacement(
+            id="p1",
+            floor_plan_id="fp1",
+            floor_id="floor1",
+            position=Coordinates(x=250, y=250),
+            angle=0.0,
+            targets=[{"x_entity_id": "sensor.x", "y_entity_id": "sensor.y"}],
+        )
+        processor._placements["p1"] = placement
+        processor._target_positions["p1"] = {}
+        processor._region_hits["p1"] = {}
+
+        # Simulate sensor reading of 500mm x, 1000mm y
+        def mock_state(entity_id):
+            states = {
+                "sensor.x": MagicMock(state="500"),
+                "sensor.y": MagicMock(state="1000"),
+            }
+            return states.get(entity_id)
+
+        mock_hass.states.get.side_effect = mock_state
+
+        with patch(
+            "custom_components.inhabit.engine.mmwave_target_processor.async_dispatcher_send"
+        ):
+            processor._process_target("p1", 0)
+
+        # After mm→cm conversion: local_x=50, local_y=100
+        # With angle=0: world_x = 250 + 100*1 - 50*0 = 350
+        #               world_y = 250 + 100*0 + 50*1 = 300
+        pos = processor._target_positions["p1"][0]
+        assert abs(pos.x - 350) < 0.01
+        assert abs(pos.y - 300) < 0.01
+
+    def test_zero_reading_clears_target(self, mock_hass, mock_store):
+        """A (0,0) sensor reading should clear the target from regions."""
+        from custom_components.inhabit.engine.mmwave_target_processor import (
+            MmwaveTargetProcessor,
+        )
+        from custom_components.inhabit.models.floor_plan import Coordinates
+        from custom_components.inhabit.models.mmwave_sensor import MmwavePlacement
+
+        processor = MmwaveTargetProcessor(mock_hass, mock_store)
+
+        placement = MmwavePlacement(
+            id="p1",
+            floor_plan_id="fp1",
+            floor_id="floor1",
+            position=Coordinates(x=250, y=250),
+            angle=0.0,
+            targets=[{"x_entity_id": "sensor.x", "y_entity_id": "sensor.y"}],
+        )
+        processor._placements["p1"] = placement
+        processor._target_positions["p1"] = {0: Coordinates(x=300, y=300)}
+        processor._region_hits["p1"] = {0: ["room1"]}
+
+        # Sensor reads (0, 0) — target disappeared
+        mock_hass.states.get.side_effect = lambda eid: MagicMock(state="0")
+
+        with patch(
+            "custom_components.inhabit.engine.mmwave_target_processor.async_dispatcher_send"
+        ) as mock_dispatch:
+            processor._process_target("p1", 0)
+
+        # Target position should be cleared
+        assert 0 not in processor._target_positions.get("p1", {})
+        assert 0 not in processor._region_hits.get("p1", {})
+
+        # Signal should be dispatched with empty region list
+        mock_dispatch.assert_called_once()
+        call_args = mock_dispatch.call_args[0]
+        assert call_args[5] == []  # region_ids = []
+
+    def test_target_hits_multiple_overlapping_regions(self, mock_hass):
+        """A target inside overlapping room and zone hits both."""
+        from custom_components.inhabit.engine.mmwave_target_processor import (
+            MmwaveTargetProcessor,
+        )
+        from custom_components.inhabit.models.floor_plan import (
+            Coordinates,
+            Floor,
+            FloorPlan,
+            Polygon,
+            Room,
+        )
+        from custom_components.inhabit.models.mmwave_sensor import MmwavePlacement
+        from custom_components.inhabit.models.zone import Zone
+
+        room = Room(
+            id="room1",
+            polygon=Polygon(vertices=[
+                Coordinates(x=0, y=0),
+                Coordinates(x=1000, y=0),
+                Coordinates(x=1000, y=1000),
+                Coordinates(x=0, y=1000),
+            ]),
+        )
+        zone = Zone(
+            id="zone1",
+            polygon=Polygon(vertices=[
+                Coordinates(x=200, y=200),
+                Coordinates(x=800, y=200),
+                Coordinates(x=800, y=800),
+                Coordinates(x=200, y=800),
+            ]),
+        )
+        floor = Floor(id="floor1", rooms=[room], zones=[zone])
+        fp = FloorPlan(id="fp1", unit="cm", floors=[floor])
+
+        store = MagicMock()
+        store.get_floor_plans.return_value = [fp]
+        store.get_floor_plan.return_value = fp
+        store.get_mmwave_placements.return_value = []
+
+        processor = MmwaveTargetProcessor(mock_hass, store)
+
+        placement = MmwavePlacement(
+            id="p1",
+            floor_plan_id="fp1",
+            floor_id="floor1",
+            position=Coordinates(x=500, y=100),
+            angle=0.0,
+            targets=[{"x_entity_id": "sensor.x", "y_entity_id": "sensor.y"}],
+        )
+        processor._placements["p1"] = placement
+        processor._target_positions["p1"] = {}
+        processor._region_hits["p1"] = {}
+
+        # Target at 0mm lateral, 4000mm forward → 0cm lateral, 400cm forward
+        # world = (500 + 400*cos(0) - 0*sin(0), 100 + 400*sin(0) + 0*cos(0))
+        #       = (900, 100) — nope, that's outside zone y range
+        # Let's use 0mm x, 4000mm y → world = (500 + 400, 100 + 0) = (900, 100)
+        # That's inside room but not zone. Let me use values that land in both.
+        # Target at 0mm lateral, 4000mm forward → world = (500+400, 100+0) = (900, 100)
+        # Hmm the y-value 100 is below zone (200-800). Let me reposition.
+        # placement at (500, 0), angle=90° (facing down/positive y)
+        # Target at 0mm x, 5000mm y → 0cm x, 500cm y
+        # world_x = 500 + 500*cos(90°) - 0*sin(90°) = 500 + 0 - 0 = 500
+        # world_y = 0 + 500*sin(90°) + 0*cos(90°) = 0 + 500 + 0 = 500
+        # (500, 500) is inside both room and zone!
+
+        placement.position = Coordinates(x=500, y=0)
+        placement.angle = 90.0
+
+        def mock_state(entity_id):
+            states = {
+                "sensor.x": MagicMock(state="0"),    # 0mm lateral
+                "sensor.y": MagicMock(state="5000"),  # 5000mm forward
+            }
+            return states.get(entity_id)
+
+        mock_hass.states.get.side_effect = mock_state
+
+        dispatched_regions = []
+
+        def capture_dispatch(hass, signal, *args):
+            if "mmwave_targets_updated" in signal:
+                dispatched_regions.extend(args[3])  # region_ids
+
+        with patch(
+            "custom_components.inhabit.engine.mmwave_target_processor.async_dispatcher_send",
+            side_effect=capture_dispatch,
+        ):
+            processor._process_target("p1", 0)
+
+        assert "room1" in dispatched_regions
+        assert "zone1" in dispatched_regions

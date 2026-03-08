@@ -11,6 +11,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
 
 from ..const import DOMAIN, WS_PREFIX
+from ..engine.mmwave_target_processor import MmwaveTargetProcessor
 from ..engine.simulated_target_processor import SimulatedTargetProcessor
 from ..models.automation_rule import VisualRule
 from ..models.device_placement import (
@@ -3034,6 +3035,11 @@ def ws_mmwave_place(
         targets=msg.get("targets", []),
     )
     result = store.create_mmwave_placement(placement)
+
+    # Notify the processor so it subscribes to entity states immediately
+    processor: MmwaveTargetProcessor = hass.data[DOMAIN]["mmwave_processor"]
+    hass.async_create_task(processor.async_add_placement(result))
+
     connection.send_result(msg["id"], result.to_dict())
 
 
@@ -3079,6 +3085,10 @@ def ws_mmwave_update(
 
     result = store.update_mmwave_placement(placement)
     if result:
+        # Notify the processor so it re-subscribes with updated config
+        processor: MmwaveTargetProcessor = hass.data[DOMAIN]["mmwave_processor"]
+        hass.async_create_task(processor.async_update_placement(result))
+
         connection.send_result(msg["id"], result.to_dict())
     else:
         connection.send_error(
@@ -3103,6 +3113,10 @@ def ws_mmwave_delete(
         return
     store = hass.data[DOMAIN]["store"]
     if store.delete_mmwave_placement(msg["placement_id"]):
+        # Notify the processor so it unsubscribes from entity states
+        processor: MmwaveTargetProcessor = hass.data[DOMAIN]["mmwave_processor"]
+        hass.async_create_task(processor.async_remove_placement(msg["placement_id"]))
+
         connection.send_result(msg["id"], {"success": True})
     else:
         connection.send_error(msg["id"], "not_found", "mmWave placement not found")

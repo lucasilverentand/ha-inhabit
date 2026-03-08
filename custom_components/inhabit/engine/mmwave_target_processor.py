@@ -183,6 +183,28 @@ class MmwaveTargetProcessor:
         except (ValueError, TypeError):
             return
 
+        # Zero readings mean the sensor has no target detected — clear this target
+        if local_x == 0.0 and local_y == 0.0:
+            self._target_positions.get(placement_id, {}).pop(target_index, None)
+            old_regions = self._region_hits.get(placement_id, {}).pop(
+                target_index, []
+            )
+            if old_regions:
+                async_dispatcher_send(
+                    self.hass,
+                    SIGNAL_MMWAVE_TARGETS_UPDATED,
+                    placement_id,
+                    target_index,
+                    Coordinates(x=0, y=0),
+                    [],
+                )
+            return
+
+        # Convert mm (sensor unit) to floor plan units
+        scale = self._get_mm_to_unit_scale(placement.floor_plan_id)
+        local_x *= scale
+        local_y *= scale
+
         # Transform from sensor-local to world coordinates
         world_pos = self._transform_to_world(placement, local_x, local_y)
         self._target_positions[placement_id][target_index] = world_pos
@@ -200,6 +222,17 @@ class MmwaveTargetProcessor:
             world_pos,
             region_ids,
         )
+
+    def _get_mm_to_unit_scale(self, floor_plan_id: str) -> float:
+        """Return the multiplier to convert mm (sensor output) to floor-plan units."""
+        fp = self._store.get_floor_plan(floor_plan_id)
+        unit = fp.unit if fp else "cm"
+        return {
+            "cm": 0.1,     # 1 mm = 0.1 cm
+            "m": 0.001,    # 1 mm = 0.001 m
+            "in": 1 / 25.4,
+            "ft": 1 / 304.8,
+        }.get(unit, 0.1)
 
     def _transform_to_world(
         self, placement: MmwavePlacement, local_x: float, local_y: float
