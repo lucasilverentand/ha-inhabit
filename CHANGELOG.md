@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.1](https://github.com/lucasilverentand/ha-inhabit/compare/v0.12.0...v0.12.1) (2026-03-08)
+
+
+### Bug Fixes
+
+* mmWave targets now trigger room/zone occupancy ([59ec309](https://github.com/lucasilverentand/ha-inhabit/commit/59ec3091cad98279aa9c7438d63a72d165573063))
+
 ## [0.12.0](https://github.com/lucasilverentand/ha-inhabit/compare/v0.11.0...v0.12.0) (2026-03-07)
 
 
