@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.2](https://github.com/lucasilverentand/ha-inhabit/compare/v0.12.1...v0.12.2) (2026-03-08)
+
+
+### Bug Fixes
+
+* show mmWave targets in view mode, hide only the device icon ([c1779b3](https://github.com/lucasilverentand/ha-inhabit/commit/c1779b3bf347967203d739caeea0fb6308aa5113))
+
 ## [0.12.1](https://github.com/lucasilverentand/ha-inhabit/compare/v0.12.0...v0.12.1) (2026-03-08)
 
 
