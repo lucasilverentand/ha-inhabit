@@ -1761,36 +1761,36 @@ function ut(t,e){return(e,i,o)=>((t,e,i)=>(i.configurable=!0,i.enumerable=!0,Ref
         `:null}
         ${c?null:H`<text y="${h+12}" text-anchor="middle" font-size="10" fill="#333">${s}</text>`}
       </g>
-    `}_renderLight(t){const e=this.hass?.states[t.entity_id],i="on"===e?.state,o=t.label||e?.attributes.friendly_name||t.entity_id,n=this._getEntityIconData(e,"mdi:lightbulb");return this._renderDeviceIcon(t.position.x,t.position.y,i,"light",t.id,o,"#ffd600",i?"#333":"#616161",n)}_renderSwitch(t){const e=this.hass?.states[t.entity_id],i="on"===e?.state,o=t.label||e?.attributes.friendly_name||t.entity_id,n=this._getEntityIconData(e,"mdi:toggle-switch");return this._renderDeviceIcon(t.position.x,t.position.y,i,"switch",t.id,o,"#4caf50",i?"#fff":"#616161",n)}_renderButton(t){const e=this.hass?.states[t.entity_id],i=t.label||e?.attributes.friendly_name||t.entity_id,o=this._getEntityIconData(e,"mdi:gesture-tap-button");return this._renderDeviceIcon(t.position.x,t.position.y,!1,"button",t.id,i,"#2196f3","#616161",o)}_renderOther(t){const e=this.hass?.states[t.entity_id],i="on"===e?.state,o=t.label||e?.attributes.friendly_name||t.entity_id,n=this._getEntityIconData(e,"mdi:devices");return this._renderDeviceIcon(t.position.x,t.position.y,i,"other",t.id,o,"#9c27b0",i?"#fff":"#616161",n)}_renderMmwaveLayer(t){if("viewing"===this._canvasMode)return null;const e=ee.value.filter(e=>e.floor_id===t.id);if(0===e.length)return null;const i=Bt.value,o="viewing"!==this._canvasMode,n=this._viewBox,s=Math.max(n.width,n.height)/100,r=.5*s,a=2.5*r,l=.8*s,d=new Set;for(const e of this._mmwaveTargetPositions.values())for(const i of t.rooms){if(d.has(i.id))continue;const t=i.polygon?.vertices;if(!t||t.length<3)continue;let o=!1;for(let i=0,n=t.length-1;i<t.length;n=i++)t[i].y>e.displayY!=t[n].y>e.displayY&&e.displayX<(t[n].x-t[i].x)*(e.displayY-t[i].y)/(t[n].y-t[i].y)+t[i].x&&(o=!o);o&&d.add(i.id)}return H`
+    `}_renderLight(t){const e=this.hass?.states[t.entity_id],i="on"===e?.state,o=t.label||e?.attributes.friendly_name||t.entity_id,n=this._getEntityIconData(e,"mdi:lightbulb"),s=e?.attributes?.rgb_color,r=s?`rgb(${s[0]},${s[1]},${s[2]})`:"#ffd600";return this._renderDeviceIcon(t.position.x,t.position.y,i,"light",t.id,o,r,i?"#333":"#616161",n)}_renderSwitch(t){const e=this.hass?.states[t.entity_id],i="on"===e?.state,o=t.label||e?.attributes.friendly_name||t.entity_id,n=this._getEntityIconData(e,"mdi:toggle-switch");return this._renderDeviceIcon(t.position.x,t.position.y,i,"switch",t.id,o,"#4caf50",i?"#fff":"#616161",n)}_renderButton(t){const e=this.hass?.states[t.entity_id],i=t.label||e?.attributes.friendly_name||t.entity_id,o=this._getEntityIconData(e,"mdi:gesture-tap-button");return this._renderDeviceIcon(t.position.x,t.position.y,!1,"button",t.id,i,"#2196f3","#616161",o)}_renderOther(t){const e=this.hass?.states[t.entity_id],i="on"===e?.state,o=t.label||e?.attributes.friendly_name||t.entity_id,n=this._getEntityIconData(e,"mdi:devices");return this._renderDeviceIcon(t.position.x,t.position.y,i,"other",t.id,o,"#9c27b0",i?"#fff":"#616161",n)}_renderMmwaveLayer(t){const e=ee.value.filter(e=>e.floor_id===t.id);if(0===e.length)return null;const i="viewing"===this._canvasMode,o=Bt.value,n=!i,s=this._viewBox,r=Math.max(s.width,s.height)/100,a=.5*r,l=2.5*a,d=.8*r,c=new Set;for(const e of this._mmwaveTargetPositions.values())for(const i of t.rooms){if(c.has(i.id))continue;const t=i.polygon?.vertices;if(!t||t.length<3)continue;let o=!1;for(let i=0,n=t.length-1;i<t.length;n=i++)t[i].y>e.displayY!=t[n].y>e.displayY&&e.displayX<(t[n].x-t[i].x)*(e.displayY-t[i].y)/(t[n].y-t[i].y)+t[i].x&&(o=!o);o&&c.add(i.id)}return H`
       <g class="mmwave-layer">
         <!-- Occupied room overlays -->
-        ${t.rooms.filter(t=>d.has(t.id)&&t.polygon?.vertices?.length).map(t=>H`
+        ${t.rooms.filter(t=>c.has(t.id)&&t.polygon?.vertices?.length).map(t=>H`
             <path d="${re(t.polygon)}"
                   fill="rgba(255, 255, 255, 0.05)" stroke="none"
                   class="mmwave-occupied-room"/>
           `)}
-        ${e.map(e=>{const n="mmwave"===i.type&&i.ids.includes(e.id),d=e.field_of_view/2,c=e.detection_range,h=e.position.x,p=e.position.y,g=(e.angle-d)*Math.PI/180,u=(e.angle+d)*Math.PI/180,f=h+c*Math.cos(g),_=p+c*Math.sin(g),y=h+c*Math.cos(u),v=p+c*Math.sin(u),m=e.field_of_view>180?1:0,x=e.angle*Math.PI/180,b=h+30*Math.cos(x),w=p+30*Math.sin(x);let $=e.room_id?t.rooms.find(t=>t.id===e.room_id):null;$||($=t.rooms.find(t=>{const e=t.polygon?.vertices;if(!e||e.length<3)return!1;let i=!1;for(let t=0,o=e.length-1;t<e.length;o=t++)e[t].y>p!=e[o].y>p&&h<(e[o].x-e[t].x)*(p-e[t].y)/(e[o].y-e[t].y)+e[t].x&&(i=!i);return i})??null);const k=`mmwave-clip-${e.id}`,E=new Set,P=e.angle*Math.PI/180,M=Math.cos(P),S=Math.sin(P);for(let t=0;t<(e.targets??[]).length;t++){const i=e.targets[t];if(!i.x_entity_id||!i.y_entity_id)continue;const o=this.hass?.states[i.x_entity_id],n=this.hass?.states[i.y_entity_id];if(!o||!n)continue;const s=parseFloat(o.state),r=parseFloat(n.state);if(isNaN(s)||isNaN(r)||0===s&&0===r)continue;const a=s/10,l=r/10,d=h+l*M-a*S,c=p+l*S+a*M,g=`${e.id}-${t}`;E.add(g);const u=this._mmwaveTargetPositions.get(g);u?(u.targetX=d,u.targetY=c,u.arrived=!1):this._mmwaveTargetPositions.set(g,{displayX:d,displayY:c,targetX:d,targetY:c,arrived:!0,isNew:!0}),this._ensureMmwaveAnimLoop()}for(const[t,i]of this._mmwaveTargetPositions)t.startsWith(e.id+"-")&&!E.has(t)&&(this._mmwaveFadingTargets.some(e=>e.key===t)||(this._mmwaveFadingTargets=[...this._mmwaveFadingTargets,{key:t,x:i.displayX,y:i.displayY,startTime:Date.now()}],this._ensureMmwaveAnimLoop()),this._mmwaveTargetPositions.delete(t));const I=(e.targets??[]).map((t,i)=>{const o=`${e.id}-${i}`,n=this._mmwaveTargetPositions.get(o);if(!n)return null;const d=n.isNew;return n.isNew&&(n.isNew=!1),H`
+        ${e.map(e=>{const i="mmwave"===o.type&&o.ids.includes(e.id),s=e.field_of_view/2,c=e.detection_range,h=e.position.x,p=e.position.y,g=(e.angle-s)*Math.PI/180,u=(e.angle+s)*Math.PI/180,f=h+c*Math.cos(g),_=p+c*Math.sin(g),y=h+c*Math.cos(u),v=p+c*Math.sin(u),m=e.field_of_view>180?1:0,x=e.angle*Math.PI/180,b=h+30*Math.cos(x),w=p+30*Math.sin(x);let $=e.room_id?t.rooms.find(t=>t.id===e.room_id):null;$||($=t.rooms.find(t=>{const e=t.polygon?.vertices;if(!e||e.length<3)return!1;let i=!1;for(let t=0,o=e.length-1;t<e.length;o=t++)e[t].y>p!=e[o].y>p&&h<(e[o].x-e[t].x)*(p-e[t].y)/(e[o].y-e[t].y)+e[t].x&&(i=!i);return i})??null);const k=`mmwave-clip-${e.id}`,E=new Set,P=e.angle*Math.PI/180,M=Math.cos(P),S=Math.sin(P);for(let t=0;t<(e.targets??[]).length;t++){const i=e.targets[t];if(!i.x_entity_id||!i.y_entity_id)continue;const o=this.hass?.states[i.x_entity_id],n=this.hass?.states[i.y_entity_id];if(!o||!n)continue;const s=parseFloat(o.state),r=parseFloat(n.state);if(isNaN(s)||isNaN(r)||0===s&&0===r)continue;const a=s/10,l=r/10,d=h+l*M-a*S,c=p+l*S+a*M,g=`${e.id}-${t}`;E.add(g);const u=this._mmwaveTargetPositions.get(g);u?(u.targetX=d,u.targetY=c,u.arrived=!1):this._mmwaveTargetPositions.set(g,{displayX:d,displayY:c,targetX:d,targetY:c,arrived:!0,isNew:!0}),this._ensureMmwaveAnimLoop()}for(const[t,i]of this._mmwaveTargetPositions)t.startsWith(e.id+"-")&&!E.has(t)&&(this._mmwaveFadingTargets.some(e=>e.key===t)||(this._mmwaveFadingTargets=[...this._mmwaveFadingTargets,{key:t,x:i.displayX,y:i.displayY,startTime:Date.now()}],this._ensureMmwaveAnimLoop()),this._mmwaveTargetPositions.delete(t));const I=(e.targets??[]).map((t,i)=>{const o=`${e.id}-${i}`,n=this._mmwaveTargetPositions.get(o);if(!n)return null;const s=n.isNew;return n.isNew&&(n.isNew=!1),H`
               <g class="mmwave-target" transform="translate(${n.displayX}, ${n.displayY})">
-                ${d?H`
+                ${s?H`
                   <animateTransform attributeName="transform" type="scale"
                     from="0 0" to="1 1" dur="0.35s" fill="freeze" additive="sum"/>
                   <animate attributeName="opacity" from="0" to="1" dur="0.35s" fill="freeze"/>
                 `:null}
                 <!-- Pulse ring -->
-                <circle cx="0" cy="0" r="${a}"
-                  fill="none" stroke="#ff5722" stroke-width="${.06*s}" opacity="0.4">
-                  <animate attributeName="r" values="${r};${a}" dur="1.5s" repeatCount="indefinite"/>
+                <circle cx="0" cy="0" r="${l}"
+                  fill="none" stroke="#ff5722" stroke-width="${.06*r}" opacity="0.4">
+                  <animate attributeName="r" values="${a};${l}" dur="1.5s" repeatCount="indefinite"/>
                   <animate attributeName="opacity" values="0.5;0" dur="1.5s" repeatCount="indefinite"/>
                 </circle>
                 <!-- Target dot -->
-                <circle cx="0" cy="0" r="${r}"
-                  fill="#ff5722" stroke="#fff" stroke-width="${.1*s}" opacity="0.95"/>
+                <circle cx="0" cy="0" r="${a}"
+                  fill="#ff5722" stroke="#fff" stroke-width="${.1*r}" opacity="0.95"/>
                 <!-- Target label -->
-                <text x="0" y="${-r-.3*s}" text-anchor="middle"
-                  font-size="${l}" fill="#ff5722" font-weight="600">T${i+1}</text>
+                <text x="0" y="${-a-.3*r}" text-anchor="middle"
+                  font-size="${d}" fill="#ff5722" font-weight="600">T${i+1}</text>
               </g>
-            `}),z=this._mmwaveFadingTargets.filter(t=>t.key.startsWith(e.id+"-")).map(t=>{const e=Date.now()-t.startTime,i=Math.min(e/800,1),o=1-i,n=i*s*.5,a=1-.3*i,l=`mmwave-fade-${t.key.replace(/[^a-zA-Z0-9]/g,"_")}`;return H`
-                <g class="mmwave-target-fade" transform="translate(${t.x}, ${t.y}) scale(${a})"
+            `}),z=this._mmwaveFadingTargets.filter(t=>t.key.startsWith(e.id+"-")).map(t=>{const e=Date.now()-t.startTime,i=Math.min(e/800,1),o=1-i,n=i*r*.5,s=1-.3*i,l=`mmwave-fade-${t.key.replace(/[^a-zA-Z0-9]/g,"_")}`;return H`
+                <g class="mmwave-target-fade" transform="translate(${t.x}, ${t.y}) scale(${s})"
                    opacity="${o}">
                   <defs>
                     <filter id="${l}">
@@ -1798,13 +1798,13 @@ function ut(t,e){return(e,i,o)=>((t,e,i)=>(i.configurable=!0,i.enumerable=!0,Ref
                     </filter>
                   </defs>
                   <g filter="url(#${l})">
-                    <circle cx="0" cy="0" r="${r}"
-                      fill="#ff5722" stroke="#fff" stroke-width="${.1*s}"/>
+                    <circle cx="0" cy="0" r="${a}"
+                      fill="#ff5722" stroke="#fff" stroke-width="${.1*r}"/>
                   </g>
                 </g>
               `});return H`
-            <g class="mmwave-placement ${n?"selected":""}">
-              ${o?H`
+            <g class="mmwave-placement ${i?"selected":""}">
+              ${n?H`
                 ${$?.polygon?.vertices?.length?H`
                   <!-- FOV cone clipped to room -->
                   <defs>
@@ -1830,15 +1830,15 @@ function ut(t,e){return(e,i,o)=>((t,e,i)=>(i.configurable=!0,i.enumerable=!0,Ref
                     stroke-dasharray="4 2"
                   />
                 `}
+                <!-- Sensor icon -->
+                <circle cx="${h}" cy="${p}" r="8"
+                  fill="#2196f3" stroke="#fff" stroke-width="2"/>
+                <text x="${h}" y="${p+3}" text-anchor="middle"
+                  font-size="8" fill="#fff" font-weight="bold">R</text>
               `:null}
-              <!-- Sensor icon -->
-              <circle cx="${h}" cy="${p}" r="8"
-                fill="#2196f3" stroke="#fff" stroke-width="2"/>
-              <text x="${h}" y="${p+3}" text-anchor="middle"
-                font-size="8" fill="#fff" font-weight="bold">R</text>
               ${I}
               ${z}
-              ${o&&n?H`
+              ${n&&i?H`
                 <!-- Rotation handle -->
                 <g class="rotation-handle"
                    data-mmwave-id="${e.id}"

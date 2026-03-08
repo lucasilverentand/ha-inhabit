@@ -5271,7 +5271,9 @@ export class FpbCanvas extends LitElement {
     const isOn = state?.state === "on";
     const label = (light.label || state?.attributes.friendly_name || light.entity_id) as string;
     const iconData = this._getEntityIconData(state, "mdi:lightbulb");
-    return this._renderDeviceIcon(light.position.x, light.position.y, isOn, "light", light.id, label, "#ffd600", isOn ? "#333" : "#616161", iconData);
+    const rgb = state?.attributes?.rgb_color as [number, number, number] | undefined;
+    const lightColor = rgb ? `rgb(${rgb[0]},${rgb[1]},${rgb[2]})` : "#ffd600";
+    return this._renderDeviceIcon(light.position.x, light.position.y, isOn, "light", light.id, label, lightColor, isOn ? "#333" : "#616161", iconData);
   }
 
   private _renderSwitch(sw: SwitchPlacement) {
@@ -5299,12 +5301,12 @@ export class FpbCanvas extends LitElement {
   }
 
   private _renderMmwaveLayer(floor: Floor) {
-    if (this._canvasMode === "viewing") return null;
     const placements = mmwavePlacements.value.filter(p => p.floor_id === floor.id);
     if (placements.length === 0) return null;
 
+    const isViewing = this._canvasMode === "viewing";
     const sel = selection.value;
-    const showCoverage = this._canvasMode !== "viewing";
+    const showCoverage = !isViewing;
 
     // Scale-independent sizes for target dots
     const vb = this._viewBox;
@@ -5521,12 +5523,12 @@ export class FpbCanvas extends LitElement {
                     stroke-dasharray="4 2"
                   />
                 `}
+                <!-- Sensor icon -->
+                <circle cx="${px}" cy="${py}" r="8"
+                  fill="#2196f3" stroke="#fff" stroke-width="2"/>
+                <text x="${px}" y="${py + 3}" text-anchor="middle"
+                  font-size="8" fill="#fff" font-weight="bold">R</text>
               ` : null}
-              <!-- Sensor icon -->
-              <circle cx="${px}" cy="${py}" r="8"
-                fill="#2196f3" stroke="#fff" stroke-width="2"/>
-              <text x="${px}" y="${py + 3}" text-anchor="middle"
-                font-size="8" fill="#fff" font-weight="bold">R</text>
               ${targetDots}
               ${fadingDots}
               ${showCoverage && isSelected ? svg`
