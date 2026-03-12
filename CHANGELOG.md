@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.13.0](https://github.com/lucasilverentand/ha-inhabit/compare/v0.12.2...v0.13.0) (2026-03-12)
+
+
+### Features
+
+* add long_stay field to Room model ([3182e4c](https://github.com/lucasilverentand/ha-inhabit/commit/3182e4c4c982bca13cfca626d372e45288821259))
+
+
+### Bug Fixes
+
+* clean up mmwave placements on floor plan delete ([b2d3257](https://github.com/lucasilverentand/ha-inhabit/commit/b2d32573945ee74b2afeab9f28101f4d39f4e6de))
+* fully wire phantom_hold_seconds for rooms and zones ([2770a88](https://github.com/lucasilverentand/ha-inhabit/commit/2770a88c7e7ef76db223b13e5721b7b5297aa7f6))
+* sync device name to HA registry on room/zone rename ([fe9b13f](https://github.com/lucasilverentand/ha-inhabit/commit/fe9b13f9113836003b7537adb1b781be604a1135))
+* sync occupancy sensor devices to HA areas on update and startup ([d283236](https://github.com/lucasilverentand/ha-inhabit/commit/d283236ae2c75238ba5f2c6dc87b944be4a52d3f))
+* sync room config changes to sensor engine on update ([d5abea7](https://github.com/lucasilverentand/ha-inhabit/commit/d5abea7fa40d0cb77aac8a7d2a28fcdd0d3e838a))
+
 ## [0.12.2](https://github.com/lucasilverentand/ha-inhabit/compare/v0.12.1...v0.12.2) (2026-03-08)
 
 
