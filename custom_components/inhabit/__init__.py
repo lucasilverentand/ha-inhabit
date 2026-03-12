@@ -34,35 +34,41 @@ _LOGGER = logging.getLogger(__name__)
 PLATFORMS_LIST: list[Platform] = [Platform.BINARY_SENSOR, Platform.BUTTON]
 
 
-def _sync_all_device_areas(
+def _sync_all_devices(
     hass: HomeAssistant,
     store: FloorPlanStore,
     dev_reg: dr.DeviceRegistry,
 ) -> None:
-    """Sync HA area assignments from stored rooms/zones to the device registry."""
+    """Sync HA area and name from stored rooms/zones to the device registry."""
     synced = 0
+
+    def _sync_device(
+        region_id: str, name: str, ha_area_id: str | None
+    ) -> None:
+        nonlocal synced
+        device = dev_reg.async_get_device(identifiers={(DOMAIN, region_id)})
+        if not device:
+            return
+        updates: dict[str, str] = {}
+        target_area = ha_area_id or ""
+        if device.area_id != target_area:
+            updates["area_id"] = target_area
+        if device.name_by_user != name:
+            updates["name_by_user"] = name
+        if updates:
+            dev_reg.async_update_device(device.id, **updates)
+            synced += 1
+
     for fp in store.get_floor_plans():
         for room in fp.get_all_rooms():
-            if not room.occupancy_sensor_enabled:
-                continue
-            device = dev_reg.async_get_device(identifiers={(DOMAIN, room.id)})
-            if device and device.area_id != (room.ha_area_id or ""):
-                dev_reg.async_update_device(
-                    device.id, area_id=room.ha_area_id or ""
-                )
-                synced += 1
+            if room.occupancy_sensor_enabled:
+                _sync_device(room.id, room.name, room.ha_area_id)
         for floor in fp.floors:
             for zone in floor.zones:
-                if not zone.occupancy_sensor_enabled:
-                    continue
-                device = dev_reg.async_get_device(identifiers={(DOMAIN, zone.id)})
-                if device and device.area_id != (zone.ha_area_id or ""):
-                    dev_reg.async_update_device(
-                        device.id, area_id=zone.ha_area_id or ""
-                    )
-                    synced += 1
+                if zone.occupancy_sensor_enabled:
+                    _sync_device(zone.id, zone.name, zone.ha_area_id)
     if synced:
-        _LOGGER.info("Synced HA area for %d occupancy sensor devices", synced)
+        _LOGGER.info("Synced %d occupancy sensor devices", synced)
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
@@ -190,8 +196,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Set up platforms
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS_LIST)
 
-    # Sync device areas from stored model to device registry
-    _sync_all_device_areas(hass, floor_plan_store, dev_reg)
+    # Sync device areas and names from stored model to device registry
+    _sync_all_devices(hass, floor_plan_store, dev_reg)
 
     # Start the sensor engine
     await sensor_engine.async_start()

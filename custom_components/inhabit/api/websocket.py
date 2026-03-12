@@ -38,17 +38,30 @@ from ..models.zone import Zone
 _LOGGER = logging.getLogger(__name__)
 
 
+def _sync_region_device(
+    hass: HomeAssistant,
+    region_id: str,
+    **kwargs: Any,
+) -> None:
+    """Sync device registry fields for a region's device."""
+    dev_reg = dr.async_get(hass)
+    device = dev_reg.async_get_device(identifiers={(DOMAIN, region_id)})
+    if device:
+        dev_reg.async_update_device(device.id, **kwargs)
+
+
 def _sync_region_device_area(
     hass: HomeAssistant, region_id: str, ha_area_id: str | None
 ) -> None:
     """Sync the HA area of a region's device in the device registry."""
-    dev_reg = dr.async_get(hass)
-    device = dev_reg.async_get_device(identifiers={(DOMAIN, region_id)})
-    if device:
-        dev_reg.async_update_device(device.id, area_id=ha_area_id or "")
-        _LOGGER.debug(
-            "Synced device area for region %s to %s", region_id, ha_area_id
-        )
+    _sync_region_device(hass, region_id, area_id=ha_area_id or "")
+
+
+def _sync_region_device_name(
+    hass: HomeAssistant, region_id: str, name: str
+) -> None:
+    """Sync the name of a region's device in the device registry."""
+    _sync_region_device(hass, region_id, name_by_user=name)
 
 
 def _normalize_ha_area_id(value: str | None) -> str | None:
@@ -761,9 +774,11 @@ def ws_rooms_update(
 
     result = store.update_room(msg["floor_plan_id"], room)
     if result:
-        # Sync HA area to device registry
+        # Sync HA area and name to device registry
         if "ha_area_id" in msg:
             _sync_region_device_area(hass, room.id, room.ha_area_id)
+        if "name" in msg:
+            _sync_region_device_name(hass, room.id, room.name)
         # Sync room config fields to sensor config when occupancy is active
         room_config_fields = {
             "motion_timeout",
@@ -794,6 +809,9 @@ def ws_rooms_update(
                     )
                     store.create_sensor_config(config)
                 hass.async_create_task(sensor_engine.async_add_room(config))
+            else:
+                hass.async_create_task(sensor_engine.async_remove_room(room.id))
+                store.delete_sensor_config(room.id)
         connection.send_result(msg["id"], result.to_dict())
     else:
         connection.send_error(msg["id"], "update_failed", "Failed to update room")
@@ -973,9 +991,11 @@ def ws_zones_update(
 
     result = store.update_zone(msg["floor_plan_id"], zone)
     if result:
-        # Sync HA area to device registry
+        # Sync HA area and name to device registry
         if "ha_area_id" in msg:
             _sync_region_device_area(hass, zone.id, zone.ha_area_id)
+        if "name" in msg:
+            _sync_region_device_name(hass, zone.id, zone.name)
         # Sync zone config fields to sensor config when occupancy is active
         zone_config_fields = {
             "motion_timeout",
