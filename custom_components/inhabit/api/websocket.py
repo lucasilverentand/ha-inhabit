@@ -38,6 +38,19 @@ from ..models.zone import Zone
 _LOGGER = logging.getLogger(__name__)
 
 
+def _sync_region_device_area(
+    hass: HomeAssistant, region_id: str, ha_area_id: str | None
+) -> None:
+    """Sync the HA area of a region's device in the device registry."""
+    dev_reg = dr.async_get(hass)
+    device = dev_reg.async_get_device(identifiers={(DOMAIN, region_id)})
+    if device:
+        dev_reg.async_update_device(device.id, area_id=ha_area_id or "")
+        _LOGGER.debug(
+            "Synced device area for region %s to %s", region_id, ha_area_id
+        )
+
+
 def _normalize_ha_area_id(value: str | None) -> str | None:
     """Normalize empty HA area values to None."""
     if not value:
@@ -668,6 +681,8 @@ def ws_rooms_add(
                     )
                 )
             )
+        if ha_area_id:
+            _sync_region_device_area(hass, room.id, ha_area_id)
         connection.send_result(msg["id"], result.to_dict())
     else:
         connection.send_error(msg["id"], "not_found", "Floor not found")
@@ -740,6 +755,9 @@ def ws_rooms_update(
 
     result = store.update_room(msg["floor_plan_id"], room)
     if result:
+        # Sync HA area to device registry
+        if "ha_area_id" in msg:
+            _sync_region_device_area(hass, room.id, room.ha_area_id)
         # Sync occupancy toggle with sensor engine
         if "occupancy_sensor_enabled" in msg:
             sensor_engine = hass.data[DOMAIN]["sensor_engine"]
@@ -862,6 +880,8 @@ def ws_zones_add(
                     )
                 )
             )
+        if ha_area_id:
+            _sync_region_device_area(hass, zone.id, ha_area_id)
         connection.send_result(msg["id"], result.to_dict())
     else:
         connection.send_error(msg["id"], "not_found", "Floor not found")
@@ -935,6 +955,9 @@ def ws_zones_update(
 
     result = store.update_zone(msg["floor_plan_id"], zone)
     if result:
+        # Sync HA area to device registry
+        if "ha_area_id" in msg:
+            _sync_region_device_area(hass, zone.id, zone.ha_area_id)
         # Sync zone config fields to sensor config when occupancy is active
         zone_config_fields = {
             "motion_timeout",

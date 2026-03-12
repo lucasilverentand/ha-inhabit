@@ -11,6 +11,7 @@ from homeassistant.components.binary_sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -32,6 +33,19 @@ from ..engine.virtual_sensor_engine import SIGNAL_OCCUPANCY_STATE_CHANGED
 from ..models.virtual_sensor import OccupancyStateData
 
 _LOGGER = logging.getLogger(__name__)
+
+
+@callback
+def _sync_new_device_area(
+    hass: HomeAssistant, region_id: str, ha_area_id: str | None
+) -> None:
+    """Sync the HA area for a newly created device."""
+    if not ha_area_id:
+        return
+    dev_reg = dr.async_get(hass)
+    device = dev_reg.async_get_device(identifiers={(DOMAIN, region_id)})
+    if device:
+        dev_reg.async_update_device(device.id, area_id=ha_area_id)
 
 
 async def async_setup_entry(
@@ -98,6 +112,7 @@ async def async_setup_entry(
                 )
                 entity_map[room.id] = entity
                 async_add_entities([entity])
+                _sync_new_device_area(hass, room.id, room.ha_area_id)
                 _LOGGER.info("Added virtual occupancy sensor for room %s", room.name)
                 return
             # Check zones
@@ -113,6 +128,7 @@ async def async_setup_entry(
                     )
                     entity_map[zone.id] = entity
                     async_add_entities([entity])
+                    _sync_new_device_area(hass, zone.id, zone.ha_area_id)
                     _LOGGER.info(
                         "Added virtual occupancy sensor for zone %s", zone.name
                     )

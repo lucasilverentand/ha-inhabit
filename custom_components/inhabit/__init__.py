@@ -34,6 +34,37 @@ _LOGGER = logging.getLogger(__name__)
 PLATFORMS_LIST: list[Platform] = [Platform.BINARY_SENSOR, Platform.BUTTON]
 
 
+def _sync_all_device_areas(
+    hass: HomeAssistant,
+    store: FloorPlanStore,
+    dev_reg: dr.DeviceRegistry,
+) -> None:
+    """Sync HA area assignments from stored rooms/zones to the device registry."""
+    synced = 0
+    for fp in store.get_floor_plans():
+        for room in fp.get_all_rooms():
+            if not room.occupancy_sensor_enabled:
+                continue
+            device = dev_reg.async_get_device(identifiers={(DOMAIN, room.id)})
+            if device and device.area_id != (room.ha_area_id or ""):
+                dev_reg.async_update_device(
+                    device.id, area_id=room.ha_area_id or ""
+                )
+                synced += 1
+        for floor in fp.floors:
+            for zone in floor.zones:
+                if not zone.occupancy_sensor_enabled:
+                    continue
+                device = dev_reg.async_get_device(identifiers={(DOMAIN, zone.id)})
+                if device and device.area_id != (zone.ha_area_id or ""):
+                    dev_reg.async_update_device(
+                        device.id, area_id=zone.ha_area_id or ""
+                    )
+                    synced += 1
+    if synced:
+        _LOGGER.info("Synced HA area for %d occupancy sensor devices", synced)
+
+
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up the Inhabit component."""
     hass.data.setdefault(DOMAIN, {})
@@ -158,6 +189,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Set up platforms
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS_LIST)
+
+    # Sync device areas from stored model to device registry
+    _sync_all_device_areas(hass, floor_plan_store, dev_reg)
 
     # Start the sensor engine
     await sensor_engine.async_start()
