@@ -409,6 +409,7 @@ class Room:
         default_factory=list
     )  # Room IDs connected via doors
     is_transit: bool | None = None  # None = auto-detect, True/False = manual override
+    long_stay: bool = False  # Room where occupants stay for hours (living room, bedroom, etc.)
     phantom_hold_seconds: int = (
         0  # 0 = use default (300s for transit, checking_timeout otherwise)
     )
@@ -428,6 +429,7 @@ class Room:
             "checking_timeout": self.checking_timeout,
             "connected_rooms": self.connected_rooms,
             "is_transit": self.is_transit,
+            "long_stay": self.long_stay,
             "phantom_hold_seconds": self.phantom_hold_seconds,
             "ha_area_id": self.ha_area_id,
             "background_layers": [layer.to_dict() for layer in self.background_layers],
@@ -458,6 +460,7 @@ class Room:
             checking_timeout=int(data.get("checking_timeout", 30)),
             connected_rooms=data.get("connected_rooms", []),
             is_transit=data.get("is_transit"),
+            long_stay=data.get("long_stay", False),
             phantom_hold_seconds=int(data.get("phantom_hold_seconds", 0)),
             ha_area_id=data.get("ha_area_id"),
             background_layers=[
