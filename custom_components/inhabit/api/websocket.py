@@ -634,6 +634,7 @@ def ws_floors_import(
         vol.Optional("occupancy_sensor_enabled", default=True): bool,
         vol.Optional("motion_timeout", default=120): int,
         vol.Optional("checking_timeout", default=30): int,
+        vol.Optional("long_stay", default=False): bool,
         vol.Optional("ha_area_id"): vol.Any(str, None),
     }
 )
@@ -664,6 +665,7 @@ def ws_rooms_add(
         occupancy_sensor_enabled=msg["occupancy_sensor_enabled"],
         motion_timeout=msg["motion_timeout"],
         checking_timeout=msg["checking_timeout"],
+        long_stay=msg["long_stay"],
         ha_area_id=ha_area_id,
     )
     result = store.add_room(msg["floor_plan_id"], msg["floor_id"], room)
@@ -678,6 +680,7 @@ def ws_rooms_add(
                         floor_plan_id=msg["floor_plan_id"],
                         motion_timeout=room.motion_timeout,
                         checking_timeout=room.checking_timeout,
+                        long_stay=room.long_stay,
                     )
                 )
             )
@@ -700,6 +703,7 @@ def ws_rooms_add(
         vol.Optional("motion_timeout"): int,
         vol.Optional("checking_timeout"): int,
         vol.Optional("is_transit"): vol.Any(bool, None),
+        vol.Optional("long_stay"): bool,
         vol.Optional("phantom_hold_seconds"): int,
         vol.Optional("ha_area_id"): vol.Any(str, None),
         vol.Optional("background_layers"): [dict],
@@ -734,6 +738,8 @@ def ws_rooms_update(
         room.checking_timeout = msg["checking_timeout"]
     if "is_transit" in msg:
         room.is_transit = msg["is_transit"]
+    if "long_stay" in msg:
+        room.long_stay = msg["long_stay"]
     if "phantom_hold_seconds" in msg:
         room.phantom_hold_seconds = msg["phantom_hold_seconds"]
     if "ha_area_id" in msg:
@@ -758,6 +764,20 @@ def ws_rooms_update(
         # Sync HA area to device registry
         if "ha_area_id" in msg:
             _sync_region_device_area(hass, room.id, room.ha_area_id)
+        # Sync room config fields to sensor config when occupancy is active
+        room_config_fields = {
+            "motion_timeout",
+            "checking_timeout",
+            "long_stay",
+        }
+        if room.occupancy_sensor_enabled and room_config_fields & msg.keys():
+            config = store.get_sensor_config(room.id)
+            if config:
+                config.motion_timeout = room.motion_timeout
+                config.checking_timeout = room.checking_timeout
+                config.long_stay = room.long_stay
+                sensor_engine = hass.data[DOMAIN]["sensor_engine"]
+                hass.async_create_task(sensor_engine.async_update_room(config))
         # Sync occupancy toggle with sensor engine
         if "occupancy_sensor_enabled" in msg:
             sensor_engine = hass.data[DOMAIN]["sensor_engine"]
@@ -770,12 +790,10 @@ def ws_rooms_update(
                         floor_plan_id=msg["floor_plan_id"],
                         motion_timeout=room.motion_timeout,
                         checking_timeout=room.checking_timeout,
+                        long_stay=room.long_stay,
                     )
                     store.create_sensor_config(config)
                 hass.async_create_task(sensor_engine.async_add_room(config))
-            else:
-                hass.async_create_task(sensor_engine.async_remove_room(room.id))
-                store.delete_sensor_config(room.id)
         connection.send_result(msg["id"], result.to_dict())
     else:
         connection.send_error(msg["id"], "update_failed", "Failed to update room")
