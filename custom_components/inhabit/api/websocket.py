@@ -694,6 +694,7 @@ def ws_rooms_add(
                         motion_timeout=room.motion_timeout,
                         checking_timeout=room.checking_timeout,
                         long_stay=room.long_stay,
+                        phantom_hold_seconds=room.phantom_hold_seconds,
                     )
                 )
             )
@@ -784,6 +785,7 @@ def ws_rooms_update(
             "motion_timeout",
             "checking_timeout",
             "long_stay",
+            "phantom_hold_seconds",
         }
         if room.occupancy_sensor_enabled and room_config_fields & msg.keys():
             config = store.get_sensor_config(room.id)
@@ -791,6 +793,7 @@ def ws_rooms_update(
                 config.motion_timeout = room.motion_timeout
                 config.checking_timeout = room.checking_timeout
                 config.long_stay = room.long_stay
+                config.phantom_hold_seconds = room.phantom_hold_seconds
                 sensor_engine = hass.data[DOMAIN]["sensor_engine"]
                 hass.async_create_task(sensor_engine.async_update_room(config))
         # Sync occupancy toggle with sensor engine
@@ -806,6 +809,7 @@ def ws_rooms_update(
                         motion_timeout=room.motion_timeout,
                         checking_timeout=room.checking_timeout,
                         long_stay=room.long_stay,
+                        phantom_hold_seconds=room.phantom_hold_seconds,
                     )
                     store.create_sensor_config(config)
                 hass.async_create_task(sensor_engine.async_add_room(config))
@@ -913,6 +917,7 @@ def ws_zones_add(
                         checking_timeout=zone.checking_timeout,
                         long_stay=zone.long_stay,
                         occupies_parent=zone.occupies_parent,
+                        phantom_hold_seconds=zone.phantom_hold_seconds,
                     )
                 )
             )
@@ -939,6 +944,7 @@ def ws_zones_add(
         vol.Optional("checking_timeout"): int,
         vol.Optional("long_stay"): bool,
         vol.Optional("occupies_parent"): bool,
+        vol.Optional("phantom_hold_seconds"): int,
     }
 )
 @callback
@@ -988,6 +994,8 @@ def ws_zones_update(
         zone.long_stay = msg["long_stay"]
     if "occupies_parent" in msg:
         zone.occupies_parent = msg["occupies_parent"]
+    if "phantom_hold_seconds" in msg:
+        zone.phantom_hold_seconds = msg["phantom_hold_seconds"]
 
     result = store.update_zone(msg["floor_plan_id"], zone)
     if result:
@@ -1002,6 +1010,7 @@ def ws_zones_update(
             "checking_timeout",
             "long_stay",
             "occupies_parent",
+            "phantom_hold_seconds",
         }
         if zone.occupancy_sensor_enabled and zone_config_fields & msg.keys():
             config = store.get_sensor_config(zone.id)
@@ -1010,6 +1019,7 @@ def ws_zones_update(
                 config.checking_timeout = zone.checking_timeout
                 config.long_stay = zone.long_stay
                 config.occupies_parent = zone.occupies_parent
+                config.phantom_hold_seconds = zone.phantom_hold_seconds
                 sensor_engine = hass.data[DOMAIN]["sensor_engine"]
                 hass.async_create_task(sensor_engine.async_update_room(config))
 
@@ -1026,6 +1036,7 @@ def ws_zones_update(
                         checking_timeout=zone.checking_timeout,
                         long_stay=zone.long_stay,
                         occupies_parent=zone.occupies_parent,
+                        phantom_hold_seconds=zone.phantom_hold_seconds,
                     )
                     store.create_sensor_config(config)
                 hass.async_create_task(sensor_engine.async_add_room(config))
