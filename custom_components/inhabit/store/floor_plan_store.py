@@ -122,6 +122,7 @@ class FloorPlanStore:
             "switch_placements",
             "button_placements",
             "other_placements",
+            "mmwave_placements",
         ):
             placements = self._data.get(key, {})
             to_del = [
