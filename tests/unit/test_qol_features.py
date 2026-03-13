@@ -29,43 +29,6 @@ STATE_OFF = "off"
 
 
 @pytest.fixture
-def mock_hass():
-    """Create a mock Home Assistant instance with event bus."""
-    hass = MagicMock()
-    hass.loop = MagicMock()
-    hass.bus = MagicMock()
-
-    # Return motion sensors as ON so threshold gate passes
-    def _get_state(entity_id):
-        mock_state = MagicMock()
-        mock_state.state = "on"
-        return mock_state
-
-    hass.states = MagicMock()
-    hass.states.get = MagicMock(side_effect=_get_state)
-
-    # Track fired events
-    hass._fired_events = []
-
-    def mock_fire(event_type, data=None):
-        hass._fired_events.append({"type": event_type, "data": data or {}})
-
-    hass.bus.async_fire = mock_fire
-
-    # Track call_later callbacks for testing
-    hass._scheduled_callbacks = []
-
-    def mock_call_later(delay, callback):
-        cancel = MagicMock()
-        hass._scheduled_callbacks.append((delay, callback, cancel))
-        return cancel
-
-    hass.loop.call_later = mock_call_later
-
-    return hass
-
-
-@pytest.fixture
 def basic_config():
     """Create a basic sensor configuration."""
     return VirtualSensorConfig(
@@ -169,6 +132,8 @@ class TestCheckingEvents:
         self, mock_hass, basic_config, state_changes
     ):
         """CHECKING_RESOLVED event fired with 'occupied' result on re-detection."""
+        # Sensor must be active so the threshold gate allows the transition
+        mock_hass.states.get.return_value = MagicMock(state="on")
         machine, changes = _make_machine(mock_hass, basic_config, state_changes)
 
         with patch(
@@ -193,6 +158,8 @@ class TestCheckingEvents:
         self, mock_hass, basic_config, state_changes
     ):
         """No CHECKING_RESOLVED event when going VACANT -> OCCUPIED."""
+        # Sensor must be active so the threshold gate allows the transition
+        mock_hass.states.get.return_value = MagicMock(state="on")
         machine, changes = _make_machine(mock_hass, basic_config, state_changes)
 
         with patch(
@@ -539,7 +506,11 @@ class TestOccupancyHistoryTracking:
         # Manually call _load_history (normally called in async_start)
         import asyncio
 
-        asyncio.get_event_loop().run_until_complete(engine._load_history())
+        loop = asyncio.new_event_loop()
+        try:
+            loop.run_until_complete(engine._load_history())
+        finally:
+            loop.close()
 
         # Old entry should be pruned
         history = engine.get_occupancy_history(limit=100)
@@ -567,6 +538,8 @@ class TestTransitionMetadata:
         self, mock_hass, basic_config, state_changes
     ):
         """Transition reason is set on OccupancyStateData before callback."""
+        # Sensor must be active so the threshold gate allows the transition
+        mock_hass.states.get.return_value = MagicMock(state="on")
         machine, changes = _make_machine(mock_hass, basic_config, state_changes)
 
         with patch(

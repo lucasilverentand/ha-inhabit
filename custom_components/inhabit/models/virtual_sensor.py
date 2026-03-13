@@ -199,6 +199,7 @@ class VirtualSensorConfig:
     # Sensor bindings
     motion_sensors: list[SensorBinding] = field(default_factory=list)
     presence_sensors: list[SensorBinding] = field(default_factory=list)
+    occupancy_sensors: list[SensorBinding] = field(default_factory=list)
     door_sensors: list[SensorBinding] = field(default_factory=list)
     hint_sensors: list[SensorBinding] = field(default_factory=list)
 
@@ -276,6 +277,7 @@ class VirtualSensorConfig:
             "presence_timeout": self.presence_timeout,
             "motion_sensors": [s.to_dict() for s in self.motion_sensors],
             "presence_sensors": [s.to_dict() for s in self.presence_sensors],
+            "occupancy_sensors": [s.to_dict() for s in self.occupancy_sensors],
             "door_sensors": [s.to_dict() for s in self.door_sensors],
             "hint_sensors": [s.to_dict() for s in self.hint_sensors],
             "exit_sensors": [s.to_dict() for s in self.exit_sensors],
@@ -319,6 +321,9 @@ class VirtualSensorConfig:
             presence_sensors=[
                 SensorBinding.from_dict(s) for s in data.get("presence_sensors", [])
             ],
+            occupancy_sensors=[
+                SensorBinding.from_dict(s) for s in data.get("occupancy_sensors", [])
+            ],
             door_sensors=[
                 SensorBinding.from_dict(s) for s in data.get("door_sensors", [])
             ],
@@ -352,6 +357,8 @@ class VirtualSensorConfig:
         for binding in self.motion_sensors:
             entity_ids.append(binding.entity_id)
         for binding in self.presence_sensors:
+            entity_ids.append(binding.entity_id)
+        for binding in self.occupancy_sensors:
             entity_ids.append(binding.entity_id)
         for binding in self.door_sensors:
             entity_ids.append(binding.entity_id)

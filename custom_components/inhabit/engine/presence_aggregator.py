@@ -42,13 +42,17 @@ class PresenceAggregator:
         presence_bindings: list[SensorBinding],
         motion_decay_seconds: float = 120.0,
         presence_decay_seconds: float = 300.0,
+        occupancy_bindings: list[SensorBinding] | None = None,
+        occupancy_decay_seconds: float = 300.0,
     ) -> None:
         """Initialize the aggregator."""
         self.hass = hass
         self.motion_bindings = motion_bindings
         self.presence_bindings = presence_bindings
+        self.occupancy_bindings = occupancy_bindings or []
         self.motion_decay_seconds = motion_decay_seconds
         self.presence_decay_seconds = presence_decay_seconds
+        self.occupancy_decay_seconds = occupancy_decay_seconds
         self._readings: dict[str, SensorReading] = {}
         self._prior: float = 0.5  # Default prior (no bias)
         self._prior_weight: float = 0.15  # Weight of prior in blending
@@ -93,6 +97,8 @@ class PresenceAggregator:
 
             if reading.sensor_type == "motion":
                 decay_seconds = self.motion_decay_seconds
+            elif reading.sensor_type == "occupancy":
+                decay_seconds = self.occupancy_decay_seconds
             else:
                 decay_seconds = self.presence_decay_seconds
 
@@ -156,6 +162,14 @@ class PresenceAggregator:
                 is_active = self._is_sensor_active(state, binding.inverted)
                 self.update_reading(
                     binding.entity_id, is_active, "presence", binding.weight
+                )
+
+        for binding in self.occupancy_bindings:
+            state = self.hass.states.get(binding.entity_id)
+            if state:
+                is_active = self._is_sensor_active(state, binding.inverted)
+                self.update_reading(
+                    binding.entity_id, is_active, "occupancy", binding.weight
                 )
 
     def _is_sensor_active(self, state: State, inverted: bool) -> bool:

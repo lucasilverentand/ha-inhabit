@@ -31,6 +31,7 @@ from ..const import (
 )
 from ..engine.virtual_sensor_engine import SIGNAL_OCCUPANCY_STATE_CHANGED
 from ..models.virtual_sensor import OccupancyStateData
+from .const import ENTITY_PREFIX, SUFFIX_OCCUPANCY
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -177,7 +178,7 @@ class VirtualOccupancySensor(BinarySensorEntity):
         self._room_id = room_id
 
         # Entity attributes
-        self._attr_unique_id = f"fp_{room_id}_occupancy"
+        self._attr_unique_id = f"{ENTITY_PREFIX}{room_id}{SUFFIX_OCCUPANCY}"
         self._attr_name = "Occupancy"
 
         # Device info - one device per sensor

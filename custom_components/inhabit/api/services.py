@@ -58,13 +58,24 @@ async def async_register_services(hass: HomeAssistant) -> None:
         state = call.data["state"]
 
         sensor_engine = hass.data[DOMAIN]["sensor_engine"]
-        if not sensor_engine.set_room_occupancy(room_id, state):
-            _LOGGER.warning("Failed to set occupancy for room %s", room_id)
+        try:
+            if not sensor_engine.set_room_occupancy(room_id, state):
+                _LOGGER.warning("Failed to set occupancy for room %s", room_id)
+        except Exception:
+            _LOGGER.exception(
+                "Sensor engine 'set_room_occupancy' failed for region %s",
+                room_id,
+            )
 
     async def handle_refresh_sensors(call: ServiceCall) -> None:
         """Handle refresh_sensors service call."""
         sensor_engine = hass.data[DOMAIN]["sensor_engine"]
-        await sensor_engine.async_refresh()
+        try:
+            await sensor_engine.async_refresh()
+        except Exception:
+            _LOGGER.exception(
+                "Sensor engine 'async_refresh' failed",
+            )
 
     async def handle_export_automation(call: ServiceCall) -> dict[str, Any]:
         """Handle export_automation service call."""

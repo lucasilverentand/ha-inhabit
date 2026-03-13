@@ -22,7 +22,17 @@ if "homeassistant" not in sys.modules:
     _const_mock.STATE_UNAVAILABLE = "unavailable"
     _const_mock.STATE_UNKNOWN = "unknown"
     sys.modules["homeassistant.const"] = _const_mock
-    sys.modules["homeassistant.config_entries"] = MagicMock()
+
+    # ConfigFlow needs to be a real class so InhabitConfigFlow can inherit from it
+    class _ConfigFlow:
+        """Stub ConfigFlow that accepts domain= in subclass definitions."""
+
+        def __init_subclass__(cls, *, domain: str = "", **kwargs: Any) -> None:
+            super().__init_subclass__(**kwargs)
+
+    _config_entries_mock = MagicMock()
+    _config_entries_mock.ConfigFlow = _ConfigFlow
+    sys.modules["homeassistant.config_entries"] = _config_entries_mock
     sys.modules["homeassistant.helpers"] = MagicMock()
     sys.modules["homeassistant.helpers.storage"] = MagicMock()
     sys.modules["homeassistant.helpers.event"] = MagicMock()
@@ -35,8 +45,28 @@ if "homeassistant" not in sys.modules:
     sys.modules["homeassistant.components.websocket_api"] = MagicMock()
     sys.modules["homeassistant.components.http"] = MagicMock()
     sys.modules["homeassistant.components.binary_sensor"] = MagicMock()
+    sys.modules["homeassistant.components.button"] = MagicMock()
     sys.modules["homeassistant.helpers.entity_registry"] = MagicMock()
-    sys.modules["voluptuous"] = MagicMock()
+
+    # data_entry_flow needs real AbortFlow / FlowResultType for config flow tests
+    import enum as _enum
+
+    class _FlowResultType(str, _enum.Enum):
+        FORM = "form"
+        CREATE_ENTRY = "create_entry"
+        ABORT = "abort"
+
+    class _AbortFlow(Exception):
+        def __init__(self, reason: str) -> None:
+            self.reason = reason
+            super().__init__(reason)
+
+    _def_mock = MagicMock()
+    _def_mock.AbortFlow = _AbortFlow
+    _def_mock.FlowResultType = _FlowResultType
+    _def_mock.FlowResult = dict
+    sys.modules["homeassistant.data_entry_flow"] = _def_mock
+
     sys.modules["aiohttp"] = MagicMock()
     sys.modules["aiohttp.web"] = MagicMock()
 
@@ -65,10 +95,23 @@ def mock_hass() -> Generator[Any, None, None]:
     hass.config = MagicMock()
     hass.config.path = lambda *args: "/".join(args)
     hass.async_add_executor_job = AsyncMock(side_effect=lambda f, *a: f(*a))
+    hass.async_create_task = AsyncMock()
 
-    # Mock call_later for timers
+    # Event bus with tracking
+    hass.bus = MagicMock()
+    hass._fired_events: list[dict[str, Any]] = []
+
+    def mock_fire(event_type: str, data: dict | None = None) -> None:
+        hass._fired_events.append({"type": event_type, "data": data or {}})
+
+    hass.bus.async_fire = mock_fire
+
+    # Mock call_later for timers with callback tracking
+    hass._scheduled_callbacks: list[tuple] = []
+
     def mock_call_later(delay, callback):
         cancel = MagicMock()
+        hass._scheduled_callbacks.append((delay, callback, cancel))
         return cancel
 
     hass.loop.call_later = mock_call_later

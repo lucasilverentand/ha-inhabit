@@ -98,12 +98,14 @@ class OccupancyStateMachine:
         self._running = False
         self._occupied_since: datetime | None = None
         self._sensor_last_triggered: dict[str, datetime] = {}
+        self._last_known_door_states: dict[str, bool] = {}  # entity_id -> was_open
 
         # Presence aggregator for weighted temporal-decay probability
         self._aggregator = PresenceAggregator(
             hass,
             config.motion_sensors,
             config.presence_sensors,
+            occupancy_bindings=config.occupancy_sensors,
         )
 
         # Adaptive timeout manager
@@ -209,6 +211,15 @@ class OccupancyStateMachine:
             )
             self._unsub_state_listeners.append(unsub)
 
+        # Subscribe to occupancy sensors
+        for binding in self.config.occupancy_sensors:
+            unsub = async_track_state_change_event(
+                self.hass,
+                binding.entity_id,
+                self._handle_occupancy_event,
+            )
+            self._unsub_state_listeners.append(unsub)
+
         # Subscribe to exit sensors (hold-until-exit mode)
         for binding in self.config.exit_sensors:
             unsub = async_track_state_change_event(
@@ -258,8 +269,9 @@ class OccupancyStateMachine:
                 )
         self._unsub_state_listeners.clear()
 
-        # Clear aggregator state
+        # Clear aggregator and cached state
         self._aggregator.clear()
+        self._last_known_door_states.clear()
 
     def set_state(self, new_state: str, reason: str = "") -> None:
         """Manually set the state (e.g. from SimulatedTargetProcessor)."""
@@ -346,6 +358,12 @@ class OccupancyStateMachine:
             state = self.hass.states.get(binding.entity_id)
             if state and self._is_sensor_active(state, binding.inverted):
                 self._transition_to_occupied("initial presence detected")
+                return
+
+        for binding in self.config.occupancy_sensors:
+            state = self.hass.states.get(binding.entity_id)
+            if state and self._is_sensor_active(state, binding.inverted):
+                self._transition_to_occupied("initial occupancy detected")
                 return
 
         # Check aggregator probability as a fallback (e.g. decaying readings)
@@ -440,6 +458,41 @@ class OccupancyStateMachine:
             self._check_all_sensors_clear()
 
     @callback
+    def _handle_occupancy_event(self, event: Event) -> None:
+        """Handle occupancy sensor state change."""
+        new_state: State | None = event.data.get("new_state")
+        if not new_state:
+            return
+
+        entity_id = event.data.get("entity_id", "")
+        binding = self._get_occupancy_binding(entity_id)
+        if not binding:
+            return
+
+        is_active = self._is_sensor_active(new_state, binding.inverted)
+        _LOGGER.debug(
+            "Room %s occupancy event: %s = %s (active=%s)",
+            self.config.room_id,
+            entity_id,
+            new_state.state,
+            is_active,
+        )
+
+        # Feed into aggregator
+        self._aggregator.update_reading(
+            entity_id, is_active, "occupancy", binding.weight
+        )
+
+        if is_active:
+            self._state.last_presence_at = datetime.now()
+            self._sensor_last_triggered[entity_id] = datetime.now()
+            self._update_contributing_sensors(entity_id, add=True)
+            self._transition_to_occupied(f"occupancy from {entity_id}")
+        else:
+            self._update_contributing_sensors(entity_id, add=False)
+            self._check_all_sensors_clear()
+
+    @callback
     def _handle_door_event(self, event: Event) -> None:
         """Handle door sensor state change."""
         new_state: State | None = event.data.get("new_state")
@@ -452,6 +505,12 @@ class OccupancyStateMachine:
             return
 
         self._state.last_door_event_at = datetime.now()
+
+        # Cache last known good door state for unavailability fallback
+        if new_state.state not in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+            self._last_known_door_states[entity_id] = self._is_sensor_active(
+                new_state, binding.inverted
+            )
 
         # Door sensor became unavailable — break the seal (can't trust it)
         if new_state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
@@ -1024,24 +1083,41 @@ class OccupancyStateMachine:
         return False
 
     def _any_presence_sensor_active(self) -> bool:
-        """Check if any presence sensor is currently active."""
+        """Check if any presence or occupancy sensor is currently active."""
         for binding in self.config.presence_sensors:
+            state = self.hass.states.get(binding.entity_id)
+            if state and self._is_sensor_active(state, binding.inverted):
+                return True
+        for binding in self.config.occupancy_sensors:
             state = self.hass.states.get(binding.entity_id)
             if state and self._is_sensor_active(state, binding.inverted):
                 return True
         return False
 
     def _all_doors_closed(self) -> bool:
-        """Check if all door sensors indicate closed doors."""
+        """Check if all door sensors indicate closed doors.
+
+        When a door sensor is unavailable, falls back to the last known
+        state.  If the last known state was closed, the door is treated
+        as closed so the seal is not broken by transient sensor outages.
+        If the sensor was never seen, we assume open (safe default).
+        """
         if not self.config.door_sensors:
             return False
 
         for binding in self.config.door_sensors:
             state = self.hass.states.get(binding.entity_id)
-            if not state:
-                return False  # Unknown = not sealed
-            if state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
-                return False
+            if not state or state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+                # Fallback to last known state
+                last_known_open = self._last_known_door_states.get(binding.entity_id)
+                if last_known_open is None or last_known_open:
+                    return False  # Never seen or last known open
+                _LOGGER.debug(
+                    "Room %s: door %s unavailable, using last known closed",
+                    self.config.room_id,
+                    binding.entity_id,
+                )
+                continue  # Last known state was closed
             if self._is_sensor_active(state, binding.inverted):
                 return False  # At least one door is open
 
@@ -1074,6 +1150,13 @@ class OccupancyStateMachine:
                 return binding
         return None
 
+    def _get_occupancy_binding(self, entity_id: str) -> Any:
+        """Get occupancy sensor binding by entity ID."""
+        for binding in self.config.occupancy_sensors:
+            if binding.entity_id == entity_id:
+                return binding
+        return None
+
     def _get_door_binding(self, entity_id: str) -> Any:
         """Get door sensor binding by entity ID."""
         for binding in self.config.door_sensors:
@@ -1089,13 +1172,16 @@ class OccupancyStateMachine:
         return None
 
     def _update_contributing_sensors(self, entity_id: str, add: bool) -> None:
-        """Update list of contributing sensors."""
+        """Update list of contributing sensors (copy-on-write for safety)."""
+        current = self._state.contributing_sensors
         if add:
-            if entity_id not in self._state.contributing_sensors:
-                self._state.contributing_sensors.append(entity_id)
+            if entity_id not in current:
+                self._state.contributing_sensors = [*current, entity_id]
         else:
-            if entity_id in self._state.contributing_sensors:
-                self._state.contributing_sensors.remove(entity_id)
+            if entity_id in current:
+                self._state.contributing_sensors = [
+                    s for s in current if s != entity_id
+                ]
 
     def _calculate_confidence(self) -> float:
         """Calculate occupancy confidence using the presence aggregator.
@@ -1177,6 +1263,25 @@ class OccupancyStateMachine:
                 "effective_weight": effective_weight,
                 "reliability": reliability,
                 "sensor_type": "presence",
+                "last_triggered": (
+                    last_triggered.isoformat() if last_triggered else None
+                ),
+            }
+
+        for binding in self.config.occupancy_sensors:
+            eid = binding.entity_id
+            is_active = eid in self._state.contributing_sensors
+            reliability = self._reliability_tracker.get_reliability(eid)
+            effective_weight = self._reliability_tracker.get_effective_weight(
+                eid, binding.weight
+            )
+            last_triggered = self._sensor_last_triggered.get(eid)
+            diagnostics[eid] = {
+                "active": is_active,
+                "base_weight": binding.weight,
+                "effective_weight": effective_weight,
+                "reliability": reliability,
+                "sensor_type": "occupancy",
                 "last_triggered": (
                     last_triggered.isoformat() if last_triggered else None
                 ),

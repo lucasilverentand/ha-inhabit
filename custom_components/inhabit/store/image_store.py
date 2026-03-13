@@ -9,13 +9,14 @@ from typing import TYPE_CHECKING
 
 from homeassistant.core import HomeAssistant
 
+from ..const import MAX_IMAGE_SIZE
+
 if TYPE_CHECKING:
     pass
 
 _LOGGER = logging.getLogger(__name__)
 
 ALLOWED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"}
-MAX_IMAGE_SIZE = 10 * 1024 * 1024  # 10 MB
 
 
 class ImageStore:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import math
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.core import HomeAssistant, callback
@@ -41,7 +42,7 @@ class MmwaveTargetProcessor:
         self._target_positions: dict[str, dict[int, Coordinates]] = {}
         # region hits: {placement_id: {target_index: list of region_ids}}
         self._region_hits: dict[str, dict[int, list[str]]] = {}
-        self._unsub_listeners: dict[str, list] = {}
+        self._unsub_listeners: dict[str, list[Callable[[], None]]] = {}
         self._running = False
 
     async def async_start(self) -> None:
@@ -186,9 +187,7 @@ class MmwaveTargetProcessor:
         # Zero readings mean the sensor has no target detected — clear this target
         if local_x == 0.0 and local_y == 0.0:
             self._target_positions.get(placement_id, {}).pop(target_index, None)
-            old_regions = self._region_hits.get(placement_id, {}).pop(
-                target_index, []
-            )
+            old_regions = self._region_hits.get(placement_id, {}).pop(target_index, [])
             if old_regions:
                 async_dispatcher_send(
                     self.hass,
@@ -228,8 +227,8 @@ class MmwaveTargetProcessor:
         fp = self._store.get_floor_plan(floor_plan_id)
         unit = fp.unit if fp else "cm"
         return {
-            "cm": 0.1,     # 1 mm = 0.1 cm
-            "m": 0.001,    # 1 mm = 0.001 m
+            "cm": 0.1,  # 1 mm = 0.1 cm
+            "m": 0.001,  # 1 mm = 0.001 m
             "in": 1 / 25.4,
             "ft": 1 / 304.8,
         }.get(unit, 0.1)

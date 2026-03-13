@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any
 from uuid import uuid4
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def _generate_id() -> str:
@@ -101,7 +104,8 @@ class RuleCondition:
                 "after": self.after,
                 "before": self.before,
             }
-        return {"condition": "state", "entity_id": self.entity_id, "state": self.state}
+        _LOGGER.warning("Unknown condition type: %s", self.type)
+        raise ValueError(f"Unknown condition type: {self.type}")
 
 
 @dataclass
@@ -155,7 +159,8 @@ class RuleAction:
             return {"delay": {"seconds": self.delay_seconds}}
         elif self.type == "wait":
             return {"wait_template": self.wait_template}
-        return {"service": self.service}
+        _LOGGER.warning("Unknown action type: %s", self.type)
+        raise ValueError(f"Unknown action type: {self.type}")
 
 
 @dataclass

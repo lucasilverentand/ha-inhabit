@@ -27,6 +27,7 @@ from .const import DOMAIN
 from .engine.mmwave_target_processor import MmwaveTargetProcessor
 from .engine.simulated_target_processor import SimulatedTargetProcessor
 from .engine.virtual_sensor_engine import VirtualSensorEngine
+from .entities import ENTITY_PREFIX, SUFFIX_OCCUPANCY, SUFFIX_OVERRIDE
 from .store import FloorPlanStore, ImageStore
 
 _LOGGER = logging.getLogger(__name__)
@@ -42,9 +43,7 @@ def _sync_all_devices(
     """Sync HA area and name from stored rooms/zones to the device registry."""
     synced = 0
 
-    def _sync_device(
-        region_id: str, name: str, ha_area_id: str | None
-    ) -> None:
+    def _sync_device(region_id: str, name: str, ha_area_id: str | None) -> None:
         nonlocal synced
         device = dev_reg.async_get_device(identifiers={(DOMAIN, region_id)})
         if not device:
@@ -108,11 +107,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     def _is_orphaned(unique_id: str) -> bool:
         """Check if a unique_id belongs to a region that no longer exists."""
-        if not unique_id.startswith("fp_"):
+        if not unique_id.startswith(ENTITY_PREFIX):
             return False
-        for suffix in ("_occupancy", "_occupancy_override"):
+        prefix_len = len(ENTITY_PREFIX)
+        for suffix in (SUFFIX_OCCUPANCY, SUFFIX_OVERRIDE):
             if unique_id.endswith(suffix):
-                region_id = unique_id[3 : -len(suffix)]
+                region_id = unique_id[prefix_len : -len(suffix)]
                 return region_id not in valid_ids
         return False
 

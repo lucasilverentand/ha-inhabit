@@ -955,3 +955,527 @@ class TestHoldUntilExit:
         assert config2.hold_until_exit is True
         assert len(config2.exit_sensors) == 1
         assert config2.exit_sensors[0].entity_id == "binary_sensor.bedroom_motion"
+
+
+STATE_UNAVAILABLE = "unavailable"
+
+
+class TestSensorUnavailability:
+    """Tests for door sensor unavailability handling and cached state fallback."""
+
+    @pytest.fixture
+    def seal_config(self):
+        """Config with door seal enabled."""
+        return VirtualSensorConfig(
+            room_id="sealed_room",
+            floor_plan_id="test_fp",
+            enabled=True,
+            motion_timeout=120,
+            checking_timeout=30,
+            motion_sensors=[
+                SensorBinding(
+                    entity_id="binary_sensor.room_motion",
+                    sensor_type="motion",
+                    weight=1.0,
+                ),
+            ],
+            door_sensors=[
+                SensorBinding(
+                    entity_id="binary_sensor.room_door",
+                    sensor_type="door",
+                    weight=1.0,
+                ),
+            ],
+            door_seals_room=True,
+        )
+
+    def _make_machine(self, mock_hass, config, state_changes):
+        from custom_components.inhabit.engine.occupancy_state_machine import (
+            OccupancyStateMachine,
+        )
+
+        changes, on_change = state_changes
+        return OccupancyStateMachine(mock_hass, config, on_change), changes
+
+    @staticmethod
+    def _setup_sensor_states(mock_hass, motion_state=STATE_ON, door_state=STATE_OFF):
+        """Set up per-entity mock states."""
+
+        def get_state(entity_id):
+            if "motion" in entity_id:
+                return MagicMock(state=motion_state)
+            if "door" in entity_id:
+                return MagicMock(state=door_state)
+            return MagicMock(state=STATE_OFF)
+
+        mock_hass.states.get.side_effect = get_state
+
+    def test_door_unavailable_uses_last_known_closed(
+        self, mock_hass, seal_config, state_changes
+    ):
+        """Door was closed, goes unavailable. _all_doors_closed() returns True."""
+        machine, _ = self._make_machine(mock_hass, seal_config, state_changes)
+
+        # Populate cache: door was closed (False = not open)
+        machine._last_known_door_states["binary_sensor.room_door"] = False
+
+        # Door sensor now returns unavailable
+        mock_hass.states.get.return_value = MagicMock(state=STATE_UNAVAILABLE)
+
+        assert machine._all_doors_closed() is True
+
+    def test_door_unavailable_uses_last_known_open(
+        self, mock_hass, seal_config, state_changes
+    ):
+        """Door was open, goes unavailable. _all_doors_closed() returns False."""
+        machine, _ = self._make_machine(mock_hass, seal_config, state_changes)
+
+        # Populate cache: door was open (True = was open)
+        machine._last_known_door_states["binary_sensor.room_door"] = True
+
+        # Door sensor now returns unavailable
+        mock_hass.states.get.return_value = MagicMock(state=STATE_UNAVAILABLE)
+
+        assert machine._all_doors_closed() is False
+
+    def test_door_never_seen_unavailable_assumes_open(
+        self, mock_hass, seal_config, state_changes
+    ):
+        """No cached state, sensor unavailable. _all_doors_closed() returns False."""
+        machine, _ = self._make_machine(mock_hass, seal_config, state_changes)
+
+        # No cached state at all
+        assert machine._last_known_door_states == {}
+
+        # Sensor returns None (not available in HA)
+        mock_hass.states.get.return_value = None
+
+        assert machine._all_doors_closed() is False
+
+    def test_door_event_caches_state(self, mock_hass, seal_config, state_changes):
+        """Door event with valid state populates _last_known_door_states cache."""
+        machine, _ = self._make_machine(mock_hass, seal_config, state_changes)
+
+        # Create a mock event with door closing (STATE_OFF = closed)
+        event = MagicMock()
+        event.data = {
+            "entity_id": "binary_sensor.room_door",
+            "new_state": MagicMock(state=STATE_OFF),
+        }
+
+        # Set up states.get for the _all_doors_closed / seal logic calls
+        self._setup_sensor_states(
+            mock_hass, motion_state=STATE_OFF, door_state=STATE_OFF
+        )
+
+        machine._handle_door_event(event)
+
+        # Cache should have False (not open = closed)
+        assert machine._last_known_door_states["binary_sensor.room_door"] is False
+
+    def test_door_event_unavailable_does_not_update_cache(
+        self, mock_hass, seal_config, state_changes
+    ):
+        """Door going unavailable does NOT update the cache."""
+        machine, _ = self._make_machine(mock_hass, seal_config, state_changes)
+
+        # Pre-populate cache: door was closed
+        machine._last_known_door_states["binary_sensor.room_door"] = False
+
+        # Fire door event with STATE_UNAVAILABLE
+        event = MagicMock()
+        event.data = {
+            "entity_id": "binary_sensor.room_door",
+            "new_state": MagicMock(state=STATE_UNAVAILABLE),
+        }
+
+        machine._handle_door_event(event)
+
+        # Cache should still have False (unchanged)
+        assert machine._last_known_door_states["binary_sensor.room_door"] is False
+
+    def test_motion_sensor_unavailable_while_occupied_stays_occupied(
+        self, mock_hass, seal_config, state_changes
+    ):
+        """Motion goes unavailable while OCCUPIED + sealed, room stays OCCUPIED."""
+        self._setup_sensor_states(
+            mock_hass, motion_state=STATE_ON, door_state=STATE_OFF
+        )
+        machine, _ = self._make_machine(mock_hass, seal_config, state_changes)
+
+        with patch(
+            "custom_components.inhabit.engine.occupancy_state_machine.async_call_later",
+            lambda hass, delay, cb: MagicMock(),
+        ):
+            # Enter occupied with seal
+            machine._aggregator.update_reading(
+                "binary_sensor.room_motion", True, "motion", 1.0
+            )
+            machine._transition_to_occupied("motion detected")
+            assert machine.state.state == OccupancyState.OCCUPIED
+            assert machine.state.sealed is True
+
+            # Motion sensor goes unavailable — seal still holds
+            self._setup_sensor_states(
+                mock_hass, motion_state=STATE_UNAVAILABLE, door_state=STATE_OFF
+            )
+            machine._aggregator.update_reading(
+                "binary_sensor.room_motion", False, "motion", 1.0
+            )
+            machine._check_all_sensors_clear()
+
+            # Room stays OCCUPIED because seal is active
+            assert machine.state.state == OccupancyState.OCCUPIED
+
+    def test_all_sensors_unavailable_sealed_room_stays(
+        self, mock_hass, seal_config, state_changes
+    ):
+        """All sensors unavailable but room is sealed -> stays OCCUPIED."""
+        self._setup_sensor_states(
+            mock_hass, motion_state=STATE_ON, door_state=STATE_OFF
+        )
+        machine, _ = self._make_machine(mock_hass, seal_config, state_changes)
+
+        with patch(
+            "custom_components.inhabit.engine.occupancy_state_machine.async_call_later",
+            lambda hass, delay, cb: MagicMock(),
+        ):
+            # Enter occupied with seal
+            machine._aggregator.update_reading(
+                "binary_sensor.room_motion", True, "motion", 1.0
+            )
+            machine._transition_to_occupied("motion detected")
+            assert machine.state.sealed is True
+
+            # All sensors go unavailable but door cache says closed
+            machine._last_known_door_states["binary_sensor.room_door"] = False
+
+            def get_unavailable(entity_id):
+                return MagicMock(state=STATE_UNAVAILABLE)
+
+            mock_hass.states.get.side_effect = get_unavailable
+
+            machine._aggregator.update_reading(
+                "binary_sensor.room_motion", False, "motion", 1.0
+            )
+            machine._check_all_sensors_clear()
+
+            # Room stays OCCUPIED because seal probability hasn't decayed
+            assert machine.state.state == OccupancyState.OCCUPIED
+
+    @pytest.mark.asyncio
+    async def test_clear_cache_on_stop(self, mock_hass, seal_config, state_changes):
+        """async_stop clears _last_known_door_states."""
+        machine, _ = self._make_machine(mock_hass, seal_config, state_changes)
+
+        # Populate cache
+        machine._last_known_door_states["binary_sensor.room_door"] = False
+        machine._last_known_door_states["binary_sensor.other_door"] = True
+        assert len(machine._last_known_door_states) == 2
+
+        await machine.async_stop()
+
+        assert machine._last_known_door_states == {}
+
+
+class TestRapidStateChanges:
+    """Tests for rapid state change scenarios."""
+
+    @pytest.fixture
+    def seal_config(self):
+        """Config with door seal enabled."""
+        return VirtualSensorConfig(
+            room_id="sealed_room",
+            floor_plan_id="test_fp",
+            enabled=True,
+            motion_timeout=120,
+            checking_timeout=30,
+            motion_sensors=[
+                SensorBinding(
+                    entity_id="binary_sensor.room_motion",
+                    sensor_type="motion",
+                    weight=1.0,
+                ),
+            ],
+            door_sensors=[
+                SensorBinding(
+                    entity_id="binary_sensor.room_door",
+                    sensor_type="door",
+                    weight=1.0,
+                ),
+            ],
+            door_seals_room=True,
+        )
+
+    def _make_machine(self, mock_hass, config, state_changes):
+        from custom_components.inhabit.engine.occupancy_state_machine import (
+            OccupancyStateMachine,
+        )
+
+        changes, on_change = state_changes
+        return OccupancyStateMachine(mock_hass, config, on_change), changes
+
+    @staticmethod
+    def _setup_sensor_states(mock_hass, motion_state=STATE_ON, door_state=STATE_OFF):
+        """Set up per-entity mock states."""
+
+        def get_state(entity_id):
+            if "motion" in entity_id:
+                return MagicMock(state=motion_state)
+            if "door" in entity_id:
+                return MagicMock(state=door_state)
+            return MagicMock(state=STATE_OFF)
+
+        mock_hass.states.get.side_effect = get_state
+
+    def test_rapid_on_off_motion_final_state_correct(
+        self, mock_hass, seal_config, state_changes
+    ):
+        """Motion on/off/on — final state should be OCCUPIED."""
+        self._setup_sensor_states(
+            mock_hass, motion_state=STATE_ON, door_state=STATE_OFF
+        )
+        machine, changes = self._make_machine(mock_hass, seal_config, state_changes)
+
+        with patch(
+            "custom_components.inhabit.engine.occupancy_state_machine.async_call_later",
+            lambda hass, delay, cb: MagicMock(),
+        ):
+            # Motion ON
+            machine._aggregator.update_reading(
+                "binary_sensor.room_motion", True, "motion", 1.0
+            )
+            machine._update_contributing_sensors("binary_sensor.room_motion", add=True)
+            machine._transition_to_occupied("motion on")
+            assert machine.state.state == OccupancyState.OCCUPIED
+
+            # Motion OFF
+            self._setup_sensor_states(
+                mock_hass, motion_state=STATE_OFF, door_state=STATE_OFF
+            )
+            machine._aggregator.update_reading(
+                "binary_sensor.room_motion", False, "motion", 1.0
+            )
+            machine._update_contributing_sensors("binary_sensor.room_motion", add=False)
+            # Seal keeps it occupied, so _check_all_sensors_clear won't transition
+            machine._check_all_sensors_clear()
+
+            # Motion ON again
+            self._setup_sensor_states(
+                mock_hass, motion_state=STATE_ON, door_state=STATE_OFF
+            )
+            machine._aggregator.update_reading(
+                "binary_sensor.room_motion", True, "motion", 1.0
+            )
+            machine._update_contributing_sensors("binary_sensor.room_motion", add=True)
+            machine._transition_to_occupied("motion on again")
+
+            assert machine.state.state == OccupancyState.OCCUPIED
+
+    def test_door_bouncing_seal_behavior(self, mock_hass, seal_config, state_changes):
+        """Door open/close rapidly doesn't permanently break seal."""
+        self._setup_sensor_states(
+            mock_hass, motion_state=STATE_ON, door_state=STATE_OFF
+        )
+        machine, changes = self._make_machine(mock_hass, seal_config, state_changes)
+
+        with patch(
+            "custom_components.inhabit.engine.occupancy_state_machine.async_call_later",
+            lambda hass, delay, cb: MagicMock(),
+        ):
+            # Enter occupied with seal
+            machine._aggregator.update_reading(
+                "binary_sensor.room_motion", True, "motion", 1.0
+            )
+            machine._update_contributing_sensors("binary_sensor.room_motion", add=True)
+            machine._transition_to_occupied("motion detected")
+            assert machine.state.sealed is True
+
+            # Door opens — seal breaks
+            machine._break_seal("door opened")
+            assert machine.state.sealed is False
+
+            # Door closes — seal re-establishes since motion still active
+            self._setup_sensor_states(
+                mock_hass, motion_state=STATE_ON, door_state=STATE_OFF
+            )
+            machine._transition_to_occupied("motion re-detected")
+            assert machine.state.sealed is True
+
+    def test_checking_reoccupied_checking_cycle(
+        self, mock_hass, seal_config, state_changes
+    ):
+        """OCCUPIED -> CHECKING -> OCCUPIED -> CHECKING cycle works correctly."""
+        self._setup_sensor_states(mock_hass, motion_state=STATE_ON, door_state=STATE_ON)
+        machine, changes = self._make_machine(mock_hass, seal_config, state_changes)
+
+        with patch(
+            "custom_components.inhabit.engine.occupancy_state_machine.async_call_later",
+            lambda hass, delay, cb: MagicMock(),
+        ):
+            # Cycle 1: OCCUPIED
+            machine._aggregator.update_reading(
+                "binary_sensor.room_motion", True, "motion", 1.0
+            )
+            machine._update_contributing_sensors("binary_sensor.room_motion", add=True)
+            machine._transition_to_occupied("motion detected")
+            assert machine.state.state == OccupancyState.OCCUPIED
+
+            # Cycle 1: CHECKING
+            self._setup_sensor_states(
+                mock_hass, motion_state=STATE_OFF, door_state=STATE_ON
+            )
+            machine._aggregator.update_reading(
+                "binary_sensor.room_motion", False, "motion", 1.0
+            )
+            machine._update_contributing_sensors("binary_sensor.room_motion", add=False)
+            machine._transition_to_checking("sensors clear")
+            assert machine.state.state == OccupancyState.CHECKING
+
+            # Cycle 2: re-OCCUPIED
+            self._setup_sensor_states(
+                mock_hass, motion_state=STATE_ON, door_state=STATE_ON
+            )
+            machine._aggregator.update_reading(
+                "binary_sensor.room_motion", True, "motion", 1.0
+            )
+            machine._update_contributing_sensors("binary_sensor.room_motion", add=True)
+            machine._transition_to_occupied("motion re-detected")
+            assert machine.state.state == OccupancyState.OCCUPIED
+
+            # Cycle 2: CHECKING again
+            self._setup_sensor_states(
+                mock_hass, motion_state=STATE_OFF, door_state=STATE_ON
+            )
+            machine._aggregator.update_reading(
+                "binary_sensor.room_motion", False, "motion", 1.0
+            )
+            machine._update_contributing_sensors("binary_sensor.room_motion", add=False)
+            machine._transition_to_checking("sensors clear again")
+            assert machine.state.state == OccupancyState.CHECKING
+
+    def test_checking_timer_cancelled_on_reoccupied(
+        self, mock_hass, seal_config, state_changes
+    ):
+        """Checking timer is cancelled when room re-enters OCCUPIED."""
+        self._setup_sensor_states(mock_hass, motion_state=STATE_ON, door_state=STATE_ON)
+        machine, changes = self._make_machine(mock_hass, seal_config, state_changes)
+
+        cancel_calls = []
+
+        def mock_async_call_later(hass, delay, callback):
+            cancel = MagicMock()
+            cancel_calls.append(cancel)
+            return cancel
+
+        with patch(
+            "custom_components.inhabit.engine.occupancy_state_machine.async_call_later",
+            mock_async_call_later,
+        ):
+            # Enter OCCUPIED
+            machine._aggregator.update_reading(
+                "binary_sensor.room_motion", True, "motion", 1.0
+            )
+            machine._update_contributing_sensors("binary_sensor.room_motion", add=True)
+            machine._transition_to_occupied("motion detected")
+
+            # Transition to CHECKING — timer is set
+            self._setup_sensor_states(
+                mock_hass, motion_state=STATE_OFF, door_state=STATE_ON
+            )
+            machine._aggregator.update_reading(
+                "binary_sensor.room_motion", False, "motion", 1.0
+            )
+            machine._update_contributing_sensors("binary_sensor.room_motion", add=False)
+            machine._transition_to_checking("sensors clear")
+            assert machine.state.state == OccupancyState.CHECKING
+            assert len(cancel_calls) > 0
+
+            timer_cancel = cancel_calls[-1]
+
+            # Re-enter OCCUPIED — timer should be cancelled
+            self._setup_sensor_states(
+                mock_hass, motion_state=STATE_ON, door_state=STATE_ON
+            )
+            machine._aggregator.update_reading(
+                "binary_sensor.room_motion", True, "motion", 1.0
+            )
+            machine._update_contributing_sensors("binary_sensor.room_motion", add=True)
+            machine._transition_to_occupied("motion re-detected")
+            assert machine.state.state == OccupancyState.OCCUPIED
+
+            # The cancel function for the checking timer should have been called
+            timer_cancel.assert_called()
+
+
+class TestContributingSensorsSafety:
+    """Tests for contributing sensors copy-on-write safety."""
+
+    def _make_machine(self, mock_hass, state_changes):
+        from custom_components.inhabit.engine.occupancy_state_machine import (
+            OccupancyStateMachine,
+        )
+
+        config = VirtualSensorConfig(
+            room_id="test_room",
+            floor_plan_id="test_fp",
+            enabled=True,
+            motion_sensors=[
+                SensorBinding(
+                    entity_id="binary_sensor.test_motion",
+                    sensor_type="motion",
+                    weight=1.0,
+                ),
+            ],
+        )
+        changes, on_change = state_changes
+        return OccupancyStateMachine(mock_hass, config, on_change), changes
+
+    def test_contributing_sensors_copy_on_write_add(self, mock_hass, state_changes):
+        """Adding a sensor creates a new list, old reference unchanged."""
+        machine, _ = self._make_machine(mock_hass, state_changes)
+
+        old_list = machine.state.contributing_sensors
+        assert old_list == []
+
+        machine._update_contributing_sensors("sensor1", add=True)
+
+        # Old reference should still be empty
+        assert old_list == []
+        # New list should have the sensor
+        assert "sensor1" in machine.state.contributing_sensors
+        # They should be different objects
+        assert old_list is not machine.state.contributing_sensors
+
+    def test_contributing_sensors_copy_on_write_remove(self, mock_hass, state_changes):
+        """Removing a sensor creates a new list, old reference unchanged."""
+        machine, _ = self._make_machine(mock_hass, state_changes)
+
+        machine._update_contributing_sensors("sensor1", add=True)
+        old_list = machine.state.contributing_sensors
+        assert "sensor1" in old_list
+
+        machine._update_contributing_sensors("sensor1", add=False)
+
+        # Old reference should still have the sensor
+        assert "sensor1" in old_list
+        # New list should not have the sensor
+        assert "sensor1" not in machine.state.contributing_sensors
+        # They should be different objects
+        assert old_list is not machine.state.contributing_sensors
+
+    def test_contributing_sensors_duplicate_add_no_change(
+        self, mock_hass, state_changes
+    ):
+        """Adding duplicate doesn't create new list — same object returned."""
+        machine, _ = self._make_machine(mock_hass, state_changes)
+
+        machine._update_contributing_sensors("sensor1", add=True)
+        ref_after_first_add = machine.state.contributing_sensors
+
+        machine._update_contributing_sensors("sensor1", add=True)
+
+        # Should be the exact same object (no copy needed)
+        assert ref_after_first_add is machine.state.contributing_sensors
+        # Only one entry
+        assert machine.state.contributing_sensors.count("sensor1") == 1

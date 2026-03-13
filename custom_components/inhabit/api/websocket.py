@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Coroutine
 from typing import Any
 
 import voluptuous as vol
@@ -38,6 +39,35 @@ from ..models.zone import Zone
 _LOGGER = logging.getLogger(__name__)
 
 
+async def _safe_engine_op(
+    coro: Coroutine[Any, Any, None],
+    operation: str,
+    region_id: str,
+) -> None:
+    """Run a sensor engine operation with error logging."""
+    try:
+        await coro
+    except Exception:
+        _LOGGER.exception(
+            "Sensor engine '%s' failed for region %s",
+            operation,
+            region_id,
+        )
+
+
+async def _disable_region_sensor(
+    engine,
+    store,
+    region_id: str,
+) -> None:
+    """Remove region from engine, then delete config from store."""
+    try:
+        await engine.async_remove_room(region_id)
+    except Exception:
+        _LOGGER.exception("Failed to remove region %s from sensor engine", region_id)
+    store.delete_sensor_config(region_id)
+
+
 def _sync_region_device(
     hass: HomeAssistant,
     region_id: str,
@@ -57,9 +87,7 @@ def _sync_region_device_area(
     _sync_region_device(hass, region_id, area_id=ha_area_id or "")
 
 
-def _sync_region_device_name(
-    hass: HomeAssistant, region_id: str, name: str
-) -> None:
+def _sync_region_device_name(hass: HomeAssistant, region_id: str, name: str) -> None:
     """Sync the name of a region's device in the device registry."""
     _sync_region_device(hass, region_id, name_by_user=name)
 
@@ -330,7 +358,13 @@ def ws_floor_plans_delete(
 
     # Remove sensors from the engine and clean up devices
     for region_id in region_ids:
-        hass.async_create_task(sensor_engine.async_remove_room(region_id))
+        hass.async_create_task(
+            _safe_engine_op(
+                sensor_engine.async_remove_room(region_id),
+                "remove",
+                region_id,
+            )
+        )
         _remove_device(hass, region_id)
 
     store.delete_floor_plan(msg["floor_plan_id"])
@@ -443,10 +477,14 @@ def ws_floors_delete(
     # Remove sensors and devices for all rooms and zones on this floor
     sensor_engine = hass.data[DOMAIN]["sensor_engine"]
     for room in floor.rooms:
-        hass.async_create_task(sensor_engine.async_remove_room(room.id))
+        hass.async_create_task(
+            _safe_engine_op(sensor_engine.async_remove_room(room.id), "remove", room.id)
+        )
         _remove_device(hass, room.id)
     for zone in floor.zones:
-        hass.async_create_task(sensor_engine.async_remove_room(zone.id))
+        hass.async_create_task(
+            _safe_engine_op(sensor_engine.async_remove_room(zone.id), "remove", zone.id)
+        )
         _remove_device(hass, zone.id)
 
     if store.delete_floor(msg["floor_plan_id"], msg["floor_id"]):
@@ -687,15 +725,19 @@ def ws_rooms_add(
         if room.occupancy_sensor_enabled:
             sensor_engine = hass.data[DOMAIN]["sensor_engine"]
             hass.async_create_task(
-                sensor_engine.async_add_room(
-                    VirtualSensorConfig(
-                        room_id=room.id,
-                        floor_plan_id=msg["floor_plan_id"],
-                        motion_timeout=room.motion_timeout,
-                        checking_timeout=room.checking_timeout,
-                        long_stay=room.long_stay,
-                        phantom_hold_seconds=room.phantom_hold_seconds,
-                    )
+                _safe_engine_op(
+                    sensor_engine.async_add_room(
+                        VirtualSensorConfig(
+                            room_id=room.id,
+                            floor_plan_id=msg["floor_plan_id"],
+                            motion_timeout=room.motion_timeout,
+                            checking_timeout=room.checking_timeout,
+                            long_stay=room.long_stay,
+                            phantom_hold_seconds=room.phantom_hold_seconds,
+                        )
+                    ),
+                    "add",
+                    room.id,
                 )
             )
         if ha_area_id:
@@ -795,7 +837,13 @@ def ws_rooms_update(
                 config.long_stay = room.long_stay
                 config.phantom_hold_seconds = room.phantom_hold_seconds
                 sensor_engine = hass.data[DOMAIN]["sensor_engine"]
-                hass.async_create_task(sensor_engine.async_update_room(config))
+                hass.async_create_task(
+                    _safe_engine_op(
+                        sensor_engine.async_update_room(config),
+                        "update",
+                        room.id,
+                    )
+                )
         # Sync occupancy toggle with sensor engine
         if "occupancy_sensor_enabled" in msg:
             sensor_engine = hass.data[DOMAIN]["sensor_engine"]
@@ -812,10 +860,17 @@ def ws_rooms_update(
                         phantom_hold_seconds=room.phantom_hold_seconds,
                     )
                     store.create_sensor_config(config)
-                hass.async_create_task(sensor_engine.async_add_room(config))
+                hass.async_create_task(
+                    _safe_engine_op(
+                        sensor_engine.async_add_room(config),
+                        "add",
+                        room.id,
+                    )
+                )
             else:
-                hass.async_create_task(sensor_engine.async_remove_room(room.id))
-                store.delete_sensor_config(room.id)
+                hass.async_create_task(
+                    _disable_region_sensor(sensor_engine, store, room.id)
+                )
         connection.send_result(msg["id"], result.to_dict())
     else:
         connection.send_error(msg["id"], "update_failed", "Failed to update room")
@@ -841,7 +896,13 @@ def ws_rooms_delete(
 
     # Remove from sensor engine and clean up device
     sensor_engine = hass.data[DOMAIN]["sensor_engine"]
-    hass.async_create_task(sensor_engine.async_remove_room(msg["room_id"]))
+    hass.async_create_task(
+        _safe_engine_op(
+            sensor_engine.async_remove_room(msg["room_id"]),
+            "remove",
+            msg["room_id"],
+        )
+    )
     _remove_device(hass, msg["room_id"])
 
     if store.delete_room(msg["floor_plan_id"], msg["room_id"]):
@@ -909,16 +970,20 @@ def ws_zones_add(
         if zone.occupancy_sensor_enabled:
             sensor_engine = hass.data[DOMAIN]["sensor_engine"]
             hass.async_create_task(
-                sensor_engine.async_add_room(
-                    VirtualSensorConfig(
-                        room_id=zone.id,
-                        floor_plan_id=msg["floor_plan_id"],
-                        motion_timeout=zone.motion_timeout,
-                        checking_timeout=zone.checking_timeout,
-                        long_stay=zone.long_stay,
-                        occupies_parent=zone.occupies_parent,
-                        phantom_hold_seconds=zone.phantom_hold_seconds,
-                    )
+                _safe_engine_op(
+                    sensor_engine.async_add_room(
+                        VirtualSensorConfig(
+                            room_id=zone.id,
+                            floor_plan_id=msg["floor_plan_id"],
+                            motion_timeout=zone.motion_timeout,
+                            checking_timeout=zone.checking_timeout,
+                            long_stay=zone.long_stay,
+                            occupies_parent=zone.occupies_parent,
+                            phantom_hold_seconds=zone.phantom_hold_seconds,
+                        )
+                    ),
+                    "add",
+                    zone.id,
                 )
             )
         if ha_area_id:
@@ -1021,7 +1086,13 @@ def ws_zones_update(
                 config.occupies_parent = zone.occupies_parent
                 config.phantom_hold_seconds = zone.phantom_hold_seconds
                 sensor_engine = hass.data[DOMAIN]["sensor_engine"]
-                hass.async_create_task(sensor_engine.async_update_room(config))
+                hass.async_create_task(
+                    _safe_engine_op(
+                        sensor_engine.async_update_room(config),
+                        "update",
+                        zone.id,
+                    )
+                )
 
         # Sync occupancy toggle with sensor engine
         if "occupancy_sensor_enabled" in msg:
@@ -1039,10 +1110,17 @@ def ws_zones_update(
                         phantom_hold_seconds=zone.phantom_hold_seconds,
                     )
                     store.create_sensor_config(config)
-                hass.async_create_task(sensor_engine.async_add_room(config))
+                hass.async_create_task(
+                    _safe_engine_op(
+                        sensor_engine.async_add_room(config),
+                        "add",
+                        zone.id,
+                    )
+                )
             else:
-                hass.async_create_task(sensor_engine.async_remove_room(zone.id))
-                store.delete_sensor_config(zone.id)
+                hass.async_create_task(
+                    _disable_region_sensor(sensor_engine, store, zone.id)
+                )
         connection.send_result(msg["id"], result.to_dict())
     else:
         connection.send_error(msg["id"], "update_failed", "Failed to update zone")
@@ -1068,7 +1146,13 @@ def ws_zones_delete(
 
     # Remove from sensor engine and clean up device
     sensor_engine = hass.data[DOMAIN]["sensor_engine"]
-    hass.async_create_task(sensor_engine.async_remove_room(msg["zone_id"]))
+    hass.async_create_task(
+        _safe_engine_op(
+            sensor_engine.async_remove_room(msg["zone_id"]),
+            "remove",
+            msg["zone_id"],
+        )
+    )
     _remove_device(hass, msg["zone_id"])
 
     if store.delete_zone(msg["floor_plan_id"], msg["zone_id"]):
@@ -2715,6 +2799,7 @@ def ws_sensor_config_get(
         vol.Optional("presence_timeout"): int,
         vol.Optional("motion_sensors"): list,
         vol.Optional("presence_sensors"): list,
+        vol.Optional("occupancy_sensors"): list,
         vol.Optional("door_sensors"): list,
         vol.Optional("exit_sensors"): list,
         vol.Optional("hold_until_exit"): bool,
@@ -2771,6 +2856,10 @@ def ws_sensor_config_update(
     if "presence_sensors" in msg:
         config.presence_sensors = [
             SensorBinding.from_dict(s) for s in msg["presence_sensors"]
+        ]
+    if "occupancy_sensors" in msg:
+        config.occupancy_sensors = [
+            SensorBinding.from_dict(s) for s in msg["occupancy_sensors"]
         ]
     if "door_sensors" in msg:
         config.door_sensors = [SensorBinding.from_dict(s) for s in msg["door_sensors"]]

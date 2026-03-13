@@ -23,11 +23,13 @@ from custom_components.inhabit.models.floor_plan import (
     Wall,
     Window,
 )
+from custom_components.inhabit.models.mmwave_sensor import MmwavePlacement
 from custom_components.inhabit.models.virtual_sensor import (
     OccupancyStateData,
     SensorBinding,
     VirtualSensorConfig,
 )
+from custom_components.inhabit.models.zone import Zone
 
 
 class TestCoordinates:
@@ -857,10 +859,10 @@ class TestRuleCondition:
         assert condition.type == "state"
         assert condition.entity_id == "light.living_room"
 
-    def test_to_ha_condition_state(self):
-        """Test conversion to HA condition - state type."""
+    def test_to_ha_condition_entity_state(self):
+        """Test conversion to HA condition - entity_state type."""
         condition = RuleCondition(
-            type="state",
+            type="entity_state",
             entity_id="binary_sensor.motion",
             state="on",
         )
@@ -990,3 +992,357 @@ class TestVisualRule:
         )
         data = rule.to_dict()
         assert data["name"] == "Test"
+
+
+class TestZone:
+    """Test Zone model."""
+
+    def test_creation(self):
+        """Test basic creation."""
+        zone = Zone(
+            name="Couch Area",
+            floor_id="floor_1",
+            room_id="room_1",
+            polygon=Polygon(
+                vertices=[
+                    Coordinates(0, 0),
+                    Coordinates(200, 0),
+                    Coordinates(200, 150),
+                    Coordinates(0, 150),
+                ]
+            ),
+        )
+        assert zone.name == "Couch Area"
+        assert zone.floor_id == "floor_1"
+        assert zone.room_id == "room_1"
+
+    def test_default_values(self):
+        """Test default field values."""
+        zone = Zone()
+        assert zone.name == ""
+        assert zone.floor_id == ""
+        assert zone.room_id is None
+        assert zone.color == "#e0e0e0"
+        assert zone.rotation == 0.0
+        assert zone.ha_area_id is None
+        assert zone.occupancy_sensor_enabled is False
+        assert zone.motion_timeout == 120
+        assert zone.checking_timeout == 30
+        assert zone.long_stay is False
+        assert zone.occupies_parent is False
+        assert zone.phantom_hold_seconds == 0
+
+    def test_to_dict(self):
+        """Test serialization."""
+        zone = Zone(
+            id="zone_1",
+            name="Bed Zone",
+            floor_id="floor_1",
+            room_id="room_1",
+            polygon=Polygon(vertices=[Coordinates(10, 20)]),
+            color="#ff0000",
+            rotation=45.0,
+            ha_area_id="area_bedroom",
+            occupancy_sensor_enabled=True,
+            motion_timeout=180,
+            checking_timeout=60,
+            long_stay=True,
+            occupies_parent=True,
+            phantom_hold_seconds=600,
+        )
+        data = zone.to_dict()
+        assert data["id"] == "zone_1"
+        assert data["name"] == "Bed Zone"
+        assert data["floor_id"] == "floor_1"
+        assert data["room_id"] == "room_1"
+        assert data["color"] == "#ff0000"
+        assert data["rotation"] == 45.0
+        assert data["ha_area_id"] == "area_bedroom"
+        assert data["occupancy_sensor_enabled"] is True
+        assert data["motion_timeout"] == 180
+        assert data["checking_timeout"] == 60
+        assert data["long_stay"] is True
+        assert data["occupies_parent"] is True
+        assert data["phantom_hold_seconds"] == 600
+
+    def test_from_dict(self):
+        """Test deserialization."""
+        data = {
+            "id": "zone_1",
+            "name": "Desk Zone",
+            "floor_id": "floor_1",
+            "room_id": "room_1",
+            "polygon": {"vertices": [{"x": 0, "y": 0}, {"x": 100, "y": 0}]},
+            "color": "#00ff00",
+            "rotation": 90.0,
+            "ha_area_id": "area_office",
+            "occupancy_sensor_enabled": True,
+            "motion_timeout": 240,
+            "checking_timeout": 45,
+            "long_stay": True,
+            "occupies_parent": True,
+            "phantom_hold_seconds": 900,
+        }
+        zone = Zone.from_dict(data)
+        assert zone.id == "zone_1"
+        assert zone.name == "Desk Zone"
+        assert zone.floor_id == "floor_1"
+        assert zone.room_id == "room_1"
+        assert len(zone.polygon.vertices) == 2
+        assert zone.color == "#00ff00"
+        assert zone.rotation == 90.0
+        assert zone.ha_area_id == "area_office"
+        assert zone.occupancy_sensor_enabled is True
+        assert zone.motion_timeout == 240
+        assert zone.checking_timeout == 45
+        assert zone.long_stay is True
+        assert zone.occupies_parent is True
+        assert zone.phantom_hold_seconds == 900
+
+    def test_from_dict_defaults(self):
+        """Test deserialization falls back to defaults for missing fields."""
+        data = {
+            "id": "zone_2",
+            "name": "Minimal Zone",
+        }
+        zone = Zone.from_dict(data)
+        assert zone.name == "Minimal Zone"
+        assert zone.room_id is None
+        assert zone.color == "#e0e0e0"
+        assert zone.rotation == 0.0
+        assert zone.ha_area_id is None
+        assert zone.occupancy_sensor_enabled is False
+        assert zone.motion_timeout == 120
+        assert zone.checking_timeout == 30
+        assert zone.long_stay is False
+        assert zone.occupies_parent is False
+        assert zone.phantom_hold_seconds == 0
+
+    def test_serialization_round_trip(self):
+        """Test full serialization and deserialization cycle."""
+        original = Zone(
+            id="zone_rt",
+            name="Round Trip Zone",
+            floor_id="floor_1",
+            room_id="room_1",
+            polygon=Polygon(
+                vertices=[
+                    Coordinates(0, 0),
+                    Coordinates(100, 0),
+                    Coordinates(100, 80),
+                    Coordinates(0, 80),
+                ]
+            ),
+            color="#abcdef",
+            rotation=30.0,
+            ha_area_id="area_test",
+            occupancy_sensor_enabled=True,
+            motion_timeout=300,
+            checking_timeout=60,
+            long_stay=True,
+            occupies_parent=True,
+            phantom_hold_seconds=450,
+        )
+        data = original.to_dict()
+        restored = Zone.from_dict(data)
+
+        assert restored.id == original.id
+        assert restored.name == original.name
+        assert restored.floor_id == original.floor_id
+        assert restored.room_id == original.room_id
+        assert len(restored.polygon.vertices) == len(original.polygon.vertices)
+        for rv, ov in zip(restored.polygon.vertices, original.polygon.vertices):
+            assert rv.x == ov.x
+            assert rv.y == ov.y
+        assert restored.color == original.color
+        assert restored.rotation == original.rotation
+        assert restored.ha_area_id == original.ha_area_id
+        assert restored.occupancy_sensor_enabled == original.occupancy_sensor_enabled
+        assert restored.motion_timeout == original.motion_timeout
+        assert restored.checking_timeout == original.checking_timeout
+        assert restored.long_stay == original.long_stay
+        assert restored.occupies_parent == original.occupies_parent
+        assert restored.phantom_hold_seconds == original.phantom_hold_seconds
+
+
+class TestMmwavePlacement:
+    """Test MmwavePlacement model."""
+
+    def test_creation(self):
+        """Test basic creation."""
+        mmwave = MmwavePlacement(
+            floor_plan_id="fp_1",
+            floor_id="floor_1",
+            room_id="room_1",
+            position=Coordinates(250, 300),
+            angle=90.0,
+            field_of_view=110.0,
+            detection_range=600.0,
+            label="Hallway Sensor",
+        )
+        assert mmwave.floor_plan_id == "fp_1"
+        assert mmwave.floor_id == "floor_1"
+        assert mmwave.room_id == "room_1"
+        assert mmwave.position.x == 250
+        assert mmwave.position.y == 300
+        assert mmwave.angle == 90.0
+        assert mmwave.field_of_view == 110.0
+        assert mmwave.detection_range == 600.0
+        assert mmwave.label == "Hallway Sensor"
+
+    def test_default_values(self):
+        """Test default field values."""
+        mmwave = MmwavePlacement()
+        assert mmwave.floor_plan_id == ""
+        assert mmwave.floor_id == ""
+        assert mmwave.room_id is None
+        assert mmwave.position.x == 0
+        assert mmwave.position.y == 0
+        assert mmwave.angle == 0.0
+        assert mmwave.field_of_view == 120.0
+        assert mmwave.detection_range == 500.0
+        assert mmwave.label is None
+        assert mmwave.targets == []
+
+    def test_to_dict(self):
+        """Test serialization."""
+        mmwave = MmwavePlacement(
+            id="mmw_1",
+            floor_plan_id="fp_1",
+            floor_id="floor_1",
+            room_id="room_1",
+            position=Coordinates(100, 200),
+            angle=45.0,
+            field_of_view=90.0,
+            detection_range=400.0,
+            label="Living Room Sensor",
+            targets=[{"entity_id": "binary_sensor.presence_1", "type": "presence"}],
+        )
+        data = mmwave.to_dict()
+        assert data["id"] == "mmw_1"
+        assert data["floor_plan_id"] == "fp_1"
+        assert data["floor_id"] == "floor_1"
+        assert data["room_id"] == "room_1"
+        assert data["position"] == {"x": 100, "y": 200}
+        assert data["angle"] == 45.0
+        assert data["field_of_view"] == 90.0
+        assert data["detection_range"] == 400.0
+        assert data["label"] == "Living Room Sensor"
+        assert len(data["targets"]) == 1
+
+    def test_from_dict(self):
+        """Test deserialization."""
+        data = {
+            "id": "mmw_2",
+            "floor_plan_id": "fp_1",
+            "floor_id": "floor_1",
+            "room_id": "room_1",
+            "position": {"x": 50, "y": 75},
+            "angle": 180.0,
+            "field_of_view": 60.0,
+            "detection_range": 300.0,
+            "label": "Corner Sensor",
+            "targets": [{"entity_id": "binary_sensor.mmwave_1", "type": "motion"}],
+        }
+        mmwave = MmwavePlacement.from_dict(data)
+        assert mmwave.id == "mmw_2"
+        assert mmwave.position.x == 50
+        assert mmwave.position.y == 75
+        assert mmwave.angle == 180.0
+        assert mmwave.field_of_view == 60.0
+        assert mmwave.detection_range == 300.0
+        assert mmwave.label == "Corner Sensor"
+        assert len(mmwave.targets) == 1
+
+    def test_from_dict_defaults(self):
+        """Test deserialization falls back to defaults for missing fields."""
+        data = {"id": "mmw_3"}
+        mmwave = MmwavePlacement.from_dict(data)
+        assert mmwave.floor_plan_id == ""
+        assert mmwave.floor_id == ""
+        assert mmwave.room_id is None
+        assert mmwave.position.x == 0
+        assert mmwave.position.y == 0
+        assert mmwave.angle == 0.0
+        assert mmwave.field_of_view == 120.0
+        assert mmwave.detection_range == 500.0
+        assert mmwave.label is None
+        assert mmwave.targets == []
+
+    def test_legacy_mount_x_mount_y_migration(self):
+        """Test from_dict migrates legacy mount_x/mount_y to position."""
+        data = {
+            "id": "mmw_legacy",
+            "floor_plan_id": "fp_1",
+            "floor_id": "floor_1",
+            "mount_x": 150,
+            "mount_y": 250,
+            "angle": 90.0,
+        }
+        mmwave = MmwavePlacement.from_dict(data)
+        assert mmwave.position.x == 150
+        assert mmwave.position.y == 250
+
+    def test_legacy_mount_partial_x_only(self):
+        """Test legacy migration with only mount_x present."""
+        data = {
+            "id": "mmw_legacy_x",
+            "mount_x": 100,
+        }
+        mmwave = MmwavePlacement.from_dict(data)
+        assert mmwave.position.x == 100
+        assert mmwave.position.y == 0
+
+    def test_legacy_mount_partial_y_only(self):
+        """Test legacy migration with only mount_y present."""
+        data = {
+            "id": "mmw_legacy_y",
+            "mount_y": 200,
+        }
+        mmwave = MmwavePlacement.from_dict(data)
+        assert mmwave.position.x == 0
+        assert mmwave.position.y == 200
+
+    def test_position_takes_precedence_over_legacy(self):
+        """Test that position field takes precedence over legacy mount_x/mount_y."""
+        data = {
+            "id": "mmw_both",
+            "position": {"x": 500, "y": 600},
+            "mount_x": 100,
+            "mount_y": 200,
+        }
+        mmwave = MmwavePlacement.from_dict(data)
+        assert mmwave.position.x == 500
+        assert mmwave.position.y == 600
+
+    def test_serialization_round_trip(self):
+        """Test full serialization and deserialization cycle."""
+        original = MmwavePlacement(
+            id="mmw_rt",
+            floor_plan_id="fp_1",
+            floor_id="floor_1",
+            room_id="room_1",
+            position=Coordinates(123, 456),
+            angle=270.0,
+            field_of_view=100.0,
+            detection_range=350.0,
+            label="Test Sensor",
+            targets=[
+                {"entity_id": "binary_sensor.mmwave_a", "type": "presence"},
+                {"entity_id": "binary_sensor.mmwave_b", "type": "motion"},
+            ],
+        )
+        data = original.to_dict()
+        restored = MmwavePlacement.from_dict(data)
+
+        assert restored.id == original.id
+        assert restored.floor_plan_id == original.floor_plan_id
+        assert restored.floor_id == original.floor_id
+        assert restored.room_id == original.room_id
+        assert restored.position.x == original.position.x
+        assert restored.position.y == original.position.y
+        assert restored.angle == original.angle
+        assert restored.field_of_view == original.field_of_view
+        assert restored.detection_range == original.detection_range
+        assert restored.label == original.label
+        assert restored.targets == original.targets

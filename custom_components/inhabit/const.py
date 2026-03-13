@@ -25,6 +25,7 @@ class OccupancyState:
 DEFAULT_CHECKING_TIMEOUT: Final = 30
 DEFAULT_MOTION_TIMEOUT: Final = 120
 DEFAULT_PRESENCE_TIMEOUT: Final = 300
+DEFAULT_OCCUPANCY_TIMEOUT: Final = 300
 DEFAULT_SEAL_MAX_DURATION: Final = 14400  # 4 hours
 DEFAULT_LONG_STAY_SEAL_MAX_DURATION: Final = 28800  # 8 hours
 DEFAULT_SEAL_HALF_LIFE: Final = 3600  # 1 hour
@@ -55,6 +56,7 @@ class DeviceCategory:
 MOTION_SENSOR_CLASSES: Final = ["motion", "occupancy", "presence"]
 DOOR_SENSOR_CLASSES: Final = ["door", "opening", "garage_door"]
 PRESENCE_SENSOR_CLASSES: Final = ["presence", "occupancy"]
+OCCUPANCY_SENSOR_CLASSES: Final = ["occupancy"]
 
 # WebSocket commands
 WS_PREFIX: Final = "inhabit"
@@ -102,6 +104,10 @@ LAYERS: Final = [
     LAYER_LABELS,
     LAYER_AUTOMATION,
 ]
+
+# Engine limits
+OCCUPANCY_HISTORY_MAXLEN: Final = 2000
+MAX_IMAGE_SIZE: Final = 10 * 1024 * 1024  # 10 MB
 
 # Events
 EVENT_FALSE_VACANCY_DETECTED: Final = f"{DOMAIN}_false_vacancy_detected"

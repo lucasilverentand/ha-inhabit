@@ -36,7 +36,7 @@ export class FpbOccupancyPanel extends LitElement {
   private _loading = true;
 
   @state()
-  private _activePicker: "motion" | "door" | "override" | null = null;
+  private _activePicker: "motion" | "occupancy" | "door" | "override" | null = null;
 
   private _pollTimer?: number;
 
@@ -306,7 +306,8 @@ export class FpbOccupancyPanel extends LitElement {
         room_id: this.targetId,
       });
       this._config = config;
-    } catch {
+    } catch (err) {
+      console.error("Failed to load config:", err);
       this._config = null;
     }
     await this._loadOccupancyState();
@@ -320,8 +321,8 @@ export class FpbOccupancyPanel extends LitElement {
         type: "inhabit/occupancy_states",
       });
       this._occupancyState = states[this.targetId] ?? null;
-    } catch {
-      // ignore
+    } catch (err) {
+      console.error("Failed to load config:", err);
     }
   }
 
@@ -339,7 +340,7 @@ export class FpbOccupancyPanel extends LitElement {
     }
   }
 
-  private async _addSensors(type: "motion" | "door", entityIds: string[]): Promise<void> {
+  private async _addSensors(type: "motion" | "occupancy" | "door", entityIds: string[]): Promise<void> {
     if (!this._config || entityIds.length === 0) return;
     const key = `${type}_sensors` as const;
     const existing = this._config[key] as SensorBinding[];
@@ -351,7 +352,7 @@ export class FpbOccupancyPanel extends LitElement {
     await this._updateConfig({ [key]: [...existing, ...newBindings] });
   }
 
-  private async _removeSensor(type: "motion" | "door", entityId: string): Promise<void> {
+  private async _removeSensor(type: "motion" | "occupancy" | "door", entityId: string): Promise<void> {
     if (!this._config) return;
     const key = `${type}_sensors` as const;
     const existing = this._config[key] as SensorBinding[];
@@ -369,13 +370,14 @@ export class FpbOccupancyPanel extends LitElement {
     if (!this._config) return [];
     const ids: string[] = [];
     for (const s of this._config.motion_sensors) ids.push(s.entity_id);
+    for (const s of this._config.occupancy_sensors ?? []) ids.push(s.entity_id);
     for (const s of this._config.door_sensors) ids.push(s.entity_id);
     if (this._config.override_trigger_entity) ids.push(this._config.override_trigger_entity);
     return ids;
   }
 
-  private _renderSensorSection(title: string, type: "motion" | "door", sensors: SensorBinding[]) {
-    const icon = type === "motion" ? "mdi:motion-sensor" : "mdi:door";
+  private _renderSensorSection(title: string, type: "motion" | "occupancy" | "door", sensors: SensorBinding[]) {
+    const icon = type === "motion" ? "mdi:motion-sensor" : type === "occupancy" ? "mdi:account-check" : "mdi:door";
     return html`
       <div class="section">
         <div class="section-title">${title}</div>
@@ -459,7 +461,7 @@ export class FpbOccupancyPanel extends LitElement {
             </div>
             <ha-switch
               .checked=${this._config.enabled}
-              @change=${(e: Event) => this._updateConfig({ enabled: (e.target as any).checked })}
+              @change=${(e: Event) => this._updateConfig({ enabled: (e.target as HTMLInputElement).checked })}
             ></ha-switch>
           </div>
 
@@ -472,7 +474,7 @@ export class FpbOccupancyPanel extends LitElement {
               </div>
               <ha-switch
                 .checked=${this._config.presence_affects}
-                @change=${(e: Event) => this._updateConfig({ presence_affects: (e.target as any).checked })}
+                @change=${(e: Event) => this._updateConfig({ presence_affects: (e.target as HTMLInputElement).checked })}
               ></ha-switch>
             </div>
 
@@ -509,6 +511,7 @@ export class FpbOccupancyPanel extends LitElement {
 
             <!-- Sensor Bindings -->
             ${this._renderSensorSection("Motion Sensors", "motion", this._config.motion_sensors)}
+            ${this._renderSensorSection("Occupancy Sensors", "occupancy", this._config.occupancy_sensors ?? [])}
             ${this._renderSensorSection("Door Sensors", "door", this._config.door_sensors)}
 
             <!-- Door Logic -->
@@ -522,7 +525,7 @@ export class FpbOccupancyPanel extends LitElement {
                 </div>
                 <ha-switch
                   .checked=${this._config.door_blocks_vacancy}
-                  @change=${(e: Event) => this._updateConfig({ door_blocks_vacancy: (e.target as any).checked })}
+                  @change=${(e: Event) => this._updateConfig({ door_blocks_vacancy: (e.target as HTMLInputElement).checked })}
                 ></ha-switch>
               </div>
 
@@ -533,7 +536,7 @@ export class FpbOccupancyPanel extends LitElement {
                 </div>
                 <ha-switch
                   .checked=${this._config.door_open_resets_checking}
-                  @change=${(e: Event) => this._updateConfig({ door_open_resets_checking: (e.target as any).checked })}
+                  @change=${(e: Event) => this._updateConfig({ door_open_resets_checking: (e.target as HTMLInputElement).checked })}
                 ></ha-switch>
               </div>
             </div>

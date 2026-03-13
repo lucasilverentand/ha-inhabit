@@ -12,6 +12,7 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from ..const import DOMAIN, OccupancyState
+from .const import ENTITY_PREFIX, SUFFIX_OVERRIDE
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -136,7 +137,7 @@ class OccupancyOverrideButton(ButtonEntity):
         self._floor_plan_id = floor_plan_id
         self._room_id = room_id
 
-        self._attr_unique_id = f"fp_{room_id}_occupancy_override"
+        self._attr_unique_id = f"{ENTITY_PREFIX}{room_id}{SUFFIX_OVERRIDE}"
         self._attr_name = "Occupancy override"
 
         self._attr_device_info = DeviceInfo(

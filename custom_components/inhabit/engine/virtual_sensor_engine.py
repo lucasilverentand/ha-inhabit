@@ -13,7 +13,7 @@ from homeassistant.helpers.dispatcher import (
     async_dispatcher_send,
 )
 
-from ..const import DOMAIN, OccupancyState
+from ..const import DOMAIN, OCCUPANCY_HISTORY_MAXLEN, OccupancyState
 from ..models.virtual_sensor import (
     OccupancyHistoryEntry,
     OccupancyStateData,
@@ -86,7 +86,9 @@ class VirtualSensorEngine:
         self._mmwave_target_keys_per_region: dict[str, set[str]] = {}
 
         # Occupancy history tracking
-        self._occupancy_history: deque[OccupancyHistoryEntry] = deque(maxlen=2000)
+        self._occupancy_history: deque[OccupancyHistoryEntry] = deque(
+            maxlen=OCCUPANCY_HISTORY_MAXLEN
+        )
         # Tracks when each room last transitioned (for duration calculation)
         self._last_transition_time: dict[str, datetime] = {}
 
@@ -537,9 +539,7 @@ class VirtualSensorEngine:
 
         # Add target to regions it entered
         for rid in new_regions - old_regions:
-            self._mmwave_target_keys_per_region.setdefault(rid, set()).add(
-                target_key
-            )
+            self._mmwave_target_keys_per_region.setdefault(rid, set()).add(target_key)
             new_count = len(self._mmwave_target_keys_per_region[rid])
             self._route_spatial_presence(rid, new_count)
 

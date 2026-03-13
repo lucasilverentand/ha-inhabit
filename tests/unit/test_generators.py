@@ -23,6 +23,85 @@ from custom_components.inhabit.models.floor_plan import (
     Room,
 )
 
+# ---------------------------------------------------------------------------
+# Shared helpers
+# ---------------------------------------------------------------------------
+
+
+def _make_hass(state_map: dict[str, MagicMock] | None = None) -> MagicMock:
+    """Build a mock Home Assistant with an explicit states lookup.
+
+    ``state_map`` maps entity_id -> mock state object.  If an entity_id
+    is not present the look-up returns ``None`` (entity not found), just
+    like a real HA instance.
+    """
+    hass = MagicMock()
+    state_map = state_map or {}
+    hass.states.get.side_effect = lambda eid: state_map.get(eid)
+    return hass
+
+
+def _make_store(
+    floor_plan: FloorPlan | None = None,
+    rules: list[VisualRule] | None = None,
+    devices_in_room: list | None = None,
+    devices_on_floor: list | None = None,
+) -> MagicMock:
+    """Build a mock FloorPlanStore returning real model instances."""
+    store = MagicMock()
+    store.get_floor_plan.return_value = floor_plan
+    store.get_visual_rules.return_value = rules or []
+
+    collection = MagicMock()
+    collection.get_devices_in_room.return_value = devices_in_room or []
+    collection.get_devices_on_floor.return_value = devices_on_floor or []
+    store.get_device_placements.return_value = collection
+    return store
+
+
+def _make_floor_plan(
+    fp_id: str = "fp_1",
+    fp_name: str = "My House",
+    rooms: list[Room] | None = None,
+) -> FloorPlan:
+    """Build a minimal FloorPlan with one floor containing the given rooms."""
+    rooms = rooms or []
+    floor = Floor(id="floor_1", name="Ground", level=0, rooms=rooms)
+    return FloorPlan(id=fp_id, name=fp_name, floors=[floor])
+
+
+def _make_room(room_id: str = "room_1", name: str = "Living Room") -> Room:
+    """Build a Room with an empty polygon."""
+    return Room(id=room_id, name=name, polygon=Polygon(vertices=[]))
+
+
+def _make_room_with_polygon(room_id: str = "room_1", name: str = "Room") -> Room:
+    """Build a Room with a valid polygon (has a bounding box)."""
+    return Room(
+        id=room_id,
+        name=name,
+        polygon=Polygon(
+            vertices=[
+                FPCoordinates(0, 0),
+                FPCoordinates(100, 0),
+                FPCoordinates(100, 100),
+                FPCoordinates(0, 100),
+            ]
+        ),
+    )
+
+
+def _make_state(friendly_name: str) -> MagicMock:
+    """Build a mock HA state with a friendly_name attribute."""
+    state = MagicMock()
+    state.attributes = {"friendly_name": friendly_name}
+    return state
+
+
+# ---------------------------------------------------------------------------
+# AutomationGenerator
+# ---------------------------------------------------------------------------
+
 
 class TestAutomationGenerator:
     """Test AutomationGenerator."""
@@ -30,12 +109,12 @@ class TestAutomationGenerator:
     @pytest.fixture
     def mock_hass(self):
         """Create a mock Home Assistant instance."""
-        return MagicMock()
+        return _make_hass()
 
     @pytest.fixture
     def mock_store(self):
         """Create a mock store."""
-        return MagicMock()
+        return _make_store()
 
     @pytest.fixture
     def generator(self, mock_hass, mock_store):
@@ -162,8 +241,97 @@ class TestAutomationGenerator:
         assert "trigger" in automation
         assert "action" in automation
 
-    def test_generate_all_automations(self, generator, mock_store):
-        """Test generating all automations for a floor plan."""
+    def test_generate_automation_with_delay_action(self, generator):
+        """Test generating automation from a rule with a delay action."""
+        rule = VisualRule(
+            id="rule_delay",
+            name="Delayed Lights Off",
+            floor_plan_id="fp_1",
+            trigger_type="room_occupancy",
+            trigger_room_id="room_1",
+            trigger_state="off",
+            actions=[
+                RuleAction(type="delay", delay_seconds=60),
+                RuleAction(
+                    type="service_call",
+                    service="light.turn_off",
+                    entity_id="light.room_1",
+                ),
+            ],
+        )
+
+        automation = generator.generate_automation(rule)
+        assert len(automation["action"]) == 2
+        assert automation["action"][0] == {"delay": {"seconds": 60}}
+        assert automation["action"][1]["service"] == "light.turn_off"
+        assert automation["action"][1]["target"]["entity_id"] == "light.room_1"
+
+    def test_generate_automation_with_wait_action(self, generator):
+        """Test generating automation from a rule with a wait_template action."""
+        rule = VisualRule(
+            id="rule_wait",
+            name="Wait Then Turn On",
+            floor_plan_id="fp_1",
+            trigger_type="room_occupancy",
+            trigger_room_id="room_1",
+            trigger_state="on",
+            actions=[
+                RuleAction(
+                    type="wait",
+                    wait_template="{{ is_state('input_boolean.guests', 'on') }}",
+                ),
+                RuleAction(
+                    type="service_call",
+                    service="light.turn_on",
+                    entity_id="light.room_1",
+                ),
+            ],
+        )
+
+        automation = generator.generate_automation(rule)
+        assert len(automation["action"]) == 2
+        assert automation["action"][0] == {
+            "wait_template": "{{ is_state('input_boolean.guests', 'on') }}"
+        }
+        assert automation["action"][1]["service"] == "light.turn_on"
+
+    def test_generate_automation_with_delay_and_wait_actions(self, generator):
+        """Test rule with mixed delay and wait actions alongside service calls."""
+        rule = VisualRule(
+            id="rule_mixed",
+            name="Mixed Actions",
+            floor_plan_id="fp_1",
+            trigger_type="room_occupancy",
+            trigger_room_id="room_1",
+            trigger_state="on",
+            actions=[
+                RuleAction(
+                    type="service_call",
+                    service="light.turn_on",
+                    entity_id="light.room_1",
+                ),
+                RuleAction(type="delay", delay_seconds=30),
+                RuleAction(
+                    type="wait",
+                    wait_template="{{ states('sensor.lux') | int > 100 }}",
+                ),
+                RuleAction(
+                    type="service_call",
+                    service="light.turn_off",
+                    entity_id="light.room_1",
+                ),
+            ],
+        )
+
+        automation = generator.generate_automation(rule)
+        assert len(automation["action"]) == 4
+        assert automation["action"][0]["service"] == "light.turn_on"
+        assert automation["action"][1] == {"delay": {"seconds": 30}}
+        assert "wait_template" in automation["action"][2]
+        assert automation["action"][3]["service"] == "light.turn_off"
+
+    def test_generate_all_automations_filters_disabled(self, generator, mock_store):
+        """Test that generate_all_automations only includes enabled rules."""
         rule1 = VisualRule(
             id="rule_1",
             name="Rule 1",
@@ -202,6 +370,40 @@ class TestAutomationGenerator:
 
         # Only enabled rules should be included
         assert len(automations) == 1
+        assert automations[0]["alias"] == "Rule 1"
+        mock_store.get_visual_rules.assert_called_once_with("fp_1")
+
+    def test_generate_all_automations_all_disabled(self, generator, mock_store):
+        """Test that all-disabled rules produces an empty list."""
+        rule = VisualRule(
+            id="rule_1",
+            name="Disabled",
+            floor_plan_id="fp_1",
+            enabled=False,
+            trigger_type="room_occupancy",
+            trigger_room_id="room_1",
+            trigger_state="on",
+            actions=[
+                RuleAction(
+                    type="service_call",
+                    service="light.turn_on",
+                    entity_id="light.room_1",
+                )
+            ],
+        )
+        mock_store.get_visual_rules.return_value = [rule]
+
+        automations = generator.generate_all_automations("fp_1")
+
+        assert automations == []
+
+    def test_generate_all_automations_empty_rule_list(self, generator, mock_store):
+        """Test that an empty rule list produces an empty result."""
+        mock_store.get_visual_rules.return_value = []
+
+        automations = generator.generate_all_automations("fp_1")
+
+        assert automations == []
         mock_store.get_visual_rules.assert_called_once_with("fp_1")
 
     def test_export_yaml(self, generator, mock_store):
@@ -229,6 +431,19 @@ class TestAutomationGenerator:
         assert "# Generated by Inhabit Floor Plan Builder" in yaml_str
         assert "# Do not edit manually" in yaml_str
 
+    def test_export_yaml_empty_rules(self, generator, mock_store):
+        """Test exporting YAML when there are no rules."""
+        mock_store.get_visual_rules.return_value = []
+
+        yaml_str = generator.export_yaml("fp_1")
+
+        assert "# Generated by Inhabit Floor Plan Builder" in yaml_str
+
+
+# ---------------------------------------------------------------------------
+# CardExporter
+# ---------------------------------------------------------------------------
+
 
 class TestCardExporter:
     """Test CardExporter."""
@@ -236,14 +451,12 @@ class TestCardExporter:
     @pytest.fixture
     def mock_hass(self):
         """Create a mock Home Assistant instance."""
-        hass = MagicMock()
-        hass.states = MagicMock()
-        return hass
+        return _make_hass()
 
     @pytest.fixture
     def mock_store(self):
         """Create a mock store."""
-        return MagicMock()
+        return _make_store()
 
     @pytest.fixture
     def exporter(self, mock_hass, mock_store):
@@ -259,9 +472,8 @@ class TestCardExporter:
         assert result == {"error": "Floor plan not found"}
 
     def test_export_room_card_room_not_found(self, exporter, mock_store):
-        """Test export when room not found."""
-        floor_plan = MagicMock()
-        floor_plan.get_room.return_value = None
+        """Test export when room not found in floor plan."""
+        floor_plan = _make_floor_plan(rooms=[_make_room("room_1")])
         mock_store.get_floor_plan.return_value = floor_plan
 
         result = exporter.export_room_card("fp_1", "room_unknown")
@@ -270,16 +482,9 @@ class TestCardExporter:
 
     def test_export_room_card_success(self, exporter, mock_store, mock_hass):
         """Test successful room card export."""
-        room = Room(id="room_1", name="Living Room", polygon=Polygon(vertices=[]))
-        floor = Floor(id="floor_1", name="Ground", level=0, rooms=[room])
-        floor_plan = FloorPlan(id="fp_1", name="My House", floors=[floor])
-
+        room = _make_room("room_1", "Living Room")
+        floor_plan = _make_floor_plan(rooms=[room])
         mock_store.get_floor_plan.return_value = floor_plan
-
-        # Mock device placements
-        collection = MagicMock()
-        collection.get_devices_in_room.return_value = []
-        mock_store.get_device_placements.return_value = collection
 
         result = exporter.export_room_card("fp_1", "room_1")
 
@@ -292,13 +497,10 @@ class TestCardExporter:
 
     def test_export_room_card_with_devices(self, exporter, mock_store, mock_hass):
         """Test room card export with devices."""
-        room = Room(id="room_1", name="Bedroom", polygon=Polygon(vertices=[]))
-        floor = Floor(id="floor_1", name="Ground", level=0, rooms=[room])
-        floor_plan = FloorPlan(id="fp_1", name="My House", floors=[floor])
-
+        room = _make_room("room_1", "Bedroom")
+        floor_plan = _make_floor_plan(rooms=[room])
         mock_store.get_floor_plan.return_value = floor_plan
 
-        # Mock device placements
         device = LightPlacement(
             id="d1",
             entity_id="light.bedroom",
@@ -306,14 +508,15 @@ class TestCardExporter:
             floor_id="floor_1",
             room_id="room_1",
         )
+
         collection = MagicMock()
         collection.get_devices_in_room.return_value = [device]
         mock_store.get_device_placements.return_value = collection
 
         # Mock entity state
-        mock_state = MagicMock()
-        mock_state.attributes = {"friendly_name": "Bedroom Light"}
-        mock_hass.states.get.return_value = mock_state
+        mock_hass.states.get.side_effect = lambda eid: (
+            _make_state("Bedroom Light") if eid == "light.bedroom" else None
+        )
 
         result = exporter.export_room_card("fp_1", "room_1")
 
@@ -321,13 +524,70 @@ class TestCardExporter:
         assert result["entities"][1]["entity"] == "light.bedroom"
         assert result["entities"][1]["name"] == "Bedroom Light"
 
+    def test_export_room_card_device_entity_not_found(
+        self, exporter, mock_store, mock_hass
+    ):
+        """Test room card export when hass.states.get returns None for a device."""
+        room = _make_room("room_1", "Office")
+        floor_plan = _make_floor_plan(rooms=[room])
+        mock_store.get_floor_plan.return_value = floor_plan
+
+        device = LightPlacement(
+            id="d1",
+            entity_id="light.missing_bulb",
+            position=FPCoordinates(50, 50),
+            floor_id="floor_1",
+            room_id="room_1",
+        )
+
+        collection = MagicMock()
+        collection.get_devices_in_room.return_value = [device]
+        mock_store.get_device_placements.return_value = collection
+
+        # hass.states.get returns None for every entity (default from _make_hass)
+        result = exporter.export_room_card("fp_1", "room_1")
+
+        assert len(result["entities"]) == 2
+        device_entry = result["entities"][1]
+        assert device_entry["entity"] == "light.missing_bulb"
+        # No friendly_name available, so no "name" key should be set
+        assert "name" not in device_entry
+
+    def test_export_room_card_device_with_label_overrides_state_name(
+        self, exporter, mock_store, mock_hass
+    ):
+        """Test that device.label takes precedence over friendly_name from state."""
+        room = _make_room("room_1", "Kitchen")
+        floor_plan = _make_floor_plan(rooms=[room])
+        mock_store.get_floor_plan.return_value = floor_plan
+
+        device = LightPlacement(
+            id="d1",
+            entity_id="light.kitchen",
+            position=FPCoordinates(50, 50),
+            floor_id="floor_1",
+            room_id="room_1",
+            label="Under-Cabinet Light",
+        )
+
+        collection = MagicMock()
+        collection.get_devices_in_room.return_value = [device]
+        mock_store.get_device_placements.return_value = collection
+
+        mock_hass.states.get.side_effect = lambda eid: (
+            _make_state("Kitchen Overhead") if eid == "light.kitchen" else None
+        )
+
+        result = exporter.export_room_card("fp_1", "room_1")
+
+        # The device label should win over the friendly_name
+        assert result["entities"][1]["name"] == "Under-Cabinet Light"
+
     def test_export_summary_card(self, exporter, mock_store):
         """Test summary card export."""
-        room1 = Room(id="room_1", name="Living Room", polygon=Polygon(vertices=[]))
-        room2 = Room(id="room_2", name="Kitchen", polygon=Polygon(vertices=[]))
-        floor = Floor(id="floor_1", name="Ground", level=0, rooms=[room1, room2])
-        floor_plan = FloorPlan(id="fp_1", name="My House", floors=[floor])
-
+        room1 = _make_room("room_1", "Living Room")
+        room2 = _make_room("room_2", "Kitchen")
+        floor_plan = _make_floor_plan(rooms=[room1, room2])
         mock_store.get_floor_plan.return_value = floor_plan
 
         result = exporter.export_summary_card("fp_1")
@@ -366,9 +626,8 @@ class TestCardExporter:
 
     def test_export_yaml_summary(self, exporter, mock_store):
         """Test YAML export for summary card."""
-        room = Room(id="room_1", name="Room", polygon=Polygon(vertices=[]))
-        floor = Floor(id="floor_1", name="Ground", level=0, rooms=[room])
-        floor_plan = FloorPlan(id="fp_1", name="House", floors=[floor])
+        room = _make_room("room_1", "Room")
+        floor_plan = _make_floor_plan(fp_name="House", rooms=[room])
         mock_store.get_floor_plan.return_value = floor_plan
 
         yaml_str = exporter.export_yaml("fp_1", card_type="summary")
@@ -386,27 +645,9 @@ class TestCardExporter:
 
     def test_export_floor_plan_card_single_floor(self, exporter, mock_store, mock_hass):
         """Test floor plan card with single floor."""
-        room = Room(
-            id="room_1",
-            name="Room",
-            polygon=Polygon(
-                vertices=[
-                    FPCoordinates(0, 0),
-                    FPCoordinates(100, 0),
-                    FPCoordinates(100, 100),
-                    FPCoordinates(0, 100),
-                ]
-            ),
-        )
-        floor = Floor(id="floor_1", name="Ground", level=0, rooms=[room])
-        floor_plan = FloorPlan(id="fp_1", name="House", floors=[floor])
-
+        room = _make_room_with_polygon("room_1", "Room")
+        floor_plan = _make_floor_plan(fp_name="House", rooms=[room])
         mock_store.get_floor_plan.return_value = floor_plan
-
-        # Mock device placements
-        collection = MagicMock()
-        collection.get_devices_on_floor.return_value = []
-        mock_store.get_device_placements.return_value = collection
 
         result = exporter.export_floor_plan_card("fp_1")
 
@@ -417,18 +658,13 @@ class TestCardExporter:
 
     def test_export_floor_plan_card_multi_floor(self, exporter, mock_store, mock_hass):
         """Test floor plan card with multiple floors."""
-        room1 = Room(id="room_1", name="Living", polygon=Polygon(vertices=[]))
-        room2 = Room(id="room_2", name="Bedroom", polygon=Polygon(vertices=[]))
+        room1 = _make_room("room_1", "Living")
+        room2 = _make_room("room_2", "Bedroom")
         floor1 = Floor(id="floor_1", name="Ground", level=0, rooms=[room1])
         floor2 = Floor(id="floor_2", name="First", level=1, rooms=[room2])
         floor_plan = FloorPlan(id="fp_1", name="House", floors=[floor1, floor2])
 
         mock_store.get_floor_plan.return_value = floor_plan
-
-        # Mock device placements
-        collection = MagicMock()
-        collection.get_devices_on_floor.return_value = []
-        mock_store.get_device_placements.return_value = collection
 
         result = exporter.export_floor_plan_card("fp_1")
 
@@ -436,3 +672,30 @@ class TestCardExporter:
         assert result["type"] == "vertical-stack"
         assert result["title"] == "House"
         assert len(result["cards"]) == 2
+
+    def test_export_floor_plan_card_skips_missing_entities(
+        self, exporter, mock_store, mock_hass
+    ):
+        """Test that floor plan card skips devices whose entity is not in HA."""
+        room = _make_room_with_polygon("room_1", "Office")
+        floor_plan = _make_floor_plan(fp_name="House", rooms=[room])
+        mock_store.get_floor_plan.return_value = floor_plan
+
+        # Device whose entity does not exist in HA
+        device = MagicMock()
+        device.entity_id = "light.nonexistent"
+        device.position = FPCoordinates(50, 50)
+        device.rotation = 0
+        device.label = None
+
+        collection = MagicMock()
+        collection.get_devices_on_floor.return_value = [device]
+        mock_store.get_device_placements.return_value = collection
+
+        # hass.states.get returns None (default from _make_hass)
+        result = exporter.export_floor_plan_card("fp_1")
+
+        # The room label element should be present, but the device should
+        # be skipped because states.get returned None.
+        assert result["type"] == "picture-elements"
+        assert len(result["elements"]) == 1  # Only the room label

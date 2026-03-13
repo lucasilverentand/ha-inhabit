@@ -28,20 +28,6 @@ STATE_OFF = "off"
 
 
 @pytest.fixture
-def mock_hass():
-    """Create a mock Home Assistant instance."""
-    hass = MagicMock()
-    hass.states = MagicMock()
-    hass.loop = MagicMock()
-
-    def mock_call_later(delay, callback):
-        return MagicMock()
-
-    hass.loop.call_later = mock_call_later
-    return hass
-
-
-@pytest.fixture
 def state_changes():
     """Track state changes."""
     changes = []
@@ -385,6 +371,7 @@ class TestVirtualSensorEngineRouting:
         # Target 1 enters same region
         engine._handle_mmwave_target_update("sensor1", 1, MagicMock(), ["mmwave_room"])
         mock_machine.update_spatial_presence.assert_called_with(2)
+        assert mock_machine.update_spatial_presence.call_count == 2
 
     def test_target_leaving_region_decrements_count(self, mock_hass, mock_store):
         """Target leaving a region decrements the count and calls update."""
@@ -404,6 +391,7 @@ class TestVirtualSensorEngineRouting:
         # Target 0 leaves the region (goes to empty list)
         engine._handle_mmwave_target_update("sensor1", 0, MagicMock(), [])
         mock_machine.update_spatial_presence.assert_called_with(1)
+        assert mock_machine.update_spatial_presence.call_count == 3
 
     def test_last_target_leaves_region_calls_with_zero(self, mock_hass, mock_store):
         """When the last target leaves a region, count is 0."""
@@ -423,6 +411,7 @@ class TestVirtualSensorEngineRouting:
 
         # Last call should be with 0
         mock_machine.update_spatial_presence.assert_called_with(0)
+        assert mock_machine.update_spatial_presence.call_count == 2
 
     def test_target_moving_between_regions(self, mock_hass, mock_store, spatial_config):
         """Target moving from one region to another updates both."""
@@ -483,7 +472,9 @@ class TestVirtualSensorEngineRouting:
         # Should still be 1 — no new call
         assert mock_machine.update_spatial_presence.call_count == 1
 
-    def test_target_in_overlapping_room_and_zone(self, mock_hass, mock_store, spatial_config):
+    def test_target_in_overlapping_room_and_zone(
+        self, mock_hass, mock_store, spatial_config
+    ):
         """A single target triggers both a room and an overlapping zone."""
         from custom_components.inhabit.engine.virtual_sensor_engine import (
             VirtualSensorEngine,
@@ -514,7 +505,9 @@ class TestVirtualSensorEngineRouting:
 
         # Target enters both room and zone simultaneously
         engine._handle_mmwave_target_update(
-            "sensor1", 0, MagicMock(),
+            "sensor1",
+            0,
+            MagicMock(),
             ["mmwave_room", "zone_inside_room"],
         )
 
@@ -544,12 +537,14 @@ class TestMmwaveTargetProcessor:
         room = Room(
             id="room1",
             name="Living Room",
-            polygon=Polygon(vertices=[
-                Coordinates(x=0, y=0),
-                Coordinates(x=500, y=0),
-                Coordinates(x=500, y=500),
-                Coordinates(x=0, y=500),
-            ]),
+            polygon=Polygon(
+                vertices=[
+                    Coordinates(x=0, y=0),
+                    Coordinates(x=500, y=0),
+                    Coordinates(x=500, y=500),
+                    Coordinates(x=0, y=500),
+                ]
+            ),
         )
         floor = Floor(id="floor1", name="Ground", rooms=[room])
         fp = FloorPlan(id="fp1", name="Home", unit="cm", floors=[floor])
@@ -660,21 +655,25 @@ class TestMmwaveTargetProcessor:
 
         room = Room(
             id="room1",
-            polygon=Polygon(vertices=[
-                Coordinates(x=0, y=0),
-                Coordinates(x=1000, y=0),
-                Coordinates(x=1000, y=1000),
-                Coordinates(x=0, y=1000),
-            ]),
+            polygon=Polygon(
+                vertices=[
+                    Coordinates(x=0, y=0),
+                    Coordinates(x=1000, y=0),
+                    Coordinates(x=1000, y=1000),
+                    Coordinates(x=0, y=1000),
+                ]
+            ),
         )
         zone = Zone(
             id="zone1",
-            polygon=Polygon(vertices=[
-                Coordinates(x=200, y=200),
-                Coordinates(x=800, y=200),
-                Coordinates(x=800, y=800),
-                Coordinates(x=200, y=800),
-            ]),
+            polygon=Polygon(
+                vertices=[
+                    Coordinates(x=200, y=200),
+                    Coordinates(x=800, y=200),
+                    Coordinates(x=800, y=800),
+                    Coordinates(x=200, y=800),
+                ]
+            ),
         )
         floor = Floor(id="floor1", rooms=[room], zones=[zone])
         fp = FloorPlan(id="fp1", unit="cm", floors=[floor])
@@ -716,7 +715,7 @@ class TestMmwaveTargetProcessor:
 
         def mock_state(entity_id):
             states = {
-                "sensor.x": MagicMock(state="0"),    # 0mm lateral
+                "sensor.x": MagicMock(state="0"),  # 0mm lateral
                 "sensor.y": MagicMock(state="5000"),  # 5000mm forward
             }
             return states.get(entity_id)
@@ -737,3 +736,4 @@ class TestMmwaveTargetProcessor:
 
         assert "room1" in dispatched_regions
         assert "zone1" in dispatched_regions
+        assert len(dispatched_regions) == 2

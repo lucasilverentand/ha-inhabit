@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
+
+if TYPE_CHECKING:
+    from .zone import Zone
 
 
 def _generate_id() -> str:
@@ -409,7 +412,9 @@ class Room:
         default_factory=list
     )  # Room IDs connected via doors
     is_transit: bool | None = None  # None = auto-detect, True/False = manual override
-    long_stay: bool = False  # Room where occupants stay for hours (living room, bedroom, etc.)
+    long_stay: bool = (
+        False  # Room where occupants stay for hours (living room, bedroom, etc.)
+    )
     phantom_hold_seconds: int = (
         0  # 0 = use default (300s for transit, checking_timeout otherwise)
     )
@@ -482,9 +487,7 @@ class Floor:
     rooms: list[Room] = field(default_factory=list)
     nodes: list[Node] = field(default_factory=list)
     edges: list[Edge] = field(default_factory=list)
-    zones: list[Any] = field(
-        default_factory=list
-    )  # list[Zone], Any avoids circular import
+    zones: list[Zone] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
@@ -561,7 +564,7 @@ class Floor:
                 return edge
         return None
 
-    def get_zone(self, zone_id: str) -> Any | None:
+    def get_zone(self, zone_id: str) -> Zone | None:
         """Get zone by ID."""
         for zone in self.zones:
             if zone.id == zone_id:

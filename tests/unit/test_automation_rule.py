@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from custom_components.inhabit.models.automation_rule import (
     RuleAction,
     RuleCondition,
@@ -166,6 +168,24 @@ class TestRuleCondition:
         assert ha_condition["after"] == "sunset"
         assert ha_condition["before"] == "sunrise"
 
+    def test_to_ha_condition_unknown_type_raises(self):
+        """Test that unknown condition type raises ValueError."""
+        condition = RuleCondition(
+            type="nonexistent_type",
+            entity_id="sensor.test",
+            state="on",
+        )
+        with pytest.raises(
+            ValueError, match="Unknown condition type: nonexistent_type"
+        ):
+            condition.to_ha_condition()
+
+    def test_to_ha_condition_empty_type_raises(self):
+        """Test that empty string condition type raises ValueError."""
+        condition = RuleCondition(type="", entity_id="sensor.test")
+        with pytest.raises(ValueError, match="Unknown condition type: "):
+            condition.to_ha_condition()
+
 
 class TestRuleAction:
     """Test RuleAction model."""
@@ -284,6 +304,39 @@ class TestRuleAction:
         ha_action = action.to_ha_action()
 
         assert "wait_template" in ha_action
+
+    def test_to_ha_action_unknown_type_raises(self):
+        """Test that unknown action type raises ValueError."""
+        action = RuleAction(
+            type="nonexistent_action",
+            service=None,
+        )
+        with pytest.raises(ValueError, match="Unknown action type: nonexistent_action"):
+            action.to_ha_action()
+
+    def test_to_ha_action_none_service_non_service_type(self):
+        """Test that a non-service action type with None service raises ValueError."""
+        action = RuleAction(type="custom_thing", service=None)
+        with pytest.raises(ValueError, match="Unknown action type: custom_thing"):
+            action.to_ha_action()
+
+    def test_to_ha_action_empty_type_raises(self):
+        """Test that empty string action type raises ValueError."""
+        action = RuleAction(type="")
+        with pytest.raises(ValueError, match="Unknown action type: "):
+            action.to_ha_action()
+
+    def test_to_ha_action_service_call_no_entity_no_data(self):
+        """Test service call action with only service, no entity or data."""
+        action = RuleAction(
+            type="service_call",
+            service="homeassistant.restart",
+        )
+        ha_action = action.to_ha_action()
+
+        assert ha_action["service"] == "homeassistant.restart"
+        assert "target" not in ha_action
+        assert "data" not in ha_action
 
 
 class TestVisualRule:

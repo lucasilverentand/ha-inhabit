@@ -193,7 +193,7 @@ export type OccupancyState = "vacant" | "occupied" | "checking";
 
 export interface SensorBinding {
   entity_id: string;
-  sensor_type: "motion" | "presence" | "door";
+  sensor_type: "motion" | "presence" | "occupancy" | "door";
   weight: number;
   inverted: boolean;
 }
@@ -207,6 +207,7 @@ export interface VirtualSensorConfig {
   presence_timeout: number;
   motion_sensors: SensorBinding[];
   presence_sensors: SensorBinding[];
+  occupancy_sensors: SensorBinding[];
   door_sensors: SensorBinding[];
   presence_affects: boolean;
   door_blocks_vacancy: boolean;
