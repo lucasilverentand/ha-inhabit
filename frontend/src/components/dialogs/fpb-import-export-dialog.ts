@@ -415,9 +415,9 @@ export class FpbImportExportDialog extends LitElement {
       URL.revokeObjectURL(url);
 
       this.close();
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Export error:", err);
-      this._error = `Export failed: ${err?.message || err}`;
+      this._error = `Export failed: ${err instanceof Error ? err.message : String(err)}`;
     } finally {
       this._exporting = false;
     }
@@ -554,9 +554,9 @@ export class FpbImportExportDialog extends LitElement {
       );
 
       this.close();
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Import error:", err);
-      this._error = `Import failed: ${err?.message || err}`;
+      this._error = `Import failed: ${err instanceof Error ? err.message : String(err)}`;
     } finally {
       this._importing = false;
     }

@@ -152,7 +152,7 @@ export interface FloorPlan {
 }
 
 // Device placement types
-export interface LightPlacement {
+export interface BasePlacement {
   id: string;
   entity_id: string;
   floor_id: string;
@@ -161,32 +161,13 @@ export interface LightPlacement {
   label?: string;
 }
 
-export interface SwitchPlacement {
-  id: string;
-  entity_id: string;
-  floor_id: string;
-  room_id?: string;
-  position: Coordinates;
-  label?: string;
-}
+export interface LightPlacement extends BasePlacement {}
 
-export interface ButtonPlacement {
-  id: string;
-  entity_id: string;
-  floor_id: string;
-  room_id?: string;
-  position: Coordinates;
-  label?: string;
-}
+export interface SwitchPlacement extends BasePlacement {}
 
-export interface OtherPlacement {
-  id: string;
-  entity_id: string;
-  floor_id: string;
-  room_id?: string;
-  position: Coordinates;
-  label?: string;
-}
+export interface ButtonPlacement extends BasePlacement {}
+
+export interface OtherPlacement extends BasePlacement {}
 
 // Virtual sensor types
 export type OccupancyState = "vacant" | "occupied" | "checking";

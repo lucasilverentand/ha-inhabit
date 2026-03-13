@@ -26,6 +26,16 @@ import type {
 } from "../types";
 import type { ConstraintViolation } from "../utils/wall-solver";
 
+const DEFAULT_VISIBLE_LAYERS: LayerConfig[] = [
+  { id: "background", name: "Background", visible: true, locked: false, opacity: 1 },
+  { id: "structure", name: "Structure", visible: true, locked: false, opacity: 1 },
+  { id: "furniture", name: "Furniture", visible: true, locked: false, opacity: 1 },
+  { id: "devices", name: "Devices", visible: true, locked: false, opacity: 1 },
+  { id: "coverage", name: "Coverage", visible: true, locked: false, opacity: 0.5 },
+  { id: "labels", name: "Labels", visible: true, locked: false, opacity: 1 },
+  { id: "automation", name: "Automation", visible: true, locked: false, opacity: 0.7 },
+];
+
 interface InhabitSignals {
   currentFloorPlan: Signal<FloorPlan | null>;
   currentFloor: Signal<Floor | null>;
@@ -68,15 +78,7 @@ function createSignals(): InhabitSignals {
     gridSize: signal<number>(10),
     snapToGrid: signal<boolean>(true),
     showGrid: signal<boolean>(true),
-    layers: signal<LayerConfig[]>([
-      { id: "background", name: "Background", visible: true, locked: false, opacity: 1 },
-      { id: "structure", name: "Structure", visible: true, locked: false, opacity: 1 },
-      { id: "furniture", name: "Furniture", visible: true, locked: false, opacity: 1 },
-      { id: "devices", name: "Devices", visible: true, locked: false, opacity: 1 },
-      { id: "coverage", name: "Coverage", visible: true, locked: false, opacity: 0.5 },
-      { id: "labels", name: "Labels", visible: true, locked: false, opacity: 1 },
-      { id: "automation", name: "Automation", visible: true, locked: false, opacity: 0.7 },
-    ]),
+    layers: signal<LayerConfig[]>(structuredClone(DEFAULT_VISIBLE_LAYERS)),
     lightPlacements: signal<LightPlacement[]>([]),
     switchPlacements: signal<SwitchPlacement[]>([]),
     buttonPlacements: signal<ButtonPlacement[]>([]),
@@ -160,15 +162,7 @@ export function resetSignals(): void {
   gridSize.value = 10;
   snapToGrid.value = true;
   showGrid.value = true;
-  layers.value = [
-    { id: "background", name: "Background", visible: true, locked: false, opacity: 1 },
-    { id: "structure", name: "Structure", visible: true, locked: false, opacity: 1 },
-    { id: "furniture", name: "Furniture", visible: true, locked: false, opacity: 1 },
-    { id: "devices", name: "Devices", visible: true, locked: false, opacity: 1 },
-    { id: "coverage", name: "Coverage", visible: true, locked: false, opacity: 0.5 },
-    { id: "labels", name: "Labels", visible: true, locked: false, opacity: 1 },
-    { id: "automation", name: "Automation", visible: true, locked: false, opacity: 0.7 },
-  ];
+  layers.value = structuredClone(DEFAULT_VISIBLE_LAYERS);
   lightPlacements.value = [];
   switchPlacements.value = [];
   buttonPlacements.value = [];
