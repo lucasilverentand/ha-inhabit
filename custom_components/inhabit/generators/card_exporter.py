@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING, Any
 import yaml
 from homeassistant.core import HomeAssistant
 
+from ..entities.const import ENTITY_PREFIX, SUFFIX_OCCUPANCY
+
 if TYPE_CHECKING:
     from ..store.floor_plan_store import FloorPlanStore
 
@@ -44,7 +46,7 @@ class CardExporter:
         # Add occupancy sensor
         entities.append(
             {
-                "entity": f"binary_sensor.fp_{room_id}_occupancy",
+                "entity": f"binary_sensor.{ENTITY_PREFIX}{room_id}{SUFFIX_OCCUPANCY}",
                 "name": "Occupancy",
             }
         )
@@ -89,7 +91,7 @@ class CardExporter:
                     elements.append(
                         {
                             "type": "state-label",
-                            "entity": f"binary_sensor.fp_{room.id}_occupancy",
+                            "entity": f"binary_sensor.{ENTITY_PREFIX}{room.id}{SUFFIX_OCCUPANCY}",
                             "style": {
                                 "left": f"{center.x}px",
                                 "top": f"{center.y}px",
@@ -171,7 +173,7 @@ class CardExporter:
         for room in rooms:
             entities.append(
                 {
-                    "entity": f"binary_sensor.fp_{room.id}_occupancy",
+                    "entity": f"binary_sensor.{ENTITY_PREFIX}{room.id}{SUFFIX_OCCUPANCY}",
                     "name": room.name,
                     "secondary_info": "last-changed",
                 }

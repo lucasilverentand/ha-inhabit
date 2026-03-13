@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING, Any
 import yaml
 from homeassistant.core import HomeAssistant
 
+from ..entities.const import ENTITY_PREFIX, SUFFIX_OCCUPANCY
+
 if TYPE_CHECKING:
     from ..models.automation_rule import VisualRule
     from ..store.floor_plan_store import FloorPlanStore
@@ -76,7 +78,7 @@ class AutomationGenerator:
             "trigger": [
                 {
                     "platform": "state",
-                    "entity_id": f"binary_sensor.fp_{room_id}_occupancy",
+                    "entity_id": f"binary_sensor.{ENTITY_PREFIX}{room_id}{SUFFIX_OCCUPANCY}",
                     "to": trigger_state,
                 }
             ],
