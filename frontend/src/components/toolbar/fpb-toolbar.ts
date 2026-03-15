@@ -2,20 +2,25 @@
  * Toolbar Component
  */
 
-import { LitElement, html, css } from "lit";
-import { property, state } from "lit/decorators.js";
 import { effect } from "@preact/signals-core";
-import type { HomeAssistant, FloorPlan, ToolType, CanvasMode } from "../../types";
+import { css, html, LitElement } from "lit";
+import { property, state } from "lit/decorators.js";
+import { canRedo, canUndo, redo, undo } from "../../stores/history-store";
 import {
-  currentFloorPlan,
-  currentFloor,
   activeTool,
   canvasMode,
+  currentFloor,
+  currentFloorPlan,
   setCanvasMode,
   simHitboxEnabled,
   simulatedTargets,
 } from "../../stores/signals";
-import { canUndo, canRedo, undo, redo } from "../../stores/history-store";
+import type {
+  CanvasMode,
+  FloorPlan,
+  HomeAssistant,
+  ToolType,
+} from "../../types";
 
 interface AddMenuItem {
   id: ToolType;
@@ -362,7 +367,7 @@ export class FpbToolbar extends LitElement {
         detail: { id: floorId },
         bubbles: true,
         composed: true,
-      })
+      }),
     );
   }
 
@@ -384,20 +389,29 @@ export class FpbToolbar extends LitElement {
       new CustomEvent("add-floor", {
         bubbles: true,
         composed: true,
-      })
+      }),
     );
   }
 
-  private _handleDeleteFloor(e: Event, floorId: string, floorName: string): void {
+  private _handleDeleteFloor(
+    e: Event,
+    floorId: string,
+    floorName: string,
+  ): void {
     e.stopPropagation();
-    if (!confirm(`Delete "${floorName}"? This will remove all walls, rooms, and devices on this floor.`)) return;
+    if (
+      !confirm(
+        `Delete "${floorName}"? This will remove all walls, rooms, and devices on this floor.`,
+      )
+    )
+      return;
     this._floorMenuOpen = false;
     this.dispatchEvent(
       new CustomEvent("delete-floor", {
         detail: { id: floorId },
         bubbles: true,
         composed: true,
-      })
+      }),
     );
   }
 
@@ -407,7 +421,9 @@ export class FpbToolbar extends LitElement {
     this._renameValue = currentName;
     this._renameCommitted = false;
     this.updateComplete.then(() => {
-      const input = this.shadowRoot?.querySelector(".rename-input") as HTMLInputElement | null;
+      const input = this.shadowRoot?.querySelector(
+        ".rename-input",
+      ) as HTMLInputElement | null;
       if (input) {
         input.focus();
         input.select();
@@ -428,7 +444,7 @@ export class FpbToolbar extends LitElement {
         detail: { id, name },
         bubbles: true,
         composed: true,
-      })
+      }),
     );
   }
 
@@ -449,7 +465,7 @@ export class FpbToolbar extends LitElement {
       new CustomEvent("exit-editor", {
         bubbles: true,
         composed: true,
-      })
+      }),
     );
   }
 
@@ -459,7 +475,7 @@ export class FpbToolbar extends LitElement {
       new CustomEvent("open-import-export", {
         bubbles: true,
         composed: true,
-      })
+      }),
     );
   }
 
@@ -480,7 +496,7 @@ export class FpbToolbar extends LitElement {
     this._cleanupEffects.push(
       effect(() => {
         this._canvasMode = canvasMode.value;
-      })
+      }),
     );
   }
 
@@ -488,7 +504,7 @@ export class FpbToolbar extends LitElement {
     super.disconnectedCallback();
     document.removeEventListener("click", this._handleDocumentClick);
     this._documentListenerAttached = false;
-    this._cleanupEffects.forEach(cleanup => cleanup());
+    for (const cleanup of this._cleanupEffects) cleanup();
     this._cleanupEffects = [];
   }
 
@@ -506,15 +522,21 @@ export class FpbToolbar extends LitElement {
     const mode = this._canvasMode;
     const floors = fp?.floors || [];
 
-    const menuItems = mode === "walls" ? WALLS_MENU_ITEMS
-      : mode === "furniture" ? ZONES_MENU_ITEMS
-      : mode === "placement" ? PLACEMENT_MENU_ITEMS
-      : [];
+    const menuItems =
+      mode === "walls"
+        ? WALLS_MENU_ITEMS
+        : mode === "furniture"
+          ? ZONES_MENU_ITEMS
+          : mode === "placement"
+            ? PLACEMENT_MENU_ITEMS
+            : [];
 
     return html`
       <!-- Left: Floor Selector -->
       <div class="toolbar-left">
-        ${floors.length > 0 ? html`
+        ${
+          floors.length > 0
+            ? html`
           <div class="floor-selector">
             <button
               class="floor-trigger ${this._floorMenuOpen ? "open" : ""}"
@@ -523,10 +545,12 @@ export class FpbToolbar extends LitElement {
               ${floor?.name || "Select floor"}
               <ha-icon icon="mdi:chevron-down"></ha-icon>
             </button>
-            ${this._floorMenuOpen ? html`
+            ${
+              this._floorMenuOpen
+                ? html`
               <div class="floor-dropdown">
-                ${floors.map(
-                  (f) => this._renamingFloorId === f.id
+                ${floors.map((f) =>
+                  this._renamingFloorId === f.id
                     ? html`
                       <div class="floor-option">
                         <ha-icon icon="mdi:layers"></ha-icon>
@@ -534,7 +558,9 @@ export class FpbToolbar extends LitElement {
                           class="rename-input"
                           .value=${this._renameValue}
                           @input=${(e: InputEvent) => {
-                            this._renameValue = (e.target as HTMLInputElement).value;
+                            this._renameValue = (
+                              e.target as HTMLInputElement
+                            ).value;
                           }}
                           @keydown=${this._handleRenameKeyDown}
                           @blur=${this._commitRename}
@@ -560,7 +586,7 @@ export class FpbToolbar extends LitElement {
                           <ha-icon icon="mdi:delete-outline"></ha-icon>
                         </span>
                       </button>
-                    `
+                    `,
                 )}
                 <div class="floor-dropdown-divider"></div>
                 <button class="floor-option add-floor" @click=${this._handleAddFloor}>
@@ -572,14 +598,18 @@ export class FpbToolbar extends LitElement {
                   Import / Export
                 </button>
               </div>
-            ` : null}
+            `
+                : null
+            }
           </div>
-        ` : html`
+        `
+            : html`
           <button class="floor-trigger" @click=${this._handleAddFloor}>
             <ha-icon icon="mdi:plus" style="--mdc-icon-size: 16px;"></ha-icon>
             Add floor
           </button>
-        `}
+        `
+        }
       </div>
 
       <!-- Center: Mode Switcher -->
@@ -636,7 +666,9 @@ export class FpbToolbar extends LitElement {
         </div>
 
         <!-- Occupancy mode: simulation toggle -->
-        ${mode === "occupancy" ? html`
+        ${
+          mode === "occupancy"
+            ? html`
           <div class="divider"></div>
           <div class="tool-group">
             <button
@@ -653,13 +685,18 @@ export class FpbToolbar extends LitElement {
               <ha-icon icon="mdi:target-account"></ha-icon>
             </button>
           </div>
-        ` : null}
+        `
+            : null
+        }
 
         <!-- Tool buttons (contextual) -->
-        ${menuItems.length > 0 ? html`
+        ${
+          menuItems.length > 0
+            ? html`
           <div class="divider"></div>
           <div class="tool-group">
-            ${menuItems.map(item => html`
+            ${menuItems.map(
+              (item) => html`
               <button
                 class="tool-button ${tool === item.id ? "active" : ""}"
                 @click=${() => this._handleToolSelect(item.id)}
@@ -667,9 +704,12 @@ export class FpbToolbar extends LitElement {
               >
                 <ha-icon icon=${item.icon}></ha-icon>
               </button>
-            `)}
+            `,
+            )}
           </div>
-        ` : null}
+        `
+            : null
+        }
 
         <div class="divider"></div>
         <button

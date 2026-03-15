@@ -8,32 +8,62 @@
  * reactive state.
  */
 
-import { signal, type Signal } from "@preact/signals-core";
+import { type Signal, signal } from "@preact/signals-core";
 import type {
-  FloorPlan,
-  Floor,
-  ToolType,
-  CanvasMode,
-  LayerConfig,
-  ViewBox,
-  SelectionState,
-  LightPlacement,
-  SwitchPlacement,
   ButtonPlacement,
-  OtherPlacement,
+  CanvasMode,
+  Floor,
+  FloorPlan,
+  LayerConfig,
+  LightPlacement,
   MmwavePlacement,
+  OtherPlacement,
+  SelectionState,
   SimulatedTarget,
+  SwitchPlacement,
+  ToolType,
+  ViewBox,
 } from "../types";
 import type { ConstraintViolation } from "../utils/wall-solver";
 
 const DEFAULT_VISIBLE_LAYERS: LayerConfig[] = [
-  { id: "background", name: "Background", visible: true, locked: false, opacity: 1 },
-  { id: "structure", name: "Structure", visible: true, locked: false, opacity: 1 },
-  { id: "furniture", name: "Furniture", visible: true, locked: false, opacity: 1 },
+  {
+    id: "background",
+    name: "Background",
+    visible: true,
+    locked: false,
+    opacity: 1,
+  },
+  {
+    id: "structure",
+    name: "Structure",
+    visible: true,
+    locked: false,
+    opacity: 1,
+  },
+  {
+    id: "furniture",
+    name: "Furniture",
+    visible: true,
+    locked: false,
+    opacity: 1,
+  },
   { id: "devices", name: "Devices", visible: true, locked: false, opacity: 1 },
-  { id: "coverage", name: "Coverage", visible: true, locked: false, opacity: 0.5 },
+  {
+    id: "coverage",
+    name: "Coverage",
+    visible: true,
+    locked: false,
+    opacity: 0.5,
+  },
   { id: "labels", name: "Labels", visible: true, locked: false, opacity: 1 },
-  { id: "automation", name: "Automation", visible: true, locked: false, opacity: 0.7 },
+  {
+    id: "automation",
+    name: "Automation",
+    visible: true,
+    locked: false,
+    opacity: 0.7,
+  },
 ];
 
 interface InhabitSignals {
@@ -53,8 +83,15 @@ interface InhabitSignals {
   otherPlacements: Signal<OtherPlacement[]>;
   constraintConflicts: Signal<Map<string, ConstraintViolation[]>>;
   focusedRoomId: Signal<string | null>;
-  occupancyPanelTarget: Signal<{ id: string; name: string; type: "room" | "zone" } | null>;
-  devicePanelTarget: Signal<{ id: string; type: "light" | "switch" | "mmwave" | "button" | "other" } | null>;
+  occupancyPanelTarget: Signal<{
+    id: string;
+    name: string;
+    type: "room" | "zone";
+  } | null>;
+  devicePanelTarget: Signal<{
+    id: string;
+    type: "light" | "switch" | "mmwave" | "button" | "other";
+  } | null>;
   mmwavePlacements: Signal<MmwavePlacement[]>;
   simulatedTargets: Signal<SimulatedTarget[]>;
   simHitboxEnabled: Signal<boolean>;
@@ -85,8 +122,15 @@ function createSignals(): InhabitSignals {
     otherPlacements: signal<OtherPlacement[]>([]),
     constraintConflicts: signal<Map<string, ConstraintViolation[]>>(new Map()),
     focusedRoomId: signal<string | null>(null),
-    occupancyPanelTarget: signal<{ id: string; name: string; type: "room" | "zone" } | null>(null),
-    devicePanelTarget: signal<{ id: string; type: "light" | "switch" | "mmwave" | "button" | "other" } | null>(null),
+    occupancyPanelTarget: signal<{
+      id: string;
+      name: string;
+      type: "room" | "zone";
+    } | null>(null),
+    devicePanelTarget: signal<{
+      id: string;
+      type: "light" | "switch" | "mmwave" | "button" | "other";
+    } | null>(null),
     mmwavePlacements: signal<MmwavePlacement[]>([]),
     simulatedTargets: signal<SimulatedTarget[]>([]),
     simHitboxEnabled: signal<boolean>(false),

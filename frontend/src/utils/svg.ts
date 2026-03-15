@@ -16,7 +16,7 @@ export function polygonToPath(polygon: Polygon): string {
     return `${cmd}${v.x},${v.y}`;
   });
 
-  return parts.join(" ") + " Z";
+  return `${parts.join(" ")} Z`;
 }
 
 /**
@@ -40,7 +40,7 @@ export function sectorPath(
   center: Coordinates,
   radius: number,
   startAngle: number,
-  endAngle: number
+  endAngle: number,
 ): string {
   const startRad = (startAngle * Math.PI) / 180;
   const endRad = (endAngle * Math.PI) / 180;
@@ -72,7 +72,7 @@ export function rectPath(
   x: number,
   y: number,
   width: number,
-  height: number
+  height: number,
 ): string {
   return `M${x},${y} h${width} v${height} h${-width} Z`;
 }
@@ -85,7 +85,7 @@ export function roundedRectPath(
   y: number,
   width: number,
   height: number,
-  radius: number
+  radius: number,
 ): string {
   const r = Math.min(radius, width / 2, height / 2);
   return `M${x + r},${y}
@@ -106,7 +106,7 @@ export function roundedRectPath(
 export function ellipsePath(
   center: Coordinates,
   rx: number,
-  ry: number
+  ry: number,
 ): string {
   return `M${center.x - rx},${center.y}
           a${rx},${ry} 0 1,0 ${rx * 2},0
@@ -120,7 +120,7 @@ export function doorSwingPath(
   hingePoint: Coordinates,
   doorWidth: number,
   direction: "left" | "right",
-  angle: number = 85
+  angle: number = 85,
 ): string {
   const startAngle = direction === "left" ? 0 : 180 - angle;
   const endAngle = direction === "left" ? angle : 180;
@@ -145,7 +145,7 @@ export function doorSwingPath(
 export function wallPath(
   start: Coordinates,
   end: Coordinates,
-  thickness: number
+  thickness: number,
 ): string {
   const dx = end.x - start.x;
   const dy = end.y - start.y;
@@ -169,14 +169,32 @@ export function wallPath(
  * Only chains wall-type edges; doors/windows break chains.
  */
 export function groupEdgesIntoChains(
-  edges: Array<{ id: string; start_node: string; end_node: string; startPos: Coordinates; endPos: Coordinates; thickness: number; type: string }>
-): Array<Array<{ id: string; start_node: string; end_node: string; startPos: Coordinates; endPos: Coordinates; thickness: number; type: string }>> {
+  edges: Array<{
+    id: string;
+    start_node: string;
+    end_node: string;
+    startPos: Coordinates;
+    endPos: Coordinates;
+    thickness: number;
+    type: string;
+  }>,
+): Array<
+  Array<{
+    id: string;
+    start_node: string;
+    end_node: string;
+    startPos: Coordinates;
+    endPos: Coordinates;
+    thickness: number;
+    type: string;
+  }>
+> {
   // Only chain wall-type edges
-  const wallEdges = edges.filter(e => e.type === 'wall');
+  const wallEdges = edges.filter((e) => e.type === "wall");
   if (wallEdges.length === 0) return [];
 
   const used = new Set<string>();
-  const chains: Array<Array<typeof wallEdges[0]>> = [];
+  const chains: Array<Array<(typeof wallEdges)[0]>> = [];
 
   for (const startEdge of wallEdges) {
     if (used.has(startEdge.id)) continue;
@@ -254,7 +272,7 @@ export function groupEdgesIntoChains(
  * Create a wall chain path with proper miter joints at corners
  */
 export function wallChainPath(
-  chain: Array<{ start: Coordinates; end: Coordinates; thickness: number }>
+  chain: Array<{ start: Coordinates; end: Coordinates; thickness: number }>,
 ): string {
   if (chain.length === 0) return "";
 
@@ -268,7 +286,8 @@ export function wallChainPath(
   }
 
   // Check if it's a closed loop
-  const isClosed = centerline.length > 2 &&
+  const isClosed =
+    centerline.length > 2 &&
     Math.abs(centerline[0].x - centerline[centerline.length - 1].x) < 1 &&
     Math.abs(centerline[0].y - centerline[centerline.length - 1].y) < 1;
 
@@ -331,7 +350,10 @@ export function wallChainPath(
           const scale = 1 / dot;
           // Limit miter extension to avoid very long points
           const limitedScale = Math.min(Math.abs(scale), 3) * Math.sign(scale);
-          offsetDir = { x: offsetDir.x * limitedScale, y: offsetDir.y * limitedScale };
+          offsetDir = {
+            x: offsetDir.x * limitedScale,
+            y: offsetDir.y * limitedScale,
+          };
         }
       }
     } else if (prevDir) {
@@ -464,7 +486,7 @@ export function viewBoxToString(vb: ViewBox): string {
 export function screenToSvg(
   screenPoint: Coordinates,
   svgElement: SVGSVGElement,
-  viewBox: ViewBox
+  viewBox: ViewBox,
 ): Coordinates {
   const rect = svgElement.getBoundingClientRect();
   const scaleX = viewBox.width / rect.width;
@@ -482,7 +504,7 @@ export function screenToSvg(
 export function svgToScreen(
   svgPoint: Coordinates,
   svgElement: SVGSVGElement,
-  viewBox: ViewBox
+  viewBox: ViewBox,
 ): Coordinates {
   const rect = svgElement.getBoundingClientRect();
   const scaleX = rect.width / viewBox.width;
@@ -499,7 +521,7 @@ export function svgToScreen(
  */
 export function createGridPattern(
   gridSize: number,
-  color: string = "#e0e0e0"
+  color: string = "#e0e0e0",
 ): string {
   return `
     <pattern id="grid" width="${gridSize}" height="${gridSize}" patternUnits="userSpaceOnUse">
@@ -515,7 +537,7 @@ export function createGridPatternMajorMinor(
   gridSize: number,
   majorGridSize: number,
   minorColor: string = "#f0f0f0",
-  majorColor: string = "#d0d0d0"
+  majorColor: string = "#d0d0d0",
 ): string {
   return `
     <pattern id="minor-grid" width="${gridSize}" height="${gridSize}" patternUnits="userSpaceOnUse">

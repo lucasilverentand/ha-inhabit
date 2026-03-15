@@ -2,7 +2,7 @@
  * Geometry utility functions
  */
 
-import type { Coordinates, BoundingBox, Polygon } from "../types";
+import type { BoundingBox, Coordinates, Polygon } from "../types";
 
 /**
  * Calculate distance between two points
@@ -48,7 +48,7 @@ export function angleBetween(p1: Coordinates, p2: Coordinates): number {
 export function rotatePoint(
   point: Coordinates,
   origin: Coordinates,
-  angleDegrees: number
+  angleDegrees: number,
 ): Coordinates {
   const angleRad = (angleDegrees * Math.PI) / 180;
   const cos = Math.cos(angleRad);
@@ -116,7 +116,7 @@ export function pointNearLine(
   point: Coordinates,
   lineStart: Coordinates,
   lineEnd: Coordinates,
-  threshold: number
+  threshold: number,
 ): boolean {
   const lineLength = distance(lineStart, lineEnd);
   if (lineLength === 0) return distance(point, lineStart) <= threshold;
@@ -127,8 +127,8 @@ export function pointNearLine(
       1,
       ((point.x - lineStart.x) * (lineEnd.x - lineStart.x) +
         (point.y - lineStart.y) * (lineEnd.y - lineStart.y)) /
-        (lineLength * lineLength)
-    )
+        (lineLength * lineLength),
+    ),
   );
 
   const projection: Coordinates = {
@@ -146,8 +146,12 @@ export function polygonCentroid(polygon: Polygon): Coordinates | null {
   const vertices = polygon.vertices;
   if (vertices.length === 0) return null;
   if (vertices.length < 3) {
-    let cx = 0, cy = 0;
-    for (const v of vertices) { cx += v.x; cy += v.y; }
+    let cx = 0,
+      cy = 0;
+    for (const v of vertices) {
+      cx += v.x;
+      cy += v.y;
+    }
     return { x: cx / vertices.length, y: cy / vertices.length };
   }
 
@@ -166,8 +170,12 @@ export function polygonCentroid(polygon: Polygon): Coordinates | null {
 
   area /= 2;
   if (Math.abs(area) < 1e-6) {
-    let sx = 0, sy = 0;
-    for (const v of vertices) { sx += v.x; sy += v.y; }
+    let sx = 0,
+      sy = 0;
+    for (const v of vertices) {
+      sx += v.x;
+      sy += v.y;
+    }
     return { x: sx / n, y: sy / n };
   }
 
@@ -216,7 +224,7 @@ export function lineIntersection(
   p1: Coordinates,
   p2: Coordinates,
   p3: Coordinates,
-  p4: Coordinates
+  p4: Coordinates,
 ): Coordinates | null {
   const d1x = p2.x - p1.x;
   const d1y = p2.y - p1.y;
@@ -247,13 +255,17 @@ export function lineIntersection(
  * Picks the two most distant points as the reference line, then checks
  * that all others are within `tolerance` perpendicular distance.
  */
-export function arePointsCollinear(points: Coordinates[], tolerance: number = 2.0): boolean {
+export function arePointsCollinear(
+  points: Coordinates[],
+  tolerance: number = 2.0,
+): boolean {
   if (points.length < 2) return true;
   if (points.length === 2) return true;
 
   // Find two most distant points
   let maxDist = 0;
-  let a = points[0], b = points[1];
+  let a = points[0],
+    b = points[1];
   for (let i = 0; i < points.length; i++) {
     for (let j = i + 1; j < points.length; j++) {
       const d = distance(points[i], points[j]);
@@ -283,13 +295,17 @@ export function arePointsCollinear(points: Coordinates[], tolerance: number = 2.
  * Returns { anchor, dir } where dir is a unit vector.
  * Uses the two most distant points as the reference.
  */
-export function fitLine(points: Coordinates[]): { anchor: Coordinates; dir: Coordinates } {
+export function fitLine(points: Coordinates[]): {
+  anchor: Coordinates;
+  dir: Coordinates;
+} {
   if (points.length < 2) {
     return { anchor: points[0] || { x: 0, y: 0 }, dir: { x: 1, y: 0 } };
   }
 
   let maxDist = 0;
-  let a = points[0], b = points[1];
+  let a = points[0],
+    b = points[1];
   for (let i = 0; i < points.length; i++) {
     for (let j = i + 1; j < points.length; j++) {
       const d = distance(points[i], points[j]);
@@ -320,7 +336,7 @@ export function fitLine(points: Coordinates[]): { anchor: Coordinates; dir: Coor
 export function projectOntoLine(
   point: Coordinates,
   anchor: Coordinates,
-  dir: Coordinates
+  dir: Coordinates,
 ): Coordinates {
   const dx = point.x - anchor.x;
   const dy = point.y - anchor.y;

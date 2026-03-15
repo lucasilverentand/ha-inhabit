@@ -2,7 +2,7 @@
  * History store for undo/redo functionality
  */
 
-import { signal, computed } from "@preact/signals-core";
+import { computed, signal } from "@preact/signals-core";
 
 export interface HistoryAction {
   type: string;
@@ -17,8 +17,12 @@ const undoStack = signal<HistoryAction[]>([]);
 const redoStack = signal<HistoryAction[]>([]);
 const _executing = signal(false);
 
-export const canUndo = computed(() => undoStack.value.length > 0 && !_executing.value);
-export const canRedo = computed(() => redoStack.value.length > 0 && !_executing.value);
+export const canUndo = computed(
+  () => undoStack.value.length > 0 && !_executing.value,
+);
+export const canRedo = computed(
+  () => redoStack.value.length > 0 && !_executing.value,
+);
 
 export function pushAction(action: HistoryAction): void {
   undoStack.value = [...undoStack.value.slice(-MAX_HISTORY_SIZE + 1), action];

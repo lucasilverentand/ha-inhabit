@@ -2,79 +2,134 @@
  * SVG Canvas Component with pan/zoom and wall-based room creation
  */
 
-import { LitElement, html, css, svg } from "lit";
-import { property, state, query } from "lit/decorators.js";
 import { effect } from "@preact/signals-core";
-import type { HomeAssistant, Coordinates, ViewBox, Edge, Node, Room, WallDirection, CanvasMode, Floor, SelectionState, HassEntity, LightPlacement, SwitchPlacement, ButtonPlacement, OtherPlacement, Zone, SimulatedTarget, BackgroundLayer } from "../../types";
+import { css, html, LitElement, svg } from "lit";
+import { property, query, state } from "lit/decorators.js";
+import { pushAction, redo, undo } from "../../stores/history-store";
 import {
+  activeTool,
+  buttonPlacements,
+  canvasMode,
+  constraintConflicts,
   currentFloor,
   currentFloorPlan,
-  viewBox,
+  devicePanelTarget,
+  focusedRoomId,
   gridSize,
-  snapToGrid,
   layers,
-  activeTool,
-  canvasMode,
-  selection,
   lightPlacements,
-  switchPlacements,
-  buttonPlacements,
+  mmwavePlacements,
+  occupancyPanelTarget,
   otherPlacements,
   reloadFloorData,
-  constraintConflicts,
-  focusedRoomId,
-  occupancyPanelTarget,
-  devicePanelTarget,
-  mmwavePlacements,
-  simulatedTargets,
+  selection,
   simHitboxEnabled,
+  simulatedTargets,
+  snapToGrid,
+  switchPlacements,
+  viewBox,
 } from "../../stores/signals";
-import { polygonToPath, viewBoxToString, groupEdgesIntoChains, wallChainPath } from "../../utils/svg";
-import { snapToGrid as snapPoint, arePointsCollinear } from "../../utils/geometry";
-import { buildNodeGraph, solveNodeMove, solveEdgeLengthChange, solveConstraintSnap, previewNodeDrag, checkConstraintsFeasible, findDegenerateEdges, solveCollinearTotalLength } from "../../utils/wall-solver";
-import { resolveFloorEdges, buildNodeMap, findNearestNode, edgesAtNode } from "../../utils/node-graph";
+import type {
+  BackgroundLayer,
+  ButtonPlacement,
+  CanvasMode,
+  Coordinates,
+  Edge,
+  Floor,
+  HassEntity,
+  HomeAssistant,
+  LightPlacement,
+  Node,
+  OtherPlacement,
+  Room,
+  SelectionState,
+  SimulatedTarget,
+  SwitchPlacement,
+  ViewBox,
+  WallDirection,
+  Zone,
+} from "../../types";
+import {
+  arePointsCollinear,
+  snapToGrid as snapPoint,
+} from "../../utils/geometry";
+import {
+  buildNodeMap,
+  edgesAtNode,
+  findNearestNode,
+  resolveFloorEdges,
+} from "../../utils/node-graph";
 import { detectRoomsFromEdges } from "../../utils/room-detection";
-import { pushAction, undo, redo } from "../../stores/history-store";
+import {
+  groupEdgesIntoChains,
+  polygonToPath,
+  viewBoxToString,
+  wallChainPath,
+} from "../../utils/svg";
+import {
+  buildNodeGraph,
+  checkConstraintsFeasible,
+  findDegenerateEdges,
+  previewNodeDrag,
+  solveCollinearTotalLength,
+  solveConstraintSnap,
+  solveEdgeLengthChange,
+  solveNodeMove,
+} from "../../utils/wall-solver";
 import "../shared/fpb-entity-picker";
-
 
 /** Door swing angle: how far a door opens (degrees from closed/wall position). */
 const DOOR_SWING_DEG = 85;
-const DOOR_SWING_RAD = DOOR_SWING_DEG * Math.PI / 180;
+const DOOR_SWING_RAD = (DOOR_SWING_DEG * Math.PI) / 180;
 /**
  * Compute arc geometry for a swing opening.
  * Returns the open-end position and cubic Bézier control points for the arc.
  */
 function swingArcGeom(
-  hx: number, hy: number,  // hinge (arc centre)
-  fx: number, fy: number,  // free end (closed position, arc start)
-  angleDeg: number,         // swing angle in degrees
-  ccw: boolean,             // true = left hinge (CCW rotation), false = right hinge (CW)
+  hx: number,
+  hy: number, // hinge (arc centre)
+  fx: number,
+  fy: number, // free end (closed position, arc start)
+  angleDeg: number, // swing angle in degrees
+  ccw: boolean, // true = left hinge (CCW rotation), false = right hinge (CW)
 ) {
-  const rad = angleDeg * Math.PI / 180;
+  const rad = (angleDeg * Math.PI) / 180;
   const s = ccw ? 1 : -1;
-  const c = Math.cos(rad), sa = s * Math.sin(rad);
-  const rfx = fx - hx, rfy = fy - hy;
+  const c = Math.cos(rad),
+    sa = s * Math.sin(rad);
+  const rfx = fx - hx,
+    rfy = fy - hy;
   const ox = hx + c * rfx - sa * rfy;
   const oy = hy + sa * rfx + c * rfy;
-  const rox = ox - hx, roy = oy - hy;
+  const rox = ox - hx,
+    roy = oy - hy;
   const ks = s * (4 / 3) * Math.tan(rad / 4);
   return {
-    ox, oy,
-    cp1x: fx - ks * rfy, cp1y: fy + ks * rfx,
-    cp2x: ox + ks * roy, cp2y: oy - ks * rox,
+    ox,
+    oy,
+    cp1x: fx - ks * rfy,
+    cp1y: fy + ks * rfx,
+    cp2x: ox + ks * roy,
+    cp2y: oy - ks * rox,
   };
 }
 
 const LINK_COLORS = [
-  "#e91e63", "#9c27b0", "#3f51b5", "#00bcd4",
-  "#4caf50", "#ff9800", "#795548", "#607d8b",
-  "#f44336", "#673ab7",
+  "#e91e63",
+  "#9c27b0",
+  "#3f51b5",
+  "#00bcd4",
+  "#4caf50",
+  "#ff9800",
+  "#795548",
+  "#607d8b",
+  "#f44336",
+  "#673ab7",
 ];
 function linkGroupColor(group: string): string {
   let hash = 0;
   for (let i = 0; i < group.length; i++)
-    hash = ((hash << 5) - hash) + group.charCodeAt(i);
+    hash = (hash << 5) - hash + group.charCodeAt(i);
   return LINK_COLORS[Math.abs(hash) % LINK_COLORS.length];
 }
 
@@ -122,10 +177,21 @@ export class FpbCanvas extends LitElement {
   private _wallChainStart: Coordinates | null = null;
 
   @state()
-  private _roomEditor: { room: Room; editName: string; editColor: string; editAreaId: string | null; editLayers: BackgroundLayer[]; selectedLayerIdx: number | null } | null = null;
+  private _roomEditor: {
+    room: Room;
+    editName: string;
+    editColor: string;
+    editAreaId: string | null;
+    editLayers: BackgroundLayer[];
+    selectedLayerIdx: number | null;
+  } | null = null;
 
   @state()
-  private _haAreas: Array<{ area_id: string; name: string; icon?: string | null }> = [];
+  private _haAreas: Array<{
+    area_id: string;
+    name: string;
+    icon?: string | null;
+  }> = [];
 
   private _iconCache = new Map<string, IconData>();
   private _iconLoaders = new Map<string, Promise<void>>();
@@ -136,16 +202,31 @@ export class FpbCanvas extends LitElement {
   private _hoveredNode: Node | null = null;
 
   @state()
-  private _draggingNode: { node: Node; originalCoords: Coordinates; startX: number; startY: number; hasMoved: boolean } | null = null;
+  private _draggingNode: {
+    node: Node;
+    originalCoords: Coordinates;
+    startX: number;
+    startY: number;
+    hasMoved: boolean;
+  } | null = null;
 
   @state()
-  private _nodeEditor: { node: Node; editX: string; editY: string } | null = null;
+  private _nodeEditor: { node: Node; editX: string; editY: string } | null =
+    null;
 
   @state()
-  private _edgeEditor: { edge: Edge; position: Coordinates; length: number } | null = null;
+  private _edgeEditor: {
+    edge: Edge;
+    position: Coordinates;
+    length: number;
+  } | null = null;
 
   @state()
-  private _multiEdgeEditor: { edges: Edge[]; collinear?: boolean; totalLength?: number } | null = null;
+  private _multiEdgeEditor: {
+    edges: Edge[];
+    collinear?: boolean;
+    totalLength?: number;
+  } | null = null;
 
   @state()
   private _editingTotalLength: string = "";
@@ -160,13 +241,13 @@ export class FpbCanvas extends LitElement {
   private _editingDirection: WallDirection = "free";
 
   @state()
-  private _editingOpeningParts: 'single' | 'double' = "single";
+  private _editingOpeningParts: "single" | "double" = "single";
 
   @state()
-  private _editingOpeningType: 'swing' | 'sliding' | 'tilt' = "swing";
+  private _editingOpeningType: "swing" | "sliding" | "tilt" = "swing";
 
   @state()
-  private _editingSwingDirection: 'left' | 'right' = "left";
+  private _editingSwingDirection: "left" | "right" = "left";
 
   @state()
   private _editingEntityId: string | null = null;
@@ -205,7 +286,11 @@ export class FpbCanvas extends LitElement {
   private _longPressTimer: ReturnType<typeof setTimeout> | null = null;
   private _longPressTriggered = false;
   private _viewingPointerStart: Coordinates | null = null;
-  private _viewingClickedDevice: { entityId: string; type: string; id: string } | null = null;
+  private _viewingClickedDevice: {
+    entityId: string;
+    type: string;
+    id: string;
+  } | null = null;
 
   @state()
   private _openingPreview: {
@@ -227,13 +312,20 @@ export class FpbCanvas extends LitElement {
   private _pendingZonePolygon: Coordinates[] | null = null;
 
   @state()
-  private _zoneEditor: { zone: import("../../types").Zone; editName: string; editColor: string; editAreaId: string | null } | null = null;
+  private _zoneEditor: {
+    zone: import("../../types").Zone;
+    editName: string;
+    editColor: string;
+    editAreaId: string | null;
+  } | null = null;
 
   @state()
-  private _draggingZone: { zone: import("../../types").Zone; startPoint: import("../../types").Coordinates; originalVertices: import("../../types").Coordinates[]; hasMoved: boolean; pointerId: number } | null = null;
-
-  @state()
-  private _draggingZoneVertex: { zone: import("../../types").Zone; vertexIndex: number; originalCoords: import("../../types").Coordinates; pointerId: number } | null = null;
+  private _draggingZoneVertex: {
+    zone: import("../../types").Zone;
+    vertexIndex: number;
+    originalCoords: import("../../types").Coordinates;
+    pointerId: number;
+  } | null = null;
 
   // ---- Placement dragging state ----
   @state()
@@ -278,20 +370,31 @@ export class FpbCanvas extends LitElement {
 
   // ---- mmWave target animation state ----
   /** Tracked target positions with interpolation: key = "placementId-targetIdx" */
-  private _mmwaveTargetPositions = new Map<string, {
-    displayX: number; displayY: number;  // current rendered position
-    targetX: number; targetY: number;    // goal position from entity state
-    arrived: boolean;                     // true once displayX/Y ≈ targetX/Y
-    isNew: boolean;                       // true on first appearance only
-  }>();
+  private _mmwaveTargetPositions = new Map<
+    string,
+    {
+      displayX: number;
+      displayY: number; // current rendered position
+      targetX: number;
+      targetY: number; // goal position from entity state
+      arrived: boolean; // true once displayX/Y ≈ targetX/Y
+      isNew: boolean; // true on first appearance only
+    }
+  >();
   /** Targets currently fading out after disappearing */
   @state()
-  private _mmwaveFadingTargets: Array<{ key: string; x: number; y: number; startTime: number }> = [];
+  private _mmwaveFadingTargets: Array<{
+    key: string;
+    x: number;
+    y: number;
+    startTime: number;
+  }> = [];
   private _mmwaveAnimTimer: number | null = null;
 
   // ---- Simulation state ----
   @state()
-  private _draggingSimTarget: { targetId: string; pointerId: number } | null = null;
+  private _draggingSimTarget: { targetId: string; pointerId: number } | null =
+    null;
 
   private _simMoveThrottle: ReturnType<typeof setTimeout> | null = null;
 
@@ -1414,14 +1517,18 @@ export class FpbCanvas extends LitElement {
         this._canvasMode = newMode;
         // When leaving occupancy mode, clear backend targets
         if (prevMode === "occupancy" && newMode !== "occupancy" && this.hass) {
-          this.hass.callWS({ type: "inhabit/simulate/target/clear" }).catch(() => {});
+          this.hass
+            .callWS({ type: "inhabit/simulate/target/clear" })
+            .catch(() => {});
         }
       }),
       effect(() => {
         const enabled = simHitboxEnabled.value;
         // When simulation is toggled off, clear backend targets
         if (!enabled && this.hass) {
-          this.hass.callWS({ type: "inhabit/simulate/target/clear" }).catch(() => {});
+          this.hass
+            .callWS({ type: "inhabit/simulate/target/clear" })
+            .catch(() => {});
         }
       }),
       effect(() => {
@@ -1442,7 +1549,7 @@ export class FpbCanvas extends LitElement {
           // "All" clicked — animate back to show entire floor
           requestAnimationFrame(() => this._animateToFloor());
         }
-      })
+      }),
     );
 
     this._loadHaAreas();
@@ -1451,9 +1558,13 @@ export class FpbCanvas extends LitElement {
     this._onSpaceDown = (e: KeyboardEvent) => {
       if (e.code === "Space" && !e.repeat) {
         // Check composedPath to handle inputs inside Shadow DOM
-        const inInput = e.composedPath().some(el =>
-          el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement
-        );
+        const inInput = e
+          .composedPath()
+          .some(
+            (el) =>
+              el instanceof HTMLInputElement ||
+              el instanceof HTMLTextAreaElement,
+          );
         if (!inInput) {
           e.preventDefault();
           this._spaceHeld = true;
@@ -1500,21 +1611,24 @@ export class FpbCanvas extends LitElement {
     }
 
     // Clean up space-to-pan listeners
-    if (this._onSpaceDown) window.removeEventListener("keydown", this._onSpaceDown);
+    if (this._onSpaceDown)
+      window.removeEventListener("keydown", this._onSpaceDown);
     if (this._onSpaceUp) window.removeEventListener("keyup", this._onSpaceUp);
     this._spaceHeld = false;
 
     // Clean up resize observer
     this._resizeObserver?.disconnect();
 
-    this._cleanupEffects.forEach((cleanup) => cleanup());
+    for (const cleanup of this._cleanupEffects) cleanup();
     this._cleanupEffects = [];
   }
 
   private async _loadHaAreas(): Promise<void> {
     if (!this.hass) return;
     try {
-      const areas = await this.hass.callWS<Array<{ area_id: string; name: string; icon?: string | null }>>({
+      const areas = await this.hass.callWS<
+        Array<{ area_id: string; name: string; icon?: string | null }>
+      >({
         type: "config/area_registry/list",
       });
       this._haAreas = areas;
@@ -1567,11 +1681,26 @@ export class FpbCanvas extends LitElement {
 
     const point = this._screenToSvg({ x: e.clientX, y: e.clientY });
     const tool = activeTool.value;
-    const snappedPoint = this._getSnappedPoint(point, tool === "light" || tool === "switch" || tool === "button" || tool === "other" || tool === "mmwave" || tool === "wall" || tool === "zone");
+    const snappedPoint = this._getSnappedPoint(
+      point,
+      tool === "light" ||
+        tool === "switch" ||
+        tool === "button" ||
+        tool === "other" ||
+        tool === "mmwave" ||
+        tool === "wall" ||
+        tool === "zone",
+    );
     const mode = this._canvasMode;
 
     // Close entity picker if clicking outside (but not when in device mode placing a new one)
-    if (this._pendingDevice && activeTool.value !== "light" && activeTool.value !== "switch" && activeTool.value !== "button" && activeTool.value !== "other") {
+    if (
+      this._pendingDevice &&
+      activeTool.value !== "light" &&
+      activeTool.value !== "switch" &&
+      activeTool.value !== "button" &&
+      activeTool.value !== "other"
+    ) {
       this._pendingDevice = null;
       this._showEntityPickerModal = false;
     }
@@ -1621,13 +1750,17 @@ export class FpbCanvas extends LitElement {
     }
 
     // Occupancy mode + simulation enabled: place/drag/remove targets
-    if (mode === "occupancy" && simHitboxEnabled.value && (e.button === 0 || e.button === 2)) {
+    if (
+      mode === "occupancy" &&
+      simHitboxEnabled.value &&
+      (e.button === 0 || e.button === 2)
+    ) {
       const targets = simulatedTargets.value;
       const vb = this._viewBox;
       const hitRadius = Math.max(vb.width, vb.height) * 0.015;
 
       // Check if clicking an existing target
-      const hitTarget = targets.find(t => {
+      const hitTarget = targets.find((t) => {
         const dx = t.position.x - point.x;
         const dy = t.position.y - point.y;
         return Math.sqrt(dx * dx + dy * dy) < hitRadius;
@@ -1641,7 +1774,10 @@ export class FpbCanvas extends LitElement {
 
       if (e.button === 0 && hitTarget) {
         // Start dragging existing target
-        this._draggingSimTarget = { targetId: hitTarget.id, pointerId: e.pointerId };
+        this._draggingSimTarget = {
+          targetId: hitTarget.id,
+          pointerId: e.pointerId,
+        };
         this._svg?.setPointerCapture(e.pointerId);
         return;
       }
@@ -1653,19 +1789,31 @@ export class FpbCanvas extends LitElement {
     }
 
     // Layer drag: if room editor is open with a selected layer, start dragging on click inside the layer rect or room
-    if (e.button === 0 && this._roomEditor && this._roomEditor.selectedLayerIdx !== null) {
-      const layer = this._roomEditor.editLayers[this._roomEditor.selectedLayerIdx];
+    if (
+      e.button === 0 &&
+      this._roomEditor &&
+      this._roomEditor.selectedLayerIdx !== null
+    ) {
+      const layer =
+        this._roomEditor.editLayers[this._roomEditor.selectedLayerIdx];
       if (layer) {
         const room = this._roomEditor.room;
         const vs = room.polygon.vertices;
-        const xs = vs.map(v => v.x), ys = vs.map(v => v.y);
-        const rbx = Math.min(...xs), rby = Math.min(...ys);
-        const rbw = Math.max(...xs) - rbx, rbh = Math.max(...ys) - rby;
+        const xs = vs.map((v) => v.x),
+          ys = vs.map((v) => v.y);
+        const rbx = Math.min(...xs),
+          rby = Math.min(...ys);
+        const rbw = Math.max(...xs) - rbx,
+          rbh = Math.max(...ys) - rby;
         const lx = rbx + layer.offset_x;
         const ly = rby + layer.offset_y;
         const lw = rbw * layer.scale;
         const lh = rbh * layer.scale;
-        const inLayerRect = point.x >= lx && point.x <= lx + lw && point.y >= ly && point.y <= ly + lh;
+        const inLayerRect =
+          point.x >= lx &&
+          point.x <= lx + lw &&
+          point.y >= ly &&
+          point.y <= ly + lh;
         if (inLayerRect || this._pointInPolygon(point, room.polygon.vertices)) {
           this._draggingLayer = {
             layerIdx: this._roomEditor.selectedLayerIdx,
@@ -1701,22 +1849,42 @@ export class FpbCanvas extends LitElement {
           this._isPanning = true;
           this._panStart = { x: e.clientX, y: e.clientY };
           this._svg?.setPointerCapture(e.pointerId);
-        } else if (selection.value.type === "zone" && selection.value.ids.length === 1) {
-          // Set up zone drag
+        } else if (
+          selection.value.type === "zone" &&
+          selection.value.ids.length === 1
+        ) {
+          // Click on selected zone — open editor or occupancy panel
           const floor = currentFloor.value;
-          const zone = floor?.zones?.find((z: Zone) => z.id === selection.value.ids[0]);
-          if (zone?.polygon?.vertices) {
-            this._draggingZone = {
-              zone,
-              startPoint: point,
-              originalVertices: zone.polygon.vertices.map((v: Coordinates) => ({ x: v.x, y: v.y })),
-              hasMoved: false,
-              pointerId: e.pointerId,
-            };
-            this._svg?.setPointerCapture(e.pointerId);
+          const zone = floor?.zones?.find(
+            (z: Zone) => z.id === selection.value.ids[0],
+          );
+          if (zone) {
+            if (this._canvasMode === "occupancy") {
+              const areaName = zone.ha_area_id
+                ? (this._haAreas.find((a) => a.area_id === zone.ha_area_id)
+                    ?.name ?? zone.name)
+                : zone.name;
+              occupancyPanelTarget.value = {
+                id: zone.id,
+                name: areaName,
+                type: "zone",
+              };
+              focusedRoomId.value = zone.id;
+            } else {
+              this._zoneEditor = {
+                zone,
+                editName: zone.name,
+                editColor: zone.color,
+                editAreaId: zone.ha_area_id ?? null,
+              };
+            }
           }
         } else if (
-          (selection.value.type === "light" || selection.value.type === "switch" || selection.value.type === "button" || selection.value.type === "other" || selection.value.type === "mmwave") &&
+          (selection.value.type === "light" ||
+            selection.value.type === "switch" ||
+            selection.value.type === "button" ||
+            selection.value.type === "other" ||
+            selection.value.type === "mmwave") &&
           selection.value.ids.length === 1
         ) {
           // Set up placement drag
@@ -1724,15 +1892,25 @@ export class FpbCanvas extends LitElement {
           const selId = selection.value.ids[0];
           let pos: Coordinates | null = null;
           if (selType === "light") {
-            pos = lightPlacements.value.find(p => p.id === selId)?.position ?? null;
+            pos =
+              lightPlacements.value.find((p) => p.id === selId)?.position ??
+              null;
           } else if (selType === "switch") {
-            pos = switchPlacements.value.find(p => p.id === selId)?.position ?? null;
+            pos =
+              switchPlacements.value.find((p) => p.id === selId)?.position ??
+              null;
           } else if (selType === "button") {
-            pos = buttonPlacements.value.find(p => p.id === selId)?.position ?? null;
+            pos =
+              buttonPlacements.value.find((p) => p.id === selId)?.position ??
+              null;
           } else if (selType === "other") {
-            pos = otherPlacements.value.find(p => p.id === selId)?.position ?? null;
+            pos =
+              otherPlacements.value.find((p) => p.id === selId)?.position ??
+              null;
           } else {
-            pos = mmwavePlacements.value.find(p => p.id === selId)?.position ?? null;
+            pos =
+              mmwavePlacements.value.find((p) => p.id === selId)?.position ??
+              null;
           }
           if (pos) {
             this._draggingPlacement = {
@@ -1751,11 +1929,15 @@ export class FpbCanvas extends LitElement {
         this._multiEdgeEditor = null;
         this._roomEditor = null;
         // Use _cursorPos which has Shift-constraint applied from pointer move
-        const wallPoint = this._wallStartPoint && e.shiftKey
-          ? this._cursorPos
-          : snappedPoint;
+        const wallPoint =
+          this._wallStartPoint && e.shiftKey ? this._cursorPos : snappedPoint;
         this._handleWallClick(wallPoint, e.shiftKey);
-      } else if (tool === "light" || tool === "switch" || tool === "button" || tool === "other") {
+      } else if (
+        tool === "light" ||
+        tool === "switch" ||
+        tool === "button" ||
+        tool === "other"
+      ) {
         this._edgeEditor = null;
         this._multiEdgeEditor = null;
         this._handleDeviceClick(snappedPoint);
@@ -1805,7 +1987,8 @@ export class FpbCanvas extends LitElement {
     const hass = this.hass;
     const fpId = floorPlan.id;
     const fId = floor.id;
-    const { edgeId, t, startPos, endPos, thickness, position } = this._openingPreview;
+    const { edgeId, t, startPos, endPos, thickness, position } =
+      this._openingPreview;
     const openingWidth = tool === "door" ? 80 : 100;
     const newType = tool;
 
@@ -1816,7 +1999,9 @@ export class FpbCanvas extends LitElement {
     const savedPosition = { ...position };
 
     try {
-      const result = await hass.callWS<{ edges: Array<{ id: string; type: string }> }>({
+      const result = await hass.callWS<{
+        edges: Array<{ id: string; type: string }>;
+      }>({
         type: "inhabit/edges/split",
         floor_plan_id: fpId,
         floor_id: fId,
@@ -1824,13 +2009,19 @@ export class FpbCanvas extends LitElement {
         position: t,
         new_type: newType,
         width: openingWidth,
-        ...(tool === "door" ? { opening_parts: "single", opening_type: "swing", swing_direction: "left" } : { opening_parts: "single", opening_type: "swing" }),
+        ...(tool === "door"
+          ? {
+              opening_parts: "single",
+              opening_type: "swing",
+              swing_direction: "left",
+            }
+          : { opening_parts: "single", opening_type: "swing" }),
       });
 
       await reloadFloorData();
       await this._syncRoomsWithEdges();
 
-      const allEdgeIds = result.edges.map(e => e.id);
+      const allEdgeIds = result.edges.map((e) => e.id);
 
       pushAction({
         type: "opening_place",
@@ -1844,7 +2035,9 @@ export class FpbCanvas extends LitElement {
                 floor_id: fId,
                 edge_id: eid,
               });
-            } catch { /* edge may already be gone */ }
+            } catch {
+              /* edge may already be gone */
+            }
           }
           await hass.callWS({
             type: "inhabit/edges/add",
@@ -1861,11 +2054,15 @@ export class FpbCanvas extends LitElement {
           const updatedFloor = currentFloor.value;
           if (!updatedFloor) return;
           const resolved = resolveFloorEdges(updatedFloor);
-          const target = resolved.find(re => {
+          const target = resolved.find((re) => {
             if (re.type !== "wall") return false;
-            const proj = this._getClosestPointOnSegment(savedPosition, re.startPos, re.endPos);
+            const proj = this._getClosestPointOnSegment(
+              savedPosition,
+              re.startPos,
+              re.endPos,
+            );
             const dist = Math.sqrt(
-              (proj.x - savedPosition.x) ** 2 + (proj.y - savedPosition.y) ** 2
+              (proj.x - savedPosition.x) ** 2 + (proj.y - savedPosition.y) ** 2,
             );
             return dist < 5;
           });
@@ -1878,7 +2075,13 @@ export class FpbCanvas extends LitElement {
               position: t,
               new_type: newType,
               width: openingWidth,
-              ...(tool === "door" ? { opening_parts: "single", opening_type: "swing", swing_direction: "left" } : { opening_parts: "single", opening_type: "swing" }),
+              ...(tool === "door"
+                ? {
+                    opening_parts: "single",
+                    opening_type: "swing",
+                    swing_direction: "left",
+                  }
+                : { opening_parts: "single", opening_type: "swing" }),
             });
           }
           await reloadFloorData();
@@ -1915,18 +2118,28 @@ export class FpbCanvas extends LitElement {
 
         // Zoom towards the midpoint between the two fingers
         const currentMid = { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 };
-        const svgMid = this._screenToSvgWithViewBox(this._pinchStartMid, svgStart);
+        const svgMid = this._screenToSvgWithViewBox(
+          this._pinchStartMid,
+          svgStart,
+        );
 
         // Pan offset from finger midpoint movement (in SVG units)
         const midDxScreen = currentMid.x - this._pinchStartMid.x;
         const midDyScreen = currentMid.y - this._pinchStartMid.y;
-        const midDxSvg = midDxScreen * (svgStart.width / this._svg!.clientWidth);
-        const midDySvg = midDyScreen * (svgStart.height / this._svg!.clientHeight);
+        const midDxSvg =
+          midDxScreen * (svgStart.width / this._svg!.clientWidth);
+        const midDySvg =
+          midDyScreen * (svgStart.height / this._svg!.clientHeight);
 
         const newX = svgMid.x - (svgMid.x - svgStart.x) * scale - midDxSvg;
         const newY = svgMid.y - (svgMid.y - svgStart.y) * scale - midDySvg;
 
-        const newViewBox = { x: newX, y: newY, width: newWidth, height: newHeight };
+        const newViewBox = {
+          x: newX,
+          y: newY,
+          width: newWidth,
+          height: newHeight,
+        };
         viewBox.value = newViewBox;
         this._viewBox = newViewBox;
       }
@@ -1936,7 +2149,16 @@ export class FpbCanvas extends LitElement {
     const point = this._screenToSvg({ x: e.clientX, y: e.clientY });
     const tool = activeTool.value;
     // Enable wall segment snapping for device and wall tools
-    let snapped = this._getSnappedPoint(point, tool === "light" || tool === "switch" || tool === "button" || tool === "other" || tool === "mmwave" || tool === "wall" || tool === "zone");
+    let snapped = this._getSnappedPoint(
+      point,
+      tool === "light" ||
+        tool === "switch" ||
+        tool === "button" ||
+        tool === "other" ||
+        tool === "mmwave" ||
+        tool === "wall" ||
+        tool === "zone",
+    );
 
     // Shift constrains to horizontal/vertical when drawing a wall
     if (e.shiftKey && tool === "wall" && this._wallStartPoint) {
@@ -1991,54 +2213,23 @@ export class FpbCanvas extends LitElement {
       return;
     }
 
-    // Handle zone dragging
-    if (this._draggingZone) {
-      const dx = point.x - this._draggingZone.startPoint.x;
-      const dy = point.y - this._draggingZone.startPoint.y;
-      if (!this._draggingZone.hasMoved && (Math.abs(dx) > 3 || Math.abs(dy) > 3)) {
-        this._draggingZone.hasMoved = true;
-      }
-      if (this._draggingZone.hasMoved) {
-        // Update the zone polygon vertices in-place for preview
-        const zone = this._draggingZone.zone;
-        if (zone.polygon?.vertices) {
-          // Snap the first vertex to grid, then apply same offset to all others
-          const rawFirst = {
-            x: this._draggingZone.originalVertices[0].x + dx,
-            y: this._draggingZone.originalVertices[0].y + dy,
-          };
-          const snappedFirst = snapToGrid.value ? snapPoint(rawFirst, gridSize.value) : rawFirst;
-          const snapDx = snappedFirst.x - rawFirst.x;
-          const snapDy = snappedFirst.y - rawFirst.y;
-
-          for (let i = 0; i < zone.polygon.vertices.length; i++) {
-            zone.polygon.vertices[i] = {
-              x: this._draggingZone.originalVertices[i].x + dx + snapDx,
-              y: this._draggingZone.originalVertices[i].y + dy + snapDy,
-            };
-          }
-        }
-        this.requestUpdate();
-      }
-      return;
-    }
-
     // Handle background layer corner resize
     if (this._draggingCorner && this._roomEditor) {
-      const { corner, layerIdx, anchorX, anchorY, bx, by, bw, bh } = this._draggingCorner;
+      const { corner, layerIdx, anchorX, anchorY, bx, by, bw, bh } =
+        this._draggingCorner;
       const dx = point.x - anchorX;
       const dy = point.y - anchorY;
       const origDiag = Math.sqrt(bw * bw + bh * bh);
       const newDiag = Math.sqrt(dx * dx + dy * dy);
       const newScale = Math.max(newDiag / origDiag, 0.05);
       let newOffsetX: number, newOffsetY: number;
-      if (corner === 'br') {
+      if (corner === "br") {
         newOffsetX = anchorX - bx;
         newOffsetY = anchorY - by;
-      } else if (corner === 'tl') {
+      } else if (corner === "tl") {
         newOffsetX = anchorX - bw * newScale - bx;
         newOffsetY = anchorY - bh * newScale - by;
-      } else if (corner === 'tr') {
+      } else if (corner === "tr") {
         newOffsetX = anchorX - bx;
         newOffsetY = anchorY - bh * newScale - by;
       } else {
@@ -2046,7 +2237,12 @@ export class FpbCanvas extends LitElement {
         newOffsetY = anchorY - by;
       }
       const editLayers = [...this._roomEditor.editLayers];
-      editLayers[layerIdx] = { ...editLayers[layerIdx], scale: newScale, offset_x: newOffsetX, offset_y: newOffsetY };
+      editLayers[layerIdx] = {
+        ...editLayers[layerIdx],
+        scale: newScale,
+        offset_x: newOffsetX,
+        offset_y: newOffsetY,
+      };
       this._roomEditor = { ...this._roomEditor, editLayers };
       return;
     }
@@ -2069,7 +2265,10 @@ export class FpbCanvas extends LitElement {
     if (this._draggingPlacement) {
       const dx = point.x - this._draggingPlacement.startPoint.x;
       const dy = point.y - this._draggingPlacement.startPoint.y;
-      if (!this._draggingPlacement.hasMoved && (Math.abs(dx) > 3 || Math.abs(dy) > 3)) {
+      if (
+        !this._draggingPlacement.hasMoved &&
+        (Math.abs(dx) > 3 || Math.abs(dy) > 3)
+      ) {
         this._draggingPlacement.hasMoved = true;
       }
       if (this._draggingPlacement.hasMoved) {
@@ -2080,24 +2279,24 @@ export class FpbCanvas extends LitElement {
         const newPos = snapToGrid.value ? snapPoint(raw, gridSize.value) : raw;
         const dp = this._draggingPlacement;
         if (dp.type === "light") {
-          lightPlacements.value = lightPlacements.value.map(p =>
-            p.id === dp.id ? { ...p, position: newPos } : p
+          lightPlacements.value = lightPlacements.value.map((p) =>
+            p.id === dp.id ? { ...p, position: newPos } : p,
           );
         } else if (dp.type === "switch") {
-          switchPlacements.value = switchPlacements.value.map(p =>
-            p.id === dp.id ? { ...p, position: newPos } : p
+          switchPlacements.value = switchPlacements.value.map((p) =>
+            p.id === dp.id ? { ...p, position: newPos } : p,
           );
         } else if (dp.type === "button") {
-          buttonPlacements.value = buttonPlacements.value.map(p =>
-            p.id === dp.id ? { ...p, position: newPos } : p
+          buttonPlacements.value = buttonPlacements.value.map((p) =>
+            p.id === dp.id ? { ...p, position: newPos } : p,
           );
         } else if (dp.type === "other") {
-          otherPlacements.value = otherPlacements.value.map(p =>
-            p.id === dp.id ? { ...p, position: newPos } : p
+          otherPlacements.value = otherPlacements.value.map((p) =>
+            p.id === dp.id ? { ...p, position: newPos } : p,
           );
         } else {
-          mmwavePlacements.value = mmwavePlacements.value.map(p =>
-            p.id === dp.id ? { ...p, position: newPos } : p
+          mmwavePlacements.value = mmwavePlacements.value.map((p) =>
+            p.id === dp.id ? { ...p, position: newPos } : p,
           );
         }
         this.requestUpdate();
@@ -2145,7 +2344,9 @@ export class FpbCanvas extends LitElement {
           const cosAngle = dot / (lenPrev * lenNext);
           // Check if angle is close to 90° (cos ≈ 0)
           const ANGLE_SNAP_DEG = 5;
-          const cosThreshold = Math.cos((90 - ANGLE_SNAP_DEG) * Math.PI / 180);
+          const cosThreshold = Math.cos(
+            ((90 - ANGLE_SNAP_DEG) * Math.PI) / 180,
+          );
           if (Math.abs(cosAngle) < cosThreshold) {
             // Project snappedVert onto the line perpendicular to prev→next through prev's direction
             // Move the vertex along the toNext direction so dot product becomes 0
@@ -2180,8 +2381,12 @@ export class FpbCanvas extends LitElement {
     }
 
     if (this._isPanning) {
-      const dx = (e.clientX - this._panStart.x) * (this._viewBox.width / this._svg!.clientWidth);
-      const dy = (e.clientY - this._panStart.y) * (this._viewBox.height / this._svg!.clientHeight);
+      const dx =
+        (e.clientX - this._panStart.x) *
+        (this._viewBox.width / this._svg!.clientWidth);
+      const dy =
+        (e.clientY - this._panStart.y) *
+        (this._viewBox.height / this._svg!.clientHeight);
 
       const newViewBox = {
         ...this._viewBox,
@@ -2196,7 +2401,11 @@ export class FpbCanvas extends LitElement {
     }
 
     // Check for hovering over nodes (only in walls mode when not drawing)
-    if (!this._wallStartPoint && tool === "select" && this._canvasMode === "walls") {
+    if (
+      !this._wallStartPoint &&
+      tool === "select" &&
+      this._canvasMode === "walls"
+    ) {
       this._checkNodeHover(point);
     }
 
@@ -2231,7 +2440,7 @@ export class FpbCanvas extends LitElement {
 
     const resolved = resolveFloorEdges(floor);
     const snapDistance = 30; // generous snap distance for openings
-    let bestEdge: typeof resolved[0] | null = null;
+    let bestEdge: (typeof resolved)[0] | null = null;
     let bestDist = snapDistance;
     let bestPoint: Coordinates = point;
     let bestT = 0;
@@ -2240,9 +2449,13 @@ export class FpbCanvas extends LitElement {
       // Only snap to wall-type edges
       if (re.type !== "wall") continue;
 
-      const projected = this._getClosestPointOnSegment(point, re.startPos, re.endPos);
+      const projected = this._getClosestPointOnSegment(
+        point,
+        re.startPos,
+        re.endPos,
+      );
       const dist = Math.sqrt(
-        (point.x - projected.x) ** 2 + (point.y - projected.y) ** 2
+        (point.x - projected.x) ** 2 + (point.y - projected.y) ** 2,
       );
       if (dist < bestDist) {
         bestDist = dist;
@@ -2253,9 +2466,12 @@ export class FpbCanvas extends LitElement {
         const edx = re.endPos.x - re.startPos.x;
         const edy = re.endPos.y - re.startPos.y;
         const lenSq = edx * edx + edy * edy;
-        bestT = lenSq > 0
-          ? ((projected.x - re.startPos.x) * edx + (projected.y - re.startPos.y) * edy) / lenSq
-          : 0;
+        bestT =
+          lenSq > 0
+            ? ((projected.x - re.startPos.x) * edx +
+                (projected.y - re.startPos.y) * edy) /
+              lenSq
+            : 0;
       }
     }
 
@@ -2299,7 +2515,12 @@ export class FpbCanvas extends LitElement {
       this._svg?.releasePointerCapture(e.pointerId);
       if (!this._longPressTriggered) {
         // Short tap: toggle for light/switch/button, open details for other/mmwave
-        if ((device.type === "light" || device.type === "switch" || device.type === "button") && device.entityId) {
+        if (
+          (device.type === "light" ||
+            device.type === "switch" ||
+            device.type === "button") &&
+          device.entityId
+        ) {
           this._toggleEntity(device.entityId);
         } else if (device.entityId) {
           this._openEntityDetails(device.entityId);
@@ -2349,32 +2570,6 @@ export class FpbCanvas extends LitElement {
       return;
     }
 
-    if (this._draggingZone) {
-      if (this._draggingZone.hasMoved) {
-        this._finishZoneDrag();
-      } else if (this._canvasMode === "occupancy") {
-        // In occupancy mode, open the occupancy panel instead of zone editor
-        const zone = this._draggingZone.zone;
-        const areaName = zone.ha_area_id
-          ? this._haAreas.find(a => a.area_id === zone.ha_area_id)?.name ?? zone.name
-          : zone.name;
-        occupancyPanelTarget.value = { id: zone.id, name: areaName, type: "zone" };
-        focusedRoomId.value = zone.id;
-      } else {
-        // It was a click, not a drag — open the zone editor
-        const zone = this._draggingZone.zone;
-        this._zoneEditor = {
-          zone,
-          editName: zone.name,
-          editColor: zone.color,
-          editAreaId: zone.ha_area_id ?? null,
-        };
-      }
-      this._svg?.releasePointerCapture(e.pointerId);
-      this._draggingZone = null;
-      return;
-    }
-
     if (this._draggingZoneVertex) {
       this._finishZoneVertexDrag();
       this._svg?.releasePointerCapture(e.pointerId);
@@ -2417,7 +2612,7 @@ export class FpbCanvas extends LitElement {
       const floor = currentFloor.value;
       if (floor) {
         const hit = this._hitTestDevice(point, floor);
-        if (hit && hit.entityId) {
+        if (hit?.entityId) {
           this._openEntityDetails(hit.entityId);
         }
       }
@@ -2446,7 +2641,7 @@ export class FpbCanvas extends LitElement {
     const resolved = resolveFloorEdges(floor);
     for (const re of resolved) {
       const dist = this._pointToSegmentDistance(point, re.startPos, re.endPos);
-      if (dist < (re.thickness / 2 + 8)) {
+      if (dist < re.thickness / 2 + 8) {
         try {
           await this.hass.callWS({
             type: "inhabit/edges/split_at_point",
@@ -2475,7 +2670,7 @@ export class FpbCanvas extends LitElement {
       const floor = currentFloor.value;
       if (floor) {
         const hit = this._hitTestDevice(point, floor);
-        if (hit && hit.entityId) {
+        if (hit?.entityId) {
           this._openEntityDetails(hit.entityId);
         }
       }
@@ -2545,14 +2740,22 @@ export class FpbCanvas extends LitElement {
     const originalPos = this._draggingNode.originalCoords;
 
     // Check if position actually changed
-    if (Math.abs(newPos.x - originalPos.x) < 1 && Math.abs(newPos.y - originalPos.y) < 1) {
+    if (
+      Math.abs(newPos.x - originalPos.x) < 1 &&
+      Math.abs(newPos.y - originalPos.y) < 1
+    ) {
       this._draggingNode = null;
       return;
     }
 
     // Use the node solver for constraint-aware movement
     const graph = buildNodeGraph(floor.nodes, floor.edges);
-    const result = solveNodeMove(graph, this._draggingNode.node.id, newPos.x, newPos.y);
+    const result = solveNodeMove(
+      graph,
+      this._draggingNode.node.id,
+      newPos.x,
+      newPos.y,
+    );
 
     if (result.blocked) {
       if (result.blockedBy) this._blinkEdges(result.blockedBy);
@@ -2606,9 +2809,10 @@ export class FpbCanvas extends LitElement {
 
     console.log(
       "%c[degenerate]%c Removing %d zero-length edge(s): %s",
-      "color:#f59e0b;font-weight:bold", "",
+      "color:#f59e0b;font-weight:bold",
+      "",
       degenerate.length,
-      degenerate.map(id => id.slice(0, 8) + "…").join(", ")
+      degenerate.map((id) => `${id.slice(0, 8)}…`).join(", "),
     );
 
     try {
@@ -2633,7 +2837,6 @@ export class FpbCanvas extends LitElement {
       this._wallChainStart = null;
       this._hoveredNode = null;
       this._draggingNode = null;
-      this._draggingZone = null;
       this._draggingZoneVertex = null;
       this._draggingPlacement = null;
       this._draggingLayer = null;
@@ -2641,8 +2844,8 @@ export class FpbCanvas extends LitElement {
       if (this._rotatingMmwave) {
         // Revert angle on cancel
         const rm = this._rotatingMmwave;
-        mmwavePlacements.value = mmwavePlacements.value.map(p =>
-          p.id === rm.id ? { ...p, angle: rm.originalAngle } : p
+        mmwavePlacements.value = mmwavePlacements.value.map((p) =>
+          p.id === rm.id ? { ...p, angle: rm.originalAngle } : p,
         );
         this._rotatingMmwave = null;
       }
@@ -2657,16 +2860,30 @@ export class FpbCanvas extends LitElement {
       selection.value = { type: "none", ids: [] };
       devicePanelTarget.value = null;
       activeTool.value = "select";
-    } else if ((e.key === "Backspace" || e.key === "Delete") && this._zoneEditor) {
+    } else if (
+      (e.key === "Backspace" || e.key === "Delete") &&
+      this._zoneEditor
+    ) {
       e.preventDefault();
       this._handleZoneDelete();
-    } else if ((e.key === "Backspace" || e.key === "Delete") && this._multiEdgeEditor) {
+    } else if (
+      (e.key === "Backspace" || e.key === "Delete") &&
+      this._multiEdgeEditor
+    ) {
       e.preventDefault();
       this._handleMultiEdgeDelete();
-    } else if ((e.key === "Backspace" || e.key === "Delete") && this._edgeEditor) {
+    } else if (
+      (e.key === "Backspace" || e.key === "Delete") &&
+      this._edgeEditor
+    ) {
       e.preventDefault();
       this._handleEdgeDelete();
-    } else if ((e.key === "Backspace" || e.key === "Delete") && (selection.value.type === "light" || selection.value.type === "switch" || selection.value.type === "mmwave")) {
+    } else if (
+      (e.key === "Backspace" || e.key === "Delete") &&
+      (selection.value.type === "light" ||
+        selection.value.type === "switch" ||
+        selection.value.type === "mmwave")
+    ) {
       e.preventDefault();
       this._deleteSelectedPlacement();
     } else if (e.key === "r" && selection.value.type === "mmwave") {
@@ -2693,17 +2910,31 @@ export class FpbCanvas extends LitElement {
 
     const edge = this._edgeEditor.edge;
     const newLength = parseFloat(this._editingLength);
-    if (isNaN(newLength) || newLength <= 0) return;
+    if (Number.isNaN(newLength) || newLength <= 0) return;
 
     const lengthChanged = Math.abs(newLength - this._edgeEditor.length) >= 0.01;
     const directionChanged = this._editingDirection !== edge.direction;
     const lengthLockChanged = this._editingLengthLocked !== edge.length_locked;
     const isEdgeOpening = edge.type === "door" || edge.type === "window";
-    const partsChanged = isEdgeOpening && this._editingOpeningParts !== (edge.opening_parts ?? "single");
-    const openingTypeChanged = isEdgeOpening && this._editingOpeningType !== (edge.opening_type ?? "swing");
-    const swingChanged = isEdgeOpening && this._editingSwingDirection !== (edge.swing_direction ?? "left");
-    const entityChanged = isEdgeOpening && (this._editingEntityId ?? null) !== (edge.entity_id ?? null);
-    const anyEdgePropChanged = directionChanged || lengthLockChanged || partsChanged || openingTypeChanged || swingChanged || entityChanged;
+    const partsChanged =
+      isEdgeOpening &&
+      this._editingOpeningParts !== (edge.opening_parts ?? "single");
+    const openingTypeChanged =
+      isEdgeOpening &&
+      this._editingOpeningType !== (edge.opening_type ?? "swing");
+    const swingChanged =
+      isEdgeOpening &&
+      this._editingSwingDirection !== (edge.swing_direction ?? "left");
+    const entityChanged =
+      isEdgeOpening &&
+      (this._editingEntityId ?? null) !== (edge.entity_id ?? null);
+    const anyEdgePropChanged =
+      directionChanged ||
+      lengthLockChanged ||
+      partsChanged ||
+      openingTypeChanged ||
+      swingChanged ||
+      entityChanged;
 
     try {
       // 1. Apply direction change (may move nodes via constraint snap)
@@ -2722,12 +2953,19 @@ export class FpbCanvas extends LitElement {
         // Check feasibility of the proposed constraint combination
         const currentFloorData = currentFloor.value;
         if (currentFloorData && lengthLockChanged) {
-          const proposed: { direction?: WallDirection; length_locked?: boolean } = {};
+          const proposed: {
+            direction?: WallDirection;
+            length_locked?: boolean;
+          } = {};
           if (directionChanged) proposed.direction = this._editingDirection;
-          if (lengthLockChanged) proposed.length_locked = this._editingLengthLocked;
+          if (lengthLockChanged)
+            proposed.length_locked = this._editingLengthLocked;
 
           const check = checkConstraintsFeasible(
-            currentFloorData.nodes, currentFloorData.edges, edge.id, proposed
+            currentFloorData.nodes,
+            currentFloorData.edges,
+            edge.id,
+            proposed,
           );
           if (!check.feasible) {
             if (check.blockedBy) this._blinkEdges(check.blockedBy);
@@ -2742,10 +2980,13 @@ export class FpbCanvas extends LitElement {
           edge_id: edge.id,
         };
         if (directionChanged) edgeUpdate.direction = this._editingDirection;
-        if (lengthLockChanged) edgeUpdate.length_locked = this._editingLengthLocked;
+        if (lengthLockChanged)
+          edgeUpdate.length_locked = this._editingLengthLocked;
         if (partsChanged) edgeUpdate.opening_parts = this._editingOpeningParts;
-        if (openingTypeChanged) edgeUpdate.opening_type = this._editingOpeningType;
-        if (swingChanged) edgeUpdate.swing_direction = this._editingSwingDirection;
+        if (openingTypeChanged)
+          edgeUpdate.opening_type = this._editingOpeningType;
+        if (swingChanged)
+          edgeUpdate.swing_direction = this._editingSwingDirection;
         if (entityChanged) edgeUpdate.entity_id = this._editingEntityId || null;
 
         await this.hass.callWS(edgeUpdate);
@@ -2764,7 +3005,10 @@ export class FpbCanvas extends LitElement {
     selection.value = { type: "none", ids: [] };
   }
 
-  private async _setDoorOpensToSide(side: "a" | "b", edge: Edge): Promise<void> {
+  private async _setDoorOpensToSide(
+    side: "a" | "b",
+    edge: Edge,
+  ): Promise<void> {
     if (!this.hass) return;
     // Side "a" is the positive-normal side (where the arc already renders).
     // If user picks "a", nothing to do — arc is already on that side.
@@ -2790,12 +3034,13 @@ export class FpbCanvas extends LitElement {
         swap_nodes: true,
         swing_direction: newSwing,
       });
-      this._editingSwingDirection = newSwing as typeof this._editingSwingDirection;
+      this._editingSwingDirection =
+        newSwing as typeof this._editingSwingDirection;
       await reloadFloorData();
       // Re-open editor on the updated edge
       const updatedFloor = currentFloor.value;
       if (updatedFloor) {
-        const updatedEdge = updatedFloor.edges.find(e => e.id === edge.id);
+        const updatedEdge = updatedFloor.edges.find((e) => e.id === edge.id);
         if (updatedEdge) {
           this._updateEdgeEditorForSelection([updatedEdge.id]);
         }
@@ -2919,7 +3164,9 @@ export class FpbCanvas extends LitElement {
       }
     }
 
-    const restoreNodes = async (states: Map<string, { x: number; y: number }>) => {
+    const restoreNodes = async (
+      states: Map<string, { x: number; y: number }>,
+    ) => {
       const updates = Array.from(states.entries()).map(([node_id, pos]) => ({
         node_id,
         x: pos.x,
@@ -2945,7 +3192,10 @@ export class FpbCanvas extends LitElement {
     });
   }
 
-  private async _updateEdgeLength(edge: Edge, newLength: number): Promise<void> {
+  private async _updateEdgeLength(
+    edge: Edge,
+    newLength: number,
+  ): Promise<void> {
     if (!this.hass) return;
 
     const floor = currentFloor.value;
@@ -2954,8 +3204,8 @@ export class FpbCanvas extends LitElement {
 
     // Temporarily unlock this edge for the solver — the user is explicitly
     // setting a new length via the editor, so the edge's own lock should not block.
-    const edgeCopy = floor.edges.map(e =>
-      e.id === edge.id ? { ...e, length_locked: false } : e
+    const edgeCopy = floor.edges.map((e) =>
+      e.id === edge.id ? { ...e, length_locked: false } : e,
     );
     const graph = buildNodeGraph(floor.nodes, edgeCopy);
     const result = solveEdgeLengthChange(graph, edge.id, newLength);
@@ -2968,19 +3218,23 @@ export class FpbCanvas extends LitElement {
     if (result.updates.length === 0) return;
 
     try {
-      await this._withNodeUndo(result.updates, "Change edge length", async () => {
-        await this.hass!.callWS({
-          type: "inhabit/nodes/update",
-          floor_plan_id: floorPlan.id,
-          floor_id: floor.id,
-          updates: result.updates.map((u) => ({
-            node_id: u.nodeId,
-            x: u.x,
-            y: u.y,
-          })),
-        });
-        await reloadFloorData();
-      });
+      await this._withNodeUndo(
+        result.updates,
+        "Change edge length",
+        async () => {
+          await this.hass!.callWS({
+            type: "inhabit/nodes/update",
+            floor_plan_id: floorPlan.id,
+            floor_id: floor.id,
+            updates: result.updates.map((u) => ({
+              node_id: u.nodeId,
+              x: u.x,
+              y: u.y,
+            })),
+          });
+          await reloadFloorData();
+        },
+      );
     } catch (err) {
       console.error("Error updating edge length:", err);
       alert(`Failed to update edge: ${err}`);
@@ -2999,7 +3253,7 @@ export class FpbCanvas extends LitElement {
       const draggedId = this._draggingNode?.node.id;
       const nearest = findNearestNode(
         point,
-        draggedId ? floor.nodes.filter(n => n.id !== draggedId) : floor.nodes,
+        draggedId ? floor.nodes.filter((n) => n.id !== draggedId) : floor.nodes,
         snapDistance,
       );
       if (nearest) {
@@ -3009,7 +3263,9 @@ export class FpbCanvas extends LitElement {
       // Snap to nearby edge segments (exclude edges connected to dragged node)
       if (draggedId) {
         const connectedEdgeIds = new Set(
-          edgesAtNode(draggedId, floor.edges).map(e => `${e.start_node}-${e.end_node}`),
+          edgesAtNode(draggedId, floor.edges).map(
+            (e) => `${e.start_node}-${e.end_node}`,
+          ),
         );
         const resolved = resolveFloorEdges(floor);
         let closestPoint: Coordinates | null = null;
@@ -3018,8 +3274,14 @@ export class FpbCanvas extends LitElement {
         for (const re of resolved) {
           const edgeKey = `${re.start_node}-${re.end_node}`;
           if (connectedEdgeIds.has(edgeKey)) continue;
-          const snapped = this._getClosestPointOnSegment(point, re.startPos, re.endPos);
-          const dist = Math.sqrt((point.x - snapped.x) ** 2 + (point.y - snapped.y) ** 2);
+          const snapped = this._getClosestPointOnSegment(
+            point,
+            re.startPos,
+            re.endPos,
+          );
+          const dist = Math.sqrt(
+            (point.x - snapped.x) ** 2 + (point.y - snapped.y) ** 2,
+          );
           if (dist < closestDist) {
             closestDist = dist;
             closestPoint = snapped;
@@ -3037,8 +3299,9 @@ export class FpbCanvas extends LitElement {
         let bestAngleSnapDist = Infinity;
 
         for (const edge of connectedEdges) {
-          const neighborId = edge.start_node === draggedId ? edge.end_node : edge.start_node;
-          const neighbor = floor.nodes.find(n => n.id === neighborId);
+          const neighborId =
+            edge.start_node === draggedId ? edge.end_node : edge.start_node;
+          const neighbor = floor.nodes.find((n) => n.id === neighborId);
           if (!neighbor) continue;
 
           const dx = point.x - neighbor.x;
@@ -3046,18 +3309,20 @@ export class FpbCanvas extends LitElement {
           const dist = Math.sqrt(dx * dx + dy * dy);
           if (dist < 1) continue;
 
-          const angleDeg = Math.atan2(dy, dx) * 180 / Math.PI;
+          const angleDeg = (Math.atan2(dy, dx) * 180) / Math.PI;
           // Find nearest 90° multiple
           const nearest90 = Math.round(angleDeg / 90) * 90;
           const diff = Math.abs(angleDeg - nearest90);
 
           if (diff < ANGLE_SNAP_THRESHOLD && diff > 0.01) {
-            const snapRad = nearest90 * Math.PI / 180;
+            const snapRad = (nearest90 * Math.PI) / 180;
             const snapped: Coordinates = {
               x: Math.round(neighbor.x + dist * Math.cos(snapRad)),
               y: Math.round(neighbor.y + dist * Math.sin(snapRad)),
             };
-            const snapDist = Math.sqrt((point.x - snapped.x) ** 2 + (point.y - snapped.y) ** 2);
+            const snapDist = Math.sqrt(
+              (point.x - snapped.x) ** 2 + (point.y - snapped.y) ** 2,
+            );
             if (snapDist < bestAngleSnapDist) {
               bestAngleSnapDist = snapDist;
               bestAngleSnap = snapped;
@@ -3078,9 +3343,17 @@ export class FpbCanvas extends LitElement {
     };
   }
 
-  private _getSnappedPoint(point: Coordinates, snapToEdgeSegments = false, skipGridSnap = false, excludeZoneId?: string): Coordinates {
+  private _getSnappedPoint(
+    point: Coordinates,
+    snapToEdgeSegments = false,
+    skipGridSnap = false,
+    excludeZoneId?: string,
+  ): Coordinates {
     const floor = currentFloor.value;
-    if (!floor) return !skipGridSnap && snapToGrid.value ? snapPoint(point, gridSize.value) : point;
+    if (!floor)
+      return !skipGridSnap && snapToGrid.value
+        ? snapPoint(point, gridSize.value)
+        : point;
 
     // Scale snap distance with viewport so it feels consistent at any zoom level
     const svgEl = this._svg;
@@ -3120,9 +3393,13 @@ export class FpbCanvas extends LitElement {
       // Snap to wall edge segments
       const resolved = resolveFloorEdges(floor);
       for (const re of resolved) {
-        const snapped = this._getClosestPointOnSegment(point, re.startPos, re.endPos);
+        const snapped = this._getClosestPointOnSegment(
+          point,
+          re.startPos,
+          re.endPos,
+        );
         const dist = Math.sqrt(
-          Math.pow(point.x - snapped.x, 2) + Math.pow(point.y - snapped.y, 2)
+          (point.x - snapped.x) ** 2 + (point.y - snapped.y) ** 2,
         );
         // Use wall thickness as minimum snap range
         const wallSnap = Math.max(closestDist, re.thickness / 2 + 5);
@@ -3142,7 +3419,9 @@ export class FpbCanvas extends LitElement {
             const a = verts[i];
             const b = verts[(i + 1) % verts.length];
             const snapped = this._getClosestPointOnSegment(point, a, b);
-            const dist = Math.sqrt((point.x - snapped.x) ** 2 + (point.y - snapped.y) ** 2);
+            const dist = Math.sqrt(
+              (point.x - snapped.x) ** 2 + (point.y - snapped.y) ** 2,
+            );
             if (dist < closestDist) {
               closestDist = dist;
               closestPoint = snapped;
@@ -3156,10 +3435,16 @@ export class FpbCanvas extends LitElement {
       }
     }
 
-    return !skipGridSnap && snapToGrid.value ? snapPoint(point, gridSize.value) : point;
+    return !skipGridSnap && snapToGrid.value
+      ? snapPoint(point, gridSize.value)
+      : point;
   }
 
-  private _getClosestPointOnSegment(point: Coordinates, start: Coordinates, end: Coordinates): Coordinates {
+  private _getClosestPointOnSegment(
+    point: Coordinates,
+    start: Coordinates,
+    end: Coordinates,
+  ): Coordinates {
     const dx = end.x - start.x;
     const dy = end.y - start.y;
     const lengthSq = dx * dx + dy * dy;
@@ -3167,7 +3452,13 @@ export class FpbCanvas extends LitElement {
     if (lengthSq === 0) return start;
 
     // Calculate projection parameter t
-    const t = Math.max(0, Math.min(1, ((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSq));
+    const t = Math.max(
+      0,
+      Math.min(
+        1,
+        ((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSq,
+      ),
+    );
 
     return {
       x: start.x + t * dx,
@@ -3184,8 +3475,12 @@ export class FpbCanvas extends LitElement {
     if (mode === "walls") {
       const resolved = resolveFloorEdges(floor);
       for (const re of resolved) {
-        const dist = this._pointToSegmentDistance(point, re.startPos, re.endPos);
-        if (dist < (re.thickness / 2 + 5)) {
+        const dist = this._pointToSegmentDistance(
+          point,
+          re.startPos,
+          re.endPos,
+        );
+        if (dist < re.thickness / 2 + 5) {
           // Shift-click multi-select in walls mode
           if (shiftKey && selection.value.type === "edge") {
             const currentIds = [...selection.value.ids];
@@ -3210,8 +3505,13 @@ export class FpbCanvas extends LitElement {
 
     // Check lights, switches, mmwave — placement and viewing modes
     if (mode === "placement" || mode === "viewing") {
-      for (const light of lightPlacements.value.filter(d => d.floor_id === floor.id)) {
-        const dist = Math.hypot(point.x - light.position.x, point.y - light.position.y);
+      for (const light of lightPlacements.value.filter(
+        (d) => d.floor_id === floor.id,
+      )) {
+        const dist = Math.hypot(
+          point.x - light.position.x,
+          point.y - light.position.y,
+        );
         if (dist < 15) {
           selection.value = { type: "light", ids: [light.id] };
           if (mode === "placement") {
@@ -3222,8 +3522,13 @@ export class FpbCanvas extends LitElement {
           return true;
         }
       }
-      for (const sw of switchPlacements.value.filter(d => d.floor_id === floor.id)) {
-        const dist = Math.hypot(point.x - sw.position.x, point.y - sw.position.y);
+      for (const sw of switchPlacements.value.filter(
+        (d) => d.floor_id === floor.id,
+      )) {
+        const dist = Math.hypot(
+          point.x - sw.position.x,
+          point.y - sw.position.y,
+        );
         if (dist < 15) {
           selection.value = { type: "switch", ids: [sw.id] };
           if (mode === "placement") {
@@ -3234,8 +3539,13 @@ export class FpbCanvas extends LitElement {
           return true;
         }
       }
-      for (const btn of buttonPlacements.value.filter(d => d.floor_id === floor.id)) {
-        const dist = Math.hypot(point.x - btn.position.x, point.y - btn.position.y);
+      for (const btn of buttonPlacements.value.filter(
+        (d) => d.floor_id === floor.id,
+      )) {
+        const dist = Math.hypot(
+          point.x - btn.position.x,
+          point.y - btn.position.y,
+        );
         if (dist < 15) {
           selection.value = { type: "button", ids: [btn.id] };
           if (mode === "placement") {
@@ -3246,8 +3556,13 @@ export class FpbCanvas extends LitElement {
           return true;
         }
       }
-      for (const other of otherPlacements.value.filter(d => d.floor_id === floor.id)) {
-        const dist = Math.hypot(point.x - other.position.x, point.y - other.position.y);
+      for (const other of otherPlacements.value.filter(
+        (d) => d.floor_id === floor.id,
+      )) {
+        const dist = Math.hypot(
+          point.x - other.position.x,
+          point.y - other.position.y,
+        );
         if (dist < 15) {
           selection.value = { type: "other", ids: [other.id] };
           if (mode === "placement") {
@@ -3258,8 +3573,13 @@ export class FpbCanvas extends LitElement {
           return true;
         }
       }
-      for (const mw of mmwavePlacements.value.filter(p => p.floor_id === floor.id)) {
-        const dist = Math.hypot(point.x - mw.position.x, point.y - mw.position.y);
+      for (const mw of mmwavePlacements.value.filter(
+        (p) => p.floor_id === floor.id,
+      )) {
+        const dist = Math.hypot(
+          point.x - mw.position.x,
+          point.y - mw.position.y,
+        );
         if (dist < 15) {
           selection.value = { type: "mmwave", ids: [mw.id] };
           if (mode === "placement") {
@@ -3275,14 +3595,22 @@ export class FpbCanvas extends LitElement {
       if (floor.zones) {
         const sortedZones = [...floor.zones];
         for (const zone of sortedZones) {
-          if (zone.polygon?.vertices && this._pointInPolygon(point, zone.polygon.vertices)) {
+          if (
+            zone.polygon?.vertices &&
+            this._pointInPolygon(point, zone.polygon.vertices)
+          ) {
             if (mode === "occupancy") {
               // In occupancy mode, directly open the occupancy panel
               selection.value = { type: "zone", ids: [zone.id] };
               const areaName = zone.ha_area_id
-                ? this._haAreas.find(a => a.area_id === zone.ha_area_id)?.name ?? zone.name
+                ? (this._haAreas.find((a) => a.area_id === zone.ha_area_id)
+                    ?.name ?? zone.name)
                 : zone.name;
-              occupancyPanelTarget.value = { id: zone.id, name: areaName, type: "zone" };
+              occupancyPanelTarget.value = {
+                id: zone.id,
+                name: areaName,
+                type: "zone",
+              };
               focusedRoomId.value = zone.id;
               return true;
             }
@@ -3300,11 +3628,16 @@ export class FpbCanvas extends LitElement {
         if (this._pointInPolygon(point, room.polygon.vertices)) {
           selection.value = { type: "room", ids: [room.id] };
           const areaName = room.ha_area_id
-            ? this._haAreas.find(a => a.area_id === room.ha_area_id)?.name ?? room.name
+            ? (this._haAreas.find((a) => a.area_id === room.ha_area_id)?.name ??
+              room.name)
             : room.name;
           if (mode === "occupancy") {
             // In occupancy mode, directly open the occupancy panel
-            occupancyPanelTarget.value = { id: room.id, name: areaName, type: "room" };
+            occupancyPanelTarget.value = {
+              id: room.id,
+              name: areaName,
+              type: "room",
+            };
             focusedRoomId.value = room.id;
           } else {
             this._roomEditor = {
@@ -3312,7 +3645,7 @@ export class FpbCanvas extends LitElement {
               editName: areaName,
               editColor: room.color,
               editAreaId: room.ha_area_id ?? null,
-              editLayers: (room.background_layers ?? []).map(l => ({ ...l })),
+              editLayers: (room.background_layers ?? []).map((l) => ({ ...l })),
               selectedLayerIdx: null,
             };
           }
@@ -3339,7 +3672,7 @@ export class FpbCanvas extends LitElement {
     const nodeMap = buildNodeMap(floor.nodes);
 
     if (edgeIds.length === 1) {
-      const edge = floor.edges.find(e => e.id === edgeIds[0]);
+      const edge = floor.edges.find((e) => e.id === edgeIds[0]);
       if (edge) {
         const startNode = nodeMap.get(edge.start_node);
         const endNode = nodeMap.get(edge.end_node);
@@ -3370,7 +3703,7 @@ export class FpbCanvas extends LitElement {
 
     // 2+ edges: show multi-edge editor
     const edges = edgeIds
-      .map(id => floor.edges.find(e => e.id === id))
+      .map((id) => floor.edges.find((e) => e.id === id))
       .filter((e): e is Edge => !!e);
 
     // Detect collinearity and compute total length
@@ -3397,20 +3730,30 @@ export class FpbCanvas extends LitElement {
     this._edgeEditor = null;
   }
 
-  private _pointToSegmentDistance(point: Coordinates, start: Coordinates, end: Coordinates): number {
+  private _pointToSegmentDistance(
+    point: Coordinates,
+    start: Coordinates,
+    end: Coordinates,
+  ): number {
     const dx = end.x - start.x;
     const dy = end.y - start.y;
     const lengthSq = dx * dx + dy * dy;
 
     if (lengthSq === 0) {
-      return Math.sqrt(Math.pow(point.x - start.x, 2) + Math.pow(point.y - start.y, 2));
+      return Math.sqrt((point.x - start.x) ** 2 + (point.y - start.y) ** 2);
     }
 
-    const t = Math.max(0, Math.min(1, ((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSq));
+    const t = Math.max(
+      0,
+      Math.min(
+        1,
+        ((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSq,
+      ),
+    );
     const projX = start.x + t * dx;
     const projY = start.y + t * dy;
 
-    return Math.sqrt(Math.pow(point.x - projX, 2) + Math.pow(point.y - projY, 2));
+    return Math.sqrt((point.x - projX) ** 2 + (point.y - projY) ** 2);
   }
 
   private _handleWallClick(point: Coordinates, shiftHeld = false): void {
@@ -3431,13 +3774,14 @@ export class FpbCanvas extends LitElement {
       // Check if the endpoint landed on an existing node
       const floor = currentFloor.value;
       const snappedToExisting = floor?.nodes.some(
-        (n) => Math.abs(point.x - n.x) < 1 && Math.abs(point.y - n.y) < 1
+        (n) => Math.abs(point.x - n.x) < 1 && Math.abs(point.y - n.y) < 1,
       );
 
       // Check if the loop is closed (clicked point snapped back to chain start)
-      const closedLoop = this._wallChainStart
-        && Math.abs(point.x - this._wallChainStart.x) < 1
-        && Math.abs(point.y - this._wallChainStart.y) < 1;
+      const closedLoop =
+        this._wallChainStart &&
+        Math.abs(point.x - this._wallChainStart.x) < 1 &&
+        Math.abs(point.y - this._wallChainStart.y) < 1;
 
       if (closedLoop) {
         // Loop closed — exit wall tool entirely
@@ -3455,7 +3799,11 @@ export class FpbCanvas extends LitElement {
     }
   }
 
-  private async _completeWall(start: Coordinates, end: Coordinates, direction: WallDirection = "free"): Promise<void> {
+  private async _completeWall(
+    start: Coordinates,
+    end: Coordinates,
+    direction: WallDirection = "free",
+  ): Promise<void> {
     if (!this.hass) return;
 
     const floor = currentFloor.value;
@@ -3538,7 +3886,10 @@ export class FpbCanvas extends LitElement {
   }
 
   /** Convert screen coordinates to SVG units using an explicit viewBox (for pinch-to-zoom). */
-  private _screenToSvgWithViewBox(screenPoint: Coordinates, vb: ViewBox): Coordinates {
+  private _screenToSvgWithViewBox(
+    screenPoint: Coordinates,
+    vb: ViewBox,
+  ): Coordinates {
     if (!this._svg) return screenPoint;
     const rect = this._svg.getBoundingClientRect();
     return {
@@ -3562,12 +3913,13 @@ export class FpbCanvas extends LitElement {
     const floor = currentFloor.value;
     if (!floor) return;
 
-    const room = floor.rooms.find(r => r.id === roomId)
-      ?? floor.zones?.find(z => z.id === roomId);
+    const room =
+      floor.rooms.find((r) => r.id === roomId) ??
+      floor.zones?.find((z) => z.id === roomId);
     if (!room || !room.polygon?.vertices?.length) return;
 
-    const xs = room.polygon.vertices.map(v => v.x);
-    const ys = room.polygon.vertices.map(v => v.y);
+    const xs = room.polygon.vertices.map((v) => v.x);
+    const ys = room.polygon.vertices.map((v) => v.y);
     const minX = Math.min(...xs);
     const maxX = Math.max(...xs);
     const minY = Math.min(...ys);
@@ -3577,7 +3929,7 @@ export class FpbCanvas extends LitElement {
     const contentH = maxY - minY;
 
     // 30% padding for occupancy focus, 15% otherwise
-    const padFactor = !!occupancyPanelTarget.value ? 0.30 : 0.15;
+    const padFactor = occupancyPanelTarget.value ? 0.3 : 0.15;
     const padW = Math.max(contentW, 50) * padFactor;
     const padH = Math.max(contentH, 50) * padFactor;
 
@@ -3586,9 +3938,10 @@ export class FpbCanvas extends LitElement {
 
     // Match SVG aspect ratio
     const svgRect = this._svg?.getBoundingClientRect();
-    const svgAspect = svgRect && svgRect.width > 0 && svgRect.height > 0
-      ? svgRect.width / svgRect.height
-      : 1000 / 800;
+    const svgAspect =
+      svgRect && svgRect.width > 0 && svgRect.height > 0
+        ? svgRect.width / svgRect.height
+        : 1000 / 800;
 
     const fitAspect = fitW / fitH;
     if (fitAspect > svgAspect) {
@@ -3606,15 +3959,18 @@ export class FpbCanvas extends LitElement {
     let offsetX = 0;
     if (panelOpen && svgRect && svgRect.width > 0) {
       const panelScreenPx = 316; // 300px width + 16px right margin
-      offsetX = (panelScreenPx / svgRect.width) * fitW / 2;
+      offsetX = ((panelScreenPx / svgRect.width) * fitW) / 2;
     }
 
-    this._animateViewBox({
-      x: cx - fitW / 2 + offsetX,
-      y: cy - fitH / 2,
-      width: fitW,
-      height: fitH,
-    }, 400);
+    this._animateViewBox(
+      {
+        x: cx - fitW / 2 + offsetX,
+        y: cy - fitH / 2,
+        width: fitW,
+        height: fitH,
+      },
+      400,
+    );
   }
 
   private _animateToFloor(): void {
@@ -3676,9 +4032,10 @@ export class FpbCanvas extends LitElement {
     let fitH = contentH + padH * 2;
 
     const svgRect = this._svg?.getBoundingClientRect();
-    const svgAspect = svgRect && svgRect.width > 0 && svgRect.height > 0
-      ? svgRect.width / svgRect.height
-      : 1000 / 800;
+    const svgAspect =
+      svgRect && svgRect.width > 0 && svgRect.height > 0
+        ? svgRect.width / svgRect.height
+        : 1000 / 800;
 
     const fitAspect = fitW / fitH;
     if (fitAspect > svgAspect) {
@@ -3690,12 +4047,15 @@ export class FpbCanvas extends LitElement {
     const cx = (minX + maxX) / 2;
     const cy = (minY + maxY) / 2;
 
-    this._animateViewBox({
-      x: cx - fitW / 2,
-      y: cy - fitH / 2,
-      width: fitW,
-      height: fitH,
-    }, 400);
+    this._animateViewBox(
+      {
+        x: cx - fitW / 2,
+        y: cy - fitH / 2,
+        width: fitW,
+        height: fitH,
+      },
+      400,
+    );
   }
 
   private _animateViewBox(target: ViewBox, durationMs: number): void {
@@ -3708,7 +4068,7 @@ export class FpbCanvas extends LitElement {
       const elapsed = now - startTime;
       const t = Math.min(elapsed / durationMs, 1);
       // Ease-out cubic: 1 - (1-t)^3
-      const ease = 1 - Math.pow(1 - t, 3);
+      const ease = 1 - (1 - t) ** 3;
 
       const current: ViewBox = {
         x: start.x + (target.x - start.x) * ease,
@@ -3785,9 +4145,10 @@ export class FpbCanvas extends LitElement {
 
     // Determine SVG element aspect ratio for proper fitting
     const svgRect = this._svg?.getBoundingClientRect();
-    const svgAspect = svgRect && svgRect.width > 0 && svgRect.height > 0
-      ? svgRect.width / svgRect.height
-      : 1000 / 800;
+    const svgAspect =
+      svgRect && svgRect.width > 0 && svgRect.height > 0
+        ? svgRect.width / svgRect.height
+        : 1000 / 800;
 
     // Add 10% margin on each side (20% total)
     const margin = 0.1;
@@ -3846,22 +4207,31 @@ export class FpbCanvas extends LitElement {
   private async _removeSimulatedTarget(targetId: string): Promise<void> {
     if (!this.hass) return;
     try {
-      await this.hass.callWS({ type: "inhabit/simulate/target/remove", target_id: targetId });
-      simulatedTargets.value = simulatedTargets.value.filter(t => t.id !== targetId);
+      await this.hass.callWS({
+        type: "inhabit/simulate/target/remove",
+        target_id: targetId,
+      });
+      simulatedTargets.value = simulatedTargets.value.filter(
+        (t) => t.id !== targetId,
+      );
     } catch (err) {
       console.error("Failed to remove simulated target:", err);
     }
   }
 
-  private _moveSimulatedTargetLocal(targetId: string, point: Coordinates): void {
+  private _moveSimulatedTargetLocal(
+    targetId: string,
+    point: Coordinates,
+  ): void {
     // Optimistic update: move target locally and run client-side region detection
     const floor = currentFloor.value;
     const targets = simulatedTargets.value;
-    const idx = targets.findIndex(t => t.id === targetId);
+    const idx = targets.findIndex((t) => t.id === targetId);
     if (idx === -1) return;
 
     const hitbox = simHitboxEnabled.value;
-    const region = hitbox && floor ? this._getRegionAtPoint(point, floor) : null;
+    const region =
+      hitbox && floor ? this._getRegionAtPoint(point, floor) : null;
     const updated = {
       ...targets[idx],
       position: { x: point.x, y: point.y },
@@ -3881,7 +4251,10 @@ export class FpbCanvas extends LitElement {
     }, 66); // ~15fps
   }
 
-  private async _sendSimTargetMove(targetId: string, point: Coordinates): Promise<void> {
+  private async _sendSimTargetMove(
+    targetId: string,
+    point: Coordinates,
+  ): Promise<void> {
     if (!this.hass) return;
     try {
       const result = await this.hass.callWS<SimulatedTarget>({
@@ -3892,7 +4265,7 @@ export class FpbCanvas extends LitElement {
       });
       // Update with authoritative region from backend
       const targets = simulatedTargets.value;
-      const idx = targets.findIndex(t => t.id === targetId);
+      const idx = targets.findIndex((t) => t.id === targetId);
       if (idx !== -1) {
         const newTargets = [...targets];
         newTargets[idx] = result;
@@ -3903,18 +4276,27 @@ export class FpbCanvas extends LitElement {
     }
   }
 
-  private _getRegionAtPoint(point: Coordinates, floor: Floor): { id: string; name: string } | null {
+  private _getRegionAtPoint(
+    point: Coordinates,
+    floor: Floor,
+  ): { id: string; name: string } | null {
     // Check zones first (more specific)
     if (floor.zones) {
       for (const zone of floor.zones) {
-        if (zone.polygon?.vertices && this._pointInPolygon(point, zone.polygon.vertices)) {
+        if (
+          zone.polygon?.vertices &&
+          this._pointInPolygon(point, zone.polygon.vertices)
+        ) {
           return { id: zone.id, name: zone.name };
         }
       }
     }
     // Then rooms
     for (const room of floor.rooms) {
-      if (room.polygon?.vertices && this._pointInPolygon(point, room.polygon.vertices)) {
+      if (
+        room.polygon?.vertices &&
+        this._pointInPolygon(point, room.polygon.vertices)
+      ) {
         return { id: room.id, name: room.name };
       }
     }
@@ -3949,40 +4331,54 @@ export class FpbCanvas extends LitElement {
       </defs>
       <g class="simulation-layer">
         <!-- Room/zone occupation highlights -->
-        ${floor.rooms.map(room => occupiedRegions.has(room.id) ? svg`
+        ${floor.rooms.map((room) =>
+          occupiedRegions.has(room.id)
+            ? svg`
           <path d="${polygonToPath(room.polygon)}"
                 fill="rgba(76, 175, 80, 0.12)"
                 stroke="rgba(76, 175, 80, 0.4)"
                 stroke-width="${scale * 0.12}"
                 stroke-dasharray="${scale * 0.4} ${scale * 0.2}"
                 pointer-events="none"/>
-        ` : null)}
-        ${(floor.zones || []).map((zone: Zone) => occupiedRegions.has(zone.id) ? svg`
+        `
+            : null,
+        )}
+        ${(floor.zones || []).map((zone: Zone) =>
+          occupiedRegions.has(zone.id)
+            ? svg`
           <path d="${polygonToPath(zone.polygon)}"
                 fill="rgba(76, 175, 80, 0.12)"
                 stroke="rgba(76, 175, 80, 0.4)"
                 stroke-width="${scale * 0.12}"
                 stroke-dasharray="${scale * 0.4} ${scale * 0.2}"
                 pointer-events="none"/>
-        ` : null)}
+        `
+            : null,
+        )}
 
         <!-- Target markers -->
-        ${targets.map(t => {
+        ${targets.map((t) => {
           const inRegion = !!t.region_id;
           const color = inRegion ? "#4caf50" : "#78909c";
           return svg`
             <g class="sim-target" style="cursor: grab;">
               <!-- Pulse ring for detected targets -->
-              ${inRegion ? svg`
+              ${
+                inRegion
+                  ? svg`
                 <circle cx="${t.position.x}" cy="${t.position.y}" r="${pulseR}"
                         fill="none" stroke="${color}" stroke-width="${scale * 0.06}"
                         opacity="0.3"/>
-              ` : null}
+              `
+                  : null
+              }
               <!-- Dot -->
               <circle cx="${t.position.x}" cy="${t.position.y}" r="${r}"
                       fill="${color}"
                       filter="url(#sim-shadow)"/>
-              ${t.region_name ? svg`
+              ${
+                t.region_name
+                  ? svg`
                 <text x="${t.position.x}" y="${t.position.y + labelOffset}"
                       text-anchor="middle"
                       fill="var(--secondary-text-color, #666)"
@@ -3992,7 +4388,9 @@ export class FpbCanvas extends LitElement {
                       pointer-events="none">
                   ${t.region_name}
                 </text>
-              ` : null}
+              `
+                  : null
+              }
             </g>
           `;
         })}
@@ -4000,7 +4398,10 @@ export class FpbCanvas extends LitElement {
     `;
   }
 
-  private _pointInPolygon(point: Coordinates, vertices: Coordinates[]): boolean {
+  private _pointInPolygon(
+    point: Coordinates,
+    vertices: Coordinates[],
+  ): boolean {
     if (vertices.length < 3) return false;
 
     let inside = false;
@@ -4022,21 +4423,32 @@ export class FpbCanvas extends LitElement {
   }
 
   /** Check if a point is inside a polygon OR within `margin` units of its edges. */
-  private _pointInOrNearPolygon(point: Coordinates, vertices: Coordinates[], margin: number): boolean {
+  private _pointInOrNearPolygon(
+    point: Coordinates,
+    vertices: Coordinates[],
+    margin: number,
+  ): boolean {
     if (this._pointInPolygon(point, vertices)) return true;
     const n = vertices.length;
     for (let i = 0, j = n - 1; i < n; j = i++) {
-      const ax = vertices[j].x, ay = vertices[j].y;
-      const bx = vertices[i].x, by = vertices[i].y;
-      const dx = bx - ax, dy = by - ay;
+      const ax = vertices[j].x,
+        ay = vertices[j].y;
+      const bx = vertices[i].x,
+        by = vertices[i].y;
+      const dx = bx - ax,
+        dy = by - ay;
       const lenSq = dx * dx + dy * dy;
       if (lenSq === 0) {
         const d = Math.hypot(point.x - ax, point.y - ay);
         if (d <= margin) return true;
         continue;
       }
-      const t = Math.max(0, Math.min(1, ((point.x - ax) * dx + (point.y - ay) * dy) / lenSq));
-      const px = ax + t * dx, py = ay + t * dy;
+      const t = Math.max(
+        0,
+        Math.min(1, ((point.x - ax) * dx + (point.y - ay) * dy) / lenSq),
+      );
+      const px = ax + t * dx,
+        py = ay + t * dy;
       if (Math.hypot(point.x - px, point.y - py) <= margin) return true;
     }
     return false;
@@ -4045,14 +4457,14 @@ export class FpbCanvas extends LitElement {
   private _getRandomRoomColor(): string {
     // Colors that work in both light and dark themes (semi-transparent)
     const colors = [
-      "rgba(156, 156, 156, 0.3)",  // gray
-      "rgba(244, 143, 177, 0.3)",  // pink
-      "rgba(129, 199, 132, 0.3)",  // green
-      "rgba(100, 181, 246, 0.3)",  // blue
-      "rgba(255, 183, 77, 0.3)",   // orange
-      "rgba(186, 104, 200, 0.3)",  // purple
-      "rgba(77, 208, 225, 0.3)",   // cyan
-      "rgba(255, 213, 79, 0.3)",   // yellow
+      "rgba(156, 156, 156, 0.3)", // gray
+      "rgba(244, 143, 177, 0.3)", // pink
+      "rgba(129, 199, 132, 0.3)", // green
+      "rgba(100, 181, 246, 0.3)", // blue
+      "rgba(255, 183, 77, 0.3)", // orange
+      "rgba(186, 104, 200, 0.3)", // purple
+      "rgba(77, 208, 225, 0.3)", // cyan
+      "rgba(255, 213, 79, 0.3)", // yellow
     ];
     return colors[Math.floor(Math.random() * colors.length)];
   }
@@ -4088,7 +4500,7 @@ export class FpbCanvas extends LitElement {
 
         const centroidDist = Math.sqrt(
           (existingCentroid.x - candidate.centroid.x) ** 2 +
-          (existingCentroid.y - candidate.centroid.y) ** 2
+            (existingCentroid.y - candidate.centroid.y) ** 2,
         );
 
         let score = 0;
@@ -4120,8 +4532,9 @@ export class FpbCanvas extends LitElement {
     // Assign best-first: each detected room and existing room can only match once
     const matchMap = new Map<number, Room>(); // detected index -> existing room
     for (const { di, roomId, score: _score } of pairs) {
-      if (matchedDetectedIdxs.has(di) || matchedExistingIds.has(roomId)) continue;
-      const room = existingRooms.find(r => r.id === roomId)!;
+      if (matchedDetectedIdxs.has(di) || matchedExistingIds.has(roomId))
+        continue;
+      const room = existingRooms.find((r) => r.id === roomId)!;
       matchMap.set(di, room);
       matchedDetectedIdxs.add(di);
       matchedExistingIds.add(roomId);
@@ -4133,7 +4546,10 @@ export class FpbCanvas extends LitElement {
       const bestMatch = matchMap.get(di);
 
       if (bestMatch) {
-        const verticesChanged = this._verticesChanged(bestMatch.polygon.vertices, candidate.vertices);
+        const verticesChanged = this._verticesChanged(
+          bestMatch.polygon.vertices,
+          candidate.vertices,
+        );
         if (verticesChanged) {
           try {
             await this.hass!.callWS({
@@ -4181,11 +4597,16 @@ export class FpbCanvas extends LitElement {
     await reloadFloorData();
   }
 
-  private _verticesChanged(existing: Coordinates[], detected: Coordinates[]): boolean {
+  private _verticesChanged(
+    existing: Coordinates[],
+    detected: Coordinates[],
+  ): boolean {
     if (existing.length !== detected.length) return true;
     for (let i = 0; i < existing.length; i++) {
-      if (Math.abs(existing[i].x - detected[i].x) > 1 ||
-          Math.abs(existing[i].y - detected[i].y) > 1) {
+      if (
+        Math.abs(existing[i].x - detected[i].x) > 1 ||
+        Math.abs(existing[i].y - detected[i].y) > 1
+      ) {
         return true;
       }
     }
@@ -4203,7 +4624,10 @@ export class FpbCanvas extends LitElement {
     return max + 1;
   }
 
-  private _getAssignedHaAreaIds(exclude?: { roomId?: string; zoneId?: string }): Set<string> {
+  private _getAssignedHaAreaIds(exclude?: {
+    roomId?: string;
+    zoneId?: string;
+  }): Set<string> {
     const assigned = new Set<string>();
     const floorPlan = currentFloorPlan.value;
     if (!floorPlan) return assigned;
@@ -4228,7 +4652,8 @@ export class FpbCanvas extends LitElement {
     const floorPlan = currentFloorPlan.value;
     if (!floor || !floorPlan) return;
 
-    const { room, editName, editColor, editAreaId, editLayers } = this._roomEditor;
+    const { room, editName, editColor, editAreaId, editLayers } =
+      this._roomEditor;
 
     try {
       await this.hass.callWS({
@@ -4266,12 +4691,15 @@ export class FpbCanvas extends LitElement {
     const roomVerts = this._roomEditor.room.polygon.vertices;
     const roomCentroid = this._getPolygonCenter(roomVerts);
     if (roomCentroid) {
-      const loopExists = detected.some(candidate =>
-        this._pointInPolygon(roomCentroid, candidate.vertices) &&
-        candidate.vertices.length === roomVerts.length
+      const loopExists = detected.some(
+        (candidate) =>
+          this._pointInPolygon(roomCentroid, candidate.vertices) &&
+          candidate.vertices.length === roomVerts.length,
       );
       if (loopExists) {
-        alert("Cannot delete a room while its walls are still connected. Remove a wall first.");
+        alert(
+          "Cannot delete a room while its walls are still connected. Remove a wall first.",
+        );
         return;
       }
     }
@@ -4301,7 +4729,9 @@ export class FpbCanvas extends LitElement {
     try {
       const resp = await fetch("/api/inhabit/images/upload", {
         method: "POST",
-        headers: { Authorization: `Bearer ${this.hass.auth.data.access_token}` },
+        headers: {
+          Authorization: `Bearer ${this.hass.auth.data.access_token}`,
+        },
         body: formData,
       });
       const data = await resp.json();
@@ -4318,14 +4748,26 @@ export class FpbCanvas extends LitElement {
           visible: true,
         };
         const editLayers = [...this._roomEditor.editLayers, newLayer];
-        this._roomEditor = { ...this._roomEditor, editLayers, selectedLayerIdx: editLayers.length - 1 };
+        this._roomEditor = {
+          ...this._roomEditor,
+          editLayers,
+          selectedLayerIdx: editLayers.length - 1,
+        };
       }
     } catch (err) {
       console.error("Error uploading room background:", err);
     }
   }
 
-  private _startCornerDrag(e: PointerEvent, corner: string, layerIdx: number, bx: number, by: number, bw: number, bh: number): void {
+  private _startCornerDrag(
+    e: PointerEvent,
+    corner: string,
+    layerIdx: number,
+    bx: number,
+    by: number,
+    bw: number,
+    bh: number,
+  ): void {
     e.stopPropagation();
     e.preventDefault();
     if (!this._roomEditor) return;
@@ -4335,11 +4777,30 @@ export class FpbCanvas extends LitElement {
     const lw = bw * layer.scale;
     const lh = bh * layer.scale;
     let anchorX: number, anchorY: number;
-    if (corner === 'tl') { anchorX = lx + lw; anchorY = ly + lh; }
-    else if (corner === 'tr') { anchorX = lx; anchorY = ly + lh; }
-    else if (corner === 'bl') { anchorX = lx + lw; anchorY = ly; }
-    else { anchorX = lx; anchorY = ly; }
-    this._draggingCorner = { corner, layerIdx, anchorX, anchorY, bx, by, bw, bh, pointerId: e.pointerId };
+    if (corner === "tl") {
+      anchorX = lx + lw;
+      anchorY = ly + lh;
+    } else if (corner === "tr") {
+      anchorX = lx;
+      anchorY = ly + lh;
+    } else if (corner === "bl") {
+      anchorX = lx + lw;
+      anchorY = ly;
+    } else {
+      anchorX = lx;
+      anchorY = ly;
+    }
+    this._draggingCorner = {
+      corner,
+      layerIdx,
+      anchorX,
+      anchorY,
+      bx,
+      by,
+      bw,
+      bh,
+      pointerId: e.pointerId,
+    };
     this._svg?.setPointerCapture(e.pointerId);
   }
 
@@ -4350,17 +4811,22 @@ export class FpbCanvas extends LitElement {
     const roomCentroid = this._getPolygonCenter(roomVerts);
     if (!roomCentroid) return false;
     const detected = detectRoomsFromEdges(floor.nodes, floor.edges);
-    return detected.some(candidate =>
-      this._pointInPolygon(roomCentroid, candidate.vertices) &&
-      candidate.vertices.length === roomVerts.length
+    return detected.some(
+      (candidate) =>
+        this._pointInPolygon(roomCentroid, candidate.vertices) &&
+        candidate.vertices.length === roomVerts.length,
     );
   }
 
   private _renderRoomEditor() {
     if (!this._roomEditor) return null;
-    const assignedHaAreas = this._getAssignedHaAreaIds({ roomId: this._roomEditor.room.id });
+    const assignedHaAreas = this._getAssignedHaAreaIds({
+      roomId: this._roomEditor.room.id,
+    });
     const selectableAreas = this._haAreas.filter(
-      area => !assignedHaAreas.has(area.area_id) || area.area_id === this._roomEditor?.editAreaId,
+      (area) =>
+        !assignedHaAreas.has(area.area_id) ||
+        area.area_id === this._roomEditor?.editAreaId,
     );
 
     const ROOM_COLORS = [
@@ -4391,7 +4857,7 @@ export class FpbCanvas extends LitElement {
             @change=${(e: Event) => {
               if (this._roomEditor) {
                 const val = (e.target as HTMLSelectElement).value;
-                const area = this._haAreas.find(a => a.area_id === val);
+                const area = this._haAreas.find((a) => a.area_id === val);
                 this._roomEditor = {
                   ...this._roomEditor,
                   editAreaId: val || null,
@@ -4401,9 +4867,11 @@ export class FpbCanvas extends LitElement {
             }}
           >
             <option value="">None</option>
-            ${selectableAreas.map(a => html`
+            ${selectableAreas.map(
+              (a) => html`
               <option value=${a.area_id} ?selected=${this._roomEditor?.editAreaId === a.area_id}>${a.name}</option>
-            `)}
+            `,
+            )}
           </select>
         </div>
 
@@ -4415,7 +4883,10 @@ export class FpbCanvas extends LitElement {
             ?disabled=${!!this._roomEditor.editAreaId}
             @input=${(e: InputEvent) => {
               if (this._roomEditor) {
-                this._roomEditor = { ...this._roomEditor, editName: (e.target as HTMLInputElement).value };
+                this._roomEditor = {
+                  ...this._roomEditor,
+                  editName: (e.target as HTMLInputElement).value,
+                };
               }
             }}
             @keydown=${(e: KeyboardEvent) => {
@@ -4428,7 +4899,8 @@ export class FpbCanvas extends LitElement {
         <div class="wall-editor-section">
           <span class="wall-editor-section-label">Color</span>
           <div class="wall-editor-colors">
-            ${ROOM_COLORS.map(c => html`
+            ${ROOM_COLORS.map(
+              (c) => html`
               <button
                 class="color-swatch ${this._roomEditor?.editColor === c ? "active" : ""}"
                 style="background:${c};"
@@ -4438,21 +4910,35 @@ export class FpbCanvas extends LitElement {
                   }
                 }}
               ></button>
-            `)}
+            `,
+            )}
           </div>
         </div>
 
         <div class="wall-editor-section">
           <span class="wall-editor-section-label">Background Layers</span>
           <div class="bg-layer-list">
-            ${this._roomEditor.editLayers.map((layer, idx) => html`
-              <div class="bg-layer-item ${this._roomEditor?.selectedLayerIdx === idx ? 'selected' : ''}"
-                   @click=${() => { if (this._roomEditor) this._roomEditor = { ...this._roomEditor, selectedLayerIdx: this._roomEditor.selectedLayerIdx === idx ? null : idx }; }}>
+            ${this._roomEditor.editLayers.map(
+              (layer, idx) => html`
+              <div class="bg-layer-item ${this._roomEditor?.selectedLayerIdx === idx ? "selected" : ""}"
+                   @click=${() => {
+                     if (this._roomEditor)
+                       this._roomEditor = {
+                         ...this._roomEditor,
+                         selectedLayerIdx:
+                           this._roomEditor.selectedLayerIdx === idx
+                             ? null
+                             : idx,
+                       };
+                   }}>
                 <button class="bg-layer-vis" @click=${(e: Event) => {
                   e.stopPropagation();
                   if (!this._roomEditor) return;
                   const editLayers = [...this._roomEditor.editLayers];
-                  editLayers[idx] = { ...editLayers[idx], visible: !editLayers[idx].visible };
+                  editLayers[idx] = {
+                    ...editLayers[idx],
+                    visible: !editLayers[idx].visible,
+                  };
                   this._roomEditor = { ...this._roomEditor, editLayers };
                 }}><ha-icon icon=${layer.visible ? "mdi:eye" : "mdi:eye-off"}></ha-icon></button>
                 <img class="bg-layer-thumb" src="${layer.url}" />
@@ -4460,34 +4946,63 @@ export class FpbCanvas extends LitElement {
                 <button class="bg-layer-delete" @click=${(e: Event) => {
                   e.stopPropagation();
                   if (!this._roomEditor) return;
-                  const editLayers = this._roomEditor.editLayers.filter((_, i) => i !== idx);
+                  const editLayers = this._roomEditor.editLayers.filter(
+                    (_, i) => i !== idx,
+                  );
                   let selectedLayerIdx = this._roomEditor.selectedLayerIdx;
                   if (selectedLayerIdx !== null) {
                     if (selectedLayerIdx === idx) selectedLayerIdx = null;
                     else if (selectedLayerIdx > idx) selectedLayerIdx--;
                   }
-                  this._roomEditor = { ...this._roomEditor, editLayers, selectedLayerIdx };
+                  this._roomEditor = {
+                    ...this._roomEditor,
+                    editLayers,
+                    selectedLayerIdx,
+                  };
                 }}><ha-icon icon="mdi:close"></ha-icon></button>
               </div>
-            `)}
+            `,
+            )}
           </div>
-          ${this._roomEditor.selectedLayerIdx !== null && this._roomEditor.editLayers[this._roomEditor.selectedLayerIdx] ? (() => {
-            const idx = this._roomEditor!.selectedLayerIdx!;
-            const layer = this._roomEditor!.editLayers[idx];
-            return html`
+          ${
+            this._roomEditor.selectedLayerIdx !== null &&
+            this._roomEditor.editLayers[this._roomEditor.selectedLayerIdx]
+              ? (
+                  () => {
+                    const idx = this._roomEditor!.selectedLayerIdx!;
+                    const layer = this._roomEditor!.editLayers[idx];
+                    return html`
               <div class="bg-layer-controls">
                 <div class="bg-layer-reorder">
                   <button ?disabled=${idx === 0} @click=${() => {
                     if (!this._roomEditor || idx === 0) return;
                     const editLayers = [...this._roomEditor.editLayers];
-                    [editLayers[idx - 1], editLayers[idx]] = [editLayers[idx], editLayers[idx - 1]];
-                    this._roomEditor = { ...this._roomEditor, editLayers, selectedLayerIdx: idx - 1 };
+                    [editLayers[idx - 1], editLayers[idx]] = [
+                      editLayers[idx],
+                      editLayers[idx - 1],
+                    ];
+                    this._roomEditor = {
+                      ...this._roomEditor,
+                      editLayers,
+                      selectedLayerIdx: idx - 1,
+                    };
                   }}><ha-icon icon="mdi:arrow-up"></ha-icon></button>
                   <button ?disabled=${idx === this._roomEditor!.editLayers.length - 1} @click=${() => {
-                    if (!this._roomEditor || idx === this._roomEditor.editLayers.length - 1) return;
+                    if (
+                      !this._roomEditor ||
+                      idx === this._roomEditor.editLayers.length - 1
+                    )
+                      return;
                     const editLayers = [...this._roomEditor.editLayers];
-                    [editLayers[idx], editLayers[idx + 1]] = [editLayers[idx + 1], editLayers[idx]];
-                    this._roomEditor = { ...this._roomEditor, editLayers, selectedLayerIdx: idx + 1 };
+                    [editLayers[idx], editLayers[idx + 1]] = [
+                      editLayers[idx + 1],
+                      editLayers[idx],
+                    ];
+                    this._roomEditor = {
+                      ...this._roomEditor,
+                      editLayers,
+                      selectedLayerIdx: idx + 1,
+                    };
                   }}><ha-icon icon="mdi:arrow-down"></ha-icon></button>
                 </div>
                 <div class="bg-layer-slider-row">
@@ -4496,7 +5011,10 @@ export class FpbCanvas extends LitElement {
                     @input=${(e: InputEvent) => {
                       if (!this._roomEditor) return;
                       const editLayers = [...this._roomEditor.editLayers];
-                      editLayers[idx] = { ...editLayers[idx], scale: parseFloat((e.target as HTMLInputElement).value) };
+                      editLayers[idx] = {
+                        ...editLayers[idx],
+                        scale: parseFloat((e.target as HTMLInputElement).value),
+                      };
                       this._roomEditor = { ...this._roomEditor, editLayers };
                     }} />
                   <span class="bg-layer-slider-val">${Math.round(layer.scale * 100)}%</span>
@@ -4507,14 +5025,22 @@ export class FpbCanvas extends LitElement {
                     @input=${(e: InputEvent) => {
                       if (!this._roomEditor) return;
                       const editLayers = [...this._roomEditor.editLayers];
-                      editLayers[idx] = { ...editLayers[idx], opacity: parseFloat((e.target as HTMLInputElement).value) };
+                      editLayers[idx] = {
+                        ...editLayers[idx],
+                        opacity: parseFloat(
+                          (e.target as HTMLInputElement).value,
+                        ),
+                      };
                       this._roomEditor = { ...this._roomEditor, editLayers };
                     }} />
                   <span class="bg-layer-slider-val">${Math.round(layer.opacity * 100)}%</span>
                 </div>
               </div>
             `;
-          })() : null}
+                  }
+                )()
+              : null
+          }
           <label class="room-bg-upload">
             <ha-icon icon="mdi:image-plus"></ha-icon> Add Image
             <input type="file" accept="image/*" @change=${this._handleRoomBgUpload} hidden />
@@ -4529,11 +5055,15 @@ export class FpbCanvas extends LitElement {
     `;
   }
 
-  private _renderEdgeChains(floor: Floor, sel: SelectionState, focusedEdgeIds: Set<string> | null = null) {
+  private _renderEdgeChains(
+    floor: Floor,
+    sel: SelectionState,
+    focusedEdgeIds: Set<string> | null = null,
+  ) {
     const resolved = resolveFloorEdges(floor);
 
     // If dragging a node, use the solver to preview all affected node positions
-    let edgesForChains = resolved.map(re => ({
+    let edgesForChains = resolved.map((re) => ({
       id: re.id,
       start_node: re.start_node,
       end_node: re.end_node,
@@ -4548,19 +5078,23 @@ export class FpbCanvas extends LitElement {
     }));
 
     if (this._draggingNode) {
-      const { positions: preview, blocked, blockedBy } = previewNodeDrag(
+      const {
+        positions: preview,
+        blocked,
+        blockedBy,
+      } = previewNodeDrag(
         floor.nodes,
         floor.edges,
         this._draggingNode.node.id,
         this._cursorPos.x,
-        this._cursorPos.y
+        this._cursorPos.y,
       );
 
       if (blocked) {
         if (blockedBy) this._blinkEdges(blockedBy);
       } else {
         // Apply preview positions to resolved edges
-        edgesForChains = resolved.map(re => ({
+        edgesForChains = resolved.map((re) => ({
           id: re.id,
           start_node: re.start_node,
           end_node: re.end_node,
@@ -4579,22 +5113,30 @@ export class FpbCanvas extends LitElement {
     const chains = groupEdgesIntoChains(edgesForChains);
 
     // Find selected edges for highlight
-    const selectedEdges = sel.type === "edge"
-      ? edgesForChains.filter(w => sel.ids.includes(w.id))
-      : [];
+    const selectedEdges =
+      sel.type === "edge"
+        ? edgesForChains.filter((w) => sel.ids.includes(w.id))
+        : [];
 
     // Find conflict edges (constraint violations detected on floor load)
     const floorConflicts = constraintConflicts.value.get(floor.id);
     const conflictEdgeIds = floorConflicts
-      ? new Set(floorConflicts.map(v => v.edgeId))
+      ? new Set(floorConflicts.map((v) => v.edgeId))
       : new Set<string>();
 
     // Door and window edges (not part of wall chains)
-    const openingEdges = edgesForChains.filter(e => e.type === "door" || e.type === "window");
+    const openingEdges = edgesForChains.filter(
+      (e) => e.type === "door" || e.type === "window",
+    );
 
     // When a room is focused, split chains into sub-chains of consecutive
     // focused / non-focused edges so each segment dims independently.
-    type WallSeg = { id: string; startPos: Coordinates; endPos: Coordinates; thickness: number };
+    type WallSeg = {
+      id: string;
+      startPos: Coordinates;
+      endPos: Coordinates;
+      thickness: number;
+    };
     const wallSegments: Array<{ edges: WallSeg[]; dimClass: string }> = [];
     for (const chain of chains) {
       if (!focusedEdgeIds) {
@@ -4610,29 +5152,47 @@ export class FpbCanvas extends LitElement {
           } else if (ef === runFocused) {
             run.push(e);
           } else {
-            wallSegments.push({ edges: run, dimClass: runFocused ? "edges-focused" : "edges-dimmed" });
+            wallSegments.push({
+              edges: run,
+              dimClass: runFocused ? "edges-focused" : "edges-dimmed",
+            });
             run = [e];
             runFocused = ef;
           }
         }
         if (run.length > 0) {
-          wallSegments.push({ edges: run, dimClass: runFocused ? "edges-focused" : "edges-dimmed" });
+          wallSegments.push({
+            edges: run,
+            dimClass: runFocused ? "edges-focused" : "edges-dimmed",
+          });
         }
       }
     }
 
     return svg`
       <!-- Base edges rendered as chains (split by focus state) -->
-      ${wallSegments.map(seg => svg`
+      ${wallSegments.map(
+        (seg) => svg`
         <path class="wall ${seg.dimClass}"
-              d="${wallChainPath(seg.edges.map(e => ({ start: e.startPos, end: e.endPos, thickness: e.thickness })))}"/>
-      `)}
+              d="${wallChainPath(seg.edges.map((e) => ({ start: e.startPos, end: e.endPos, thickness: e.thickness })))}"/>
+      `,
+      )}
 
       <!-- Door and window openings -->
-      ${openingEdges.map(edge => {
-        const rectPath = this._singleEdgePath({ start: edge.startPos, end: edge.endPos, thickness: edge.thickness });
-        const edgeFocused = focusedEdgeIds ? focusedEdgeIds.has(edge.id) : false;
-        const dimClass = focusedEdgeIds ? (edgeFocused ? "edges-focused" : "edges-dimmed") : "";
+      ${openingEdges.map((edge) => {
+        const rectPath = this._singleEdgePath({
+          start: edge.startPos,
+          end: edge.endPos,
+          thickness: edge.thickness,
+        });
+        const edgeFocused = focusedEdgeIds
+          ? focusedEdgeIds.has(edge.id)
+          : false;
+        const dimClass = focusedEdgeIds
+          ? edgeFocused
+            ? "edges-focused"
+            : "edges-dimmed"
+          : "";
 
         // Determine target swing angle from entity state
         let targetSwing = 0;
@@ -4640,8 +5200,10 @@ export class FpbCanvas extends LitElement {
           const entity = this.hass.states[edge.entity_id];
           const st = entity.state;
           if (st === "on" || st === "open") {
-            const maxSwing = edge.type === "door" ? DOOR_SWING_RAD : Math.PI / 2;
-            const pos = (entity.attributes as Record<string, unknown>).current_position as number | undefined;
+            const maxSwing =
+              edge.type === "door" ? DOOR_SWING_RAD : Math.PI / 2;
+            const pos = (entity.attributes as Record<string, unknown>)
+              .current_position as number | undefined;
             if (pos !== undefined && pos >= 0 && pos <= 100) {
               targetSwing = (pos / 100) * maxSwing;
             } else {
@@ -4682,7 +5244,7 @@ export class FpbCanvas extends LitElement {
         const cls = edge.type === "window" ? "window" : "door";
         const overlayClass = `opening-overlay ${cls}-opening`;
 
-// Swing-type: always render via closed-state style (posts, segment, hinge)
+        // Swing-type: always render via closed-state style (posts, segment, hinge)
         // with segment rotated by swingAngle for animation.
         if (oType === "swing") {
           const postDepth = edge.thickness * 0.5; // how far the post extends along the wall axis
@@ -4706,15 +5268,27 @@ export class FpbCanvas extends LitElement {
 
           // Door/window segment starts after post + gap on each side
           const segInset = postDepth + doorGap;
-          const segStart = { x: edge.startPos.x + ux * segInset, y: edge.startPos.y + uy * segInset };
-          const segEnd = { x: edge.endPos.x - ux * segInset, y: edge.endPos.y - uy * segInset };
+          const segStart = {
+            x: edge.startPos.x + ux * segInset,
+            y: edge.startPos.y + uy * segInset,
+          };
+          const segEnd = {
+            x: edge.endPos.x - ux * segInset,
+            y: edge.endPos.y - uy * segInset,
+          };
 
           // Hinge: sits on the inner face of the hinge-side post, on the wall surface
           const hinge_c = edge.swing_direction ?? "left";
           const hingePost = hinge_c === "right" ? edge.endPos : edge.startPos;
           const hingeInward = hinge_c === "right" ? -1 : 1;
-          const hingeCx = hingePost.x + ux * hingeInward * postDepth + nx * (edge.thickness / 2);
-          const hingeCy = hingePost.y + uy * hingeInward * postDepth + ny * (edge.thickness / 2);
+          const hingeCx =
+            hingePost.x +
+            ux * hingeInward * postDepth +
+            nx * (edge.thickness / 2);
+          const hingeCy =
+            hingePost.y +
+            uy * hingeInward * postDepth +
+            ny * (edge.thickness / 2);
 
           if (cls === "door") {
             // Swing arc — standard floor plan convention
@@ -4724,23 +5298,39 @@ export class FpbCanvas extends LitElement {
             const freePost = hinge_c === "right" ? edge.startPos : edge.endPos;
             const fX_c = freePost.x + nx * hOff_c;
             const fY_c = freePost.y + ny * hOff_c;
-            const arc_c = swingArcGeom(hX_c, hY_c, fX_c, fY_c, DOOR_SWING_DEG, hinge_c === "left");
+            const arc_c = swingArcGeom(
+              hX_c,
+              hY_c,
+              fX_c,
+              fY_c,
+              DOOR_SWING_DEG,
+              hinge_c === "left",
+            );
             const wedgePath_c = `M${hX_c},${hY_c} L${fX_c},${fY_c} C${arc_c.cp1x},${arc_c.cp1y} ${arc_c.cp2x},${arc_c.cp2y} ${arc_c.ox},${arc_c.oy} Z`;
 
             // Rotate segment around hinge by swingAngle
-            const cosA_c = Math.cos(swingAngle), sinA_c = Math.sin(swingAngle);
+            const cosA_c = Math.cos(swingAngle),
+              sinA_c = Math.sin(swingAngle);
             const s_c = hinge_c === "left" ? 1 : -1;
             const rotSeg = (pt: Coordinates) => {
-              const dx = pt.x - hingeCx, dy = pt.y - hingeCy;
-              return { x: hingeCx + cosA_c * dx - s_c * sinA_c * dy, y: hingeCy + s_c * sinA_c * dx + cosA_c * dy };
+              const dx = pt.x - hingeCx,
+                dy = pt.y - hingeCy;
+              return {
+                x: hingeCx + cosA_c * dx - s_c * sinA_c * dy,
+                y: hingeCy + s_c * sinA_c * dx + cosA_c * dy,
+              };
             };
             const rSegStart = rotSeg(segStart);
             const rSegEnd = rotSeg(segEnd);
-            const animSegPath = this._singleEdgePath({ start: rSegStart, end: rSegEnd, thickness: edge.thickness });
+            const animSegPath = this._singleEdgePath({
+              start: rSegStart,
+              end: rSegEnd,
+              thickness: edge.thickness,
+            });
 
             return svg`
               <g class="${dimClass} ${overlayClass}">
-                ${this._fadedWedge(edge.id, wedgePath_c, hX_c, hY_c, edgeLen, 'rgba(120, 144, 156, 0.08)')}
+                ${this._fadedWedge(edge.id, wedgePath_c, hX_c, hY_c, edgeLen, "rgba(120, 144, 156, 0.08)")}
                 <path class="door-swing"
                       d="M${fX_c},${fY_c} C${arc_c.cp1x},${arc_c.cp1y} ${arc_c.cp2x},${arc_c.cp2y} ${arc_c.ox},${arc_c.oy}"/>
                 <path class="opening-stop" d="${postPath(edge.startPos, 1)}"/>
@@ -4761,10 +5351,14 @@ export class FpbCanvas extends LitElement {
           const oX_w = hX_w + nx * edgeLen;
           const oY_w = hY_w + ny * edgeLen;
           const k_w = 0.5522847498;
-          const rfx_w = fX_w - hX_w, rfy_w = fY_w - hY_w;
-          const rox_w = oX_w - hX_w, roy_w = oY_w - hY_w;
-          const cp1x_w = fX_w + k_w * rox_w, cp1y_w = fY_w + k_w * roy_w;
-          const cp2x_w = oX_w + k_w * rfx_w, cp2y_w = oY_w + k_w * rfy_w;
+          const rfx_w = fX_w - hX_w,
+            rfy_w = fY_w - hY_w;
+          const rox_w = oX_w - hX_w,
+            roy_w = oY_w - hY_w;
+          const cp1x_w = fX_w + k_w * rox_w,
+            cp1y_w = fY_w + k_w * roy_w;
+          const cp2x_w = oX_w + k_w * rfx_w,
+            cp2y_w = oY_w + k_w * rfy_w;
           const arcPath_w = `M${fX_w},${fY_w} C${cp1x_w},${cp1y_w} ${cp2x_w},${cp2y_w} ${oX_w},${oY_w}`;
           const wedgePath_w = `M${hX_w},${hY_w} L${fX_w},${fY_w} C${cp1x_w},${cp1y_w} ${cp2x_w},${cp2y_w} ${oX_w},${oY_w} Z`;
 
@@ -4787,35 +5381,68 @@ export class FpbCanvas extends LitElement {
             const oL_Y = hL_Y + ny * halfLen_d;
             const oR_X = hR_X + nx * halfLen_d;
             const oR_Y = hR_Y + ny * halfLen_d;
-            const rLfx = mOff_X - hL_X, rLfy = mOff_Y - hL_Y;
-            const rLox = oL_X - hL_X, rLoy = oL_Y - hL_Y;
-            const cpL1x = mOff_X + k_w * rLox, cpL1y = mOff_Y + k_w * rLoy;
-            const cpL2x = oL_X + k_w * rLfx, cpL2y = oL_Y + k_w * rLfy;
-            const rRfx = mOff_X - hR_X, rRfy = mOff_Y - hR_Y;
-            const rRox = oR_X - hR_X, rRoy = oR_Y - hR_Y;
-            const cpR1x = mOff_X + k_w * rRox, cpR1y = mOff_Y + k_w * rRoy;
-            const cpR2x = oR_X + k_w * rRfx, cpR2y = oR_Y + k_w * rRfy;
+            const rLfx = mOff_X - hL_X,
+              rLfy = mOff_Y - hL_Y;
+            const rLox = oL_X - hL_X,
+              rLoy = oL_Y - hL_Y;
+            const cpL1x = mOff_X + k_w * rLox,
+              cpL1y = mOff_Y + k_w * rLoy;
+            const cpL2x = oL_X + k_w * rLfx,
+              cpL2y = oL_Y + k_w * rLfy;
+            const rRfx = mOff_X - hR_X,
+              rRfy = mOff_Y - hR_Y;
+            const rRox = oR_X - hR_X,
+              rRoy = oR_Y - hR_Y;
+            const cpR1x = mOff_X + k_w * rRox,
+              cpR1y = mOff_Y + k_w * rRoy;
+            const cpR2x = oR_X + k_w * rRfx,
+              cpR2y = oR_Y + k_w * rRfy;
             const wedgeL = `M${hL_X},${hL_Y} L${mOff_X},${mOff_Y} C${cpL1x},${cpL1y} ${cpL2x},${cpL2y} ${oL_X},${oL_Y} Z`;
             const wedgeR = `M${hR_X},${hR_Y} L${mOff_X},${mOff_Y} C${cpR1x},${cpR1y} ${cpR2x},${cpR2y} ${oR_X},${oR_Y} Z`;
             // Rotate both panes by swingAngle around their hinges
-            const cosA_dw = Math.cos(swingAngle), sinA_dw = Math.sin(swingAngle);
-            const rotPt = (pt: Coordinates, cx: number, cy: number, s: number) => {
-              const dx = pt.x - cx, dy = pt.y - cy;
-              return { x: cx + cosA_dw * dx - s * sinA_dw * dy, y: cy + s * sinA_dw * dx + cosA_dw * dy };
+            const cosA_dw = Math.cos(swingAngle),
+              sinA_dw = Math.sin(swingAngle);
+            const rotPt = (
+              pt: Coordinates,
+              cx: number,
+              cy: number,
+              s: number,
+            ) => {
+              const dx = pt.x - cx,
+                dy = pt.y - cy;
+              return {
+                x: cx + cosA_dw * dx - s * sinA_dw * dy,
+                y: cy + s * sinA_dw * dx + cosA_dw * dy,
+              };
             };
             // Left hinge at startPos, right hinge at endPos
-            const hcLx = edge.startPos.x + ux * postDepth + nx * (edge.thickness / 2);
-            const hcLy = edge.startPos.y + uy * postDepth + ny * (edge.thickness / 2);
-            const hcRx = edge.endPos.x - ux * postDepth + nx * (edge.thickness / 2);
-            const hcRy = edge.endPos.y - uy * postDepth + ny * (edge.thickness / 2);
+            const hcLx =
+              edge.startPos.x + ux * postDepth + nx * (edge.thickness / 2);
+            const hcLy =
+              edge.startPos.y + uy * postDepth + ny * (edge.thickness / 2);
+            const hcRx =
+              edge.endPos.x - ux * postDepth + nx * (edge.thickness / 2);
+            const hcRy =
+              edge.endPos.y - uy * postDepth + ny * (edge.thickness / 2);
             const segEndL = { x: segMidX - ux * mGap, y: segMidY - uy * mGap };
-            const segStartR = { x: segMidX + ux * mGap, y: segMidY + uy * mGap };
-            const rSegPathL = this._singleEdgePath({ start: rotPt(segStart, hcLx, hcLy, 1), end: rotPt(segEndL, hcLx, hcLy, 1), thickness: edge.thickness });
-            const rSegPathR = this._singleEdgePath({ start: rotPt(segStartR, hcRx, hcRy, -1), end: rotPt(segEnd, hcRx, hcRy, -1), thickness: edge.thickness });
+            const segStartR = {
+              x: segMidX + ux * mGap,
+              y: segMidY + uy * mGap,
+            };
+            const rSegPathL = this._singleEdgePath({
+              start: rotPt(segStart, hcLx, hcLy, 1),
+              end: rotPt(segEndL, hcLx, hcLy, 1),
+              thickness: edge.thickness,
+            });
+            const rSegPathR = this._singleEdgePath({
+              start: rotPt(segStartR, hcRx, hcRy, -1),
+              end: rotPt(segEnd, hcRx, hcRy, -1),
+              thickness: edge.thickness,
+            });
             return svg`
               <g class="${dimClass} ${overlayClass}">
-                ${this._fadedWedge(`${edge.id}-l`, wedgeL, hL_X, hL_Y, halfLen_d, 'rgba(100, 181, 246, 0.06)')}
-                ${this._fadedWedge(`${edge.id}-r`, wedgeR, hR_X, hR_Y, halfLen_d, 'rgba(100, 181, 246, 0.06)')}
+                ${this._fadedWedge(`${edge.id}-l`, wedgeL, hL_X, hL_Y, halfLen_d, "rgba(100, 181, 246, 0.06)")}
+                ${this._fadedWedge(`${edge.id}-r`, wedgeR, hR_X, hR_Y, halfLen_d, "rgba(100, 181, 246, 0.06)")}
                 <path class="door-swing"
                       d="M${mOff_X},${mOff_Y} C${cpL1x},${cpL1y} ${cpL2x},${cpL2y} ${oL_X},${oL_Y}"/>
                 <path class="door-swing"
@@ -4828,16 +5455,25 @@ export class FpbCanvas extends LitElement {
             `;
           }
           // Single window: glass pane + swing arc + animated segment
-          const cosA_w = Math.cos(swingAngle), sinA_w = Math.sin(swingAngle);
+          const cosA_w = Math.cos(swingAngle),
+            sinA_w = Math.sin(swingAngle);
           const sw_w = hinge_c === "left" ? 1 : -1;
           const rotW = (pt: Coordinates) => {
-            const dx = pt.x - hingeCx, dy = pt.y - hingeCy;
-            return { x: hingeCx + cosA_w * dx - sw_w * sinA_w * dy, y: hingeCy + sw_w * sinA_w * dx + cosA_w * dy };
+            const dx = pt.x - hingeCx,
+              dy = pt.y - hingeCy;
+            return {
+              x: hingeCx + cosA_w * dx - sw_w * sinA_w * dy,
+              y: hingeCy + sw_w * sinA_w * dx + cosA_w * dy,
+            };
           };
-          const wSegPath = this._singleEdgePath({ start: rotW(segStart), end: rotW(segEnd), thickness: edge.thickness });
+          const wSegPath = this._singleEdgePath({
+            start: rotW(segStart),
+            end: rotW(segEnd),
+            thickness: edge.thickness,
+          });
           return svg`
             <g class="${dimClass} ${overlayClass}">
-              ${this._fadedWedge(edge.id, wedgePath_w, hX_w, hY_w, edgeLen, 'rgba(100, 181, 246, 0.06)')}
+              ${this._fadedWedge(edge.id, wedgePath_w, hX_w, hY_w, edgeLen, "rgba(100, 181, 246, 0.06)")}
               <path class="door-swing" d="${arcPath_w}"/>
               <path class="opening-stop" d="${postPath(edge.startPos, 1)}"/>
               <path class="opening-stop" d="${postPath(edge.endPos, -1)}"/>
@@ -4869,13 +5505,17 @@ export class FpbCanvas extends LitElement {
                     x2="${a2x}" y2="${a2y}"/>
               <polygon class="sliding-arrow"
                        points="${a2x},${a2y} ${a2x + ux * arrowSize + nx * arrowSize * 0.5},${a2y + uy * arrowSize + ny * arrowSize * 0.5} ${a2x + ux * arrowSize - nx * arrowSize * 0.5},${a2y + uy * arrowSize - ny * arrowSize * 0.5}"/>
-              ${cls === "window" ? svg`
+              ${
+                cls === "window"
+                  ? svg`
                 <line class="window-pane"
                       x1="${edge.startPos.x}" y1="${edge.startPos.y}"
                       x2="${edge.endPos.x}" y2="${edge.endPos.y}"/>
-              ` : null}
-              <line class="door-jamb" x1="${edge.startPos.x - nx * edge.thickness / 2}" y1="${edge.startPos.y - ny * edge.thickness / 2}" x2="${edge.startPos.x + nx * edge.thickness / 2}" y2="${edge.startPos.y + ny * edge.thickness / 2}"/>
-              <line class="door-jamb" x1="${edge.endPos.x - nx * edge.thickness / 2}" y1="${edge.endPos.y - ny * edge.thickness / 2}" x2="${edge.endPos.x + nx * edge.thickness / 2}" y2="${edge.endPos.y + ny * edge.thickness / 2}"/>
+              `
+                  : null
+              }
+              <line class="door-jamb" x1="${edge.startPos.x - (nx * edge.thickness) / 2}" y1="${edge.startPos.y - (ny * edge.thickness) / 2}" x2="${edge.startPos.x + (nx * edge.thickness) / 2}" y2="${edge.startPos.y + (ny * edge.thickness) / 2}"/>
+              <line class="door-jamb" x1="${edge.endPos.x - (nx * edge.thickness) / 2}" y1="${edge.endPos.y - (ny * edge.thickness) / 2}" x2="${edge.endPos.x + (nx * edge.thickness) / 2}" y2="${edge.endPos.y + (ny * edge.thickness) / 2}"/>
             </g>
           `;
         }
@@ -4897,8 +5537,8 @@ export class FpbCanvas extends LitElement {
               <line class="door-swing"
                     x1="${edge.endPos.x}" y1="${edge.endPos.y}"
                     x2="${midX + nx * tiltH}" y2="${midY + ny * tiltH}"/>
-              <line class="door-jamb" x1="${edge.startPos.x - nx * edge.thickness / 2}" y1="${edge.startPos.y - ny * edge.thickness / 2}" x2="${edge.startPos.x + nx * edge.thickness / 2}" y2="${edge.startPos.y + ny * edge.thickness / 2}"/>
-              <line class="door-jamb" x1="${edge.endPos.x - nx * edge.thickness / 2}" y1="${edge.endPos.y - ny * edge.thickness / 2}" x2="${edge.endPos.x + nx * edge.thickness / 2}" y2="${edge.endPos.y + ny * edge.thickness / 2}"/>
+              <line class="door-jamb" x1="${edge.startPos.x - (nx * edge.thickness) / 2}" y1="${edge.startPos.y - (ny * edge.thickness) / 2}" x2="${edge.startPos.x + (nx * edge.thickness) / 2}" y2="${edge.startPos.y + (ny * edge.thickness) / 2}"/>
+              <line class="door-jamb" x1="${edge.endPos.x - (nx * edge.thickness) / 2}" y1="${edge.endPos.y - (ny * edge.thickness) / 2}" x2="${edge.endPos.x + (nx * edge.thickness) / 2}" y2="${edge.endPos.y + (ny * edge.thickness) / 2}"/>
             </g>
           `;
         }
@@ -4908,33 +5548,50 @@ export class FpbCanvas extends LitElement {
       })}
 
       <!-- Constraint conflict highlights (amber dashed) -->
-      ${conflictEdgeIds.size > 0 ? edgesForChains
-        .filter(e => conflictEdgeIds.has(e.id))
-        .map(edge => svg`
+      ${
+        conflictEdgeIds.size > 0
+          ? edgesForChains
+              .filter((e) => conflictEdgeIds.has(e.id))
+              .map(
+                (edge) => svg`
           <path class="wall-conflict-highlight"
                 d="${this._singleEdgePath({ start: edge.startPos, end: edge.endPos, thickness: edge.thickness })}"/>
-        `) : null}
+        `,
+              )
+          : null
+      }
 
       <!-- Selected edge highlights -->
-      ${selectedEdges.map(edge => svg`
+      ${selectedEdges.map(
+        (edge) => svg`
         <path class="wall-selected-highlight"
               d="${this._singleEdgePath({ start: edge.startPos, end: edge.endPos, thickness: edge.thickness })}"/>
-      `)}
+      `,
+      )}
 
       <!-- Blocked edge blink -->
-      ${this._blinkingEdgeIds.length > 0 ? this._blinkingEdgeIds.map(id => {
-        const blinkEdge = edgesForChains.find(w => w.id === id);
-        return blinkEdge ? svg`
+      ${
+        this._blinkingEdgeIds.length > 0
+          ? this._blinkingEdgeIds.map((id) => {
+              const blinkEdge = edgesForChains.find((w) => w.id === id);
+              return blinkEdge
+                ? svg`
           <path class="wall-blocked-blink"
                 d="${this._singleEdgePath({ start: blinkEdge.startPos, end: blinkEdge.endPos, thickness: blinkEdge.thickness })}"/>
-        ` : null;
-      }) : null}
+        `
+                : null;
+            })
+          : null
+      }
     `;
   }
 
   private _fadedWedge(
-    id: string, path: string,
-    cx: number, cy: number, r: number,
+    id: string,
+    path: string,
+    cx: number,
+    cy: number,
+    r: number,
     color: string,
   ) {
     return svg`
@@ -4948,7 +5605,11 @@ export class FpbCanvas extends LitElement {
     `;
   }
 
-  private _singleEdgePath(edge: { start: Coordinates; end: Coordinates; thickness: number }): string {
+  private _singleEdgePath(edge: {
+    start: Coordinates;
+    end: Coordinates;
+    thickness: number;
+  }): string {
     const { start, end, thickness } = edge;
     const dx = end.x - start.x;
     const dy = end.y - start.y;
@@ -4973,21 +5634,25 @@ export class FpbCanvas extends LitElement {
 
     const floor = currentFloor.value;
     if (floor) {
-      const details = ids.map(id => {
-        const edge = floor.edges.find(e => e.id === id);
-        if (!edge) return id.slice(0, 8) + "…";
-        const s = floor.nodes.find(n => n.id === edge.start_node);
-        const e = floor.nodes.find(n => n.id === edge.end_node);
-        const len = s && e ? Math.sqrt((e.x - s.x) ** 2 + (e.y - s.y) ** 2).toFixed(1) : "?";
+      const details = ids.map((id) => {
+        const edge = floor.edges.find((e) => e.id === id);
+        if (!edge) return `${id.slice(0, 8)}…`;
+        const s = floor.nodes.find((n) => n.id === edge.start_node);
+        const e = floor.nodes.find((n) => n.id === edge.end_node);
+        const len =
+          s && e
+            ? Math.sqrt((e.x - s.x) ** 2 + (e.y - s.y) ** 2).toFixed(1)
+            : "?";
         const cstr: string[] = [];
         if (edge.direction !== "free") cstr.push(edge.direction);
         if (edge.length_locked) cstr.push("len-locked");
-        if (edge.angle_group) cstr.push(`ang:${edge.angle_group.slice(0,4)}`);
-        return `${id.slice(0, 8)}… (${len}cm${cstr.length ? " " + cstr.join(",") : ""})`;
+        if (edge.angle_group) cstr.push(`ang:${edge.angle_group.slice(0, 4)}`);
+        return `${id.slice(0, 8)}… (${len}cm${cstr.length ? ` ${cstr.join(",")}` : ""})`;
       });
       console.warn(
         `%c[constraint]%c Blinking ${ids.length} blocked edge(s):\n  ${details.join("\n  ")}`,
-        "color:#8b5cf6;font-weight:bold", ""
+        "color:#8b5cf6;font-weight:bold",
+        "",
       );
     }
 
@@ -4998,7 +5663,7 @@ export class FpbCanvas extends LitElement {
   }
 
   private _calculateWallLength(start: Coordinates, end: Coordinates): number {
-    return Math.sqrt(Math.pow(end.x - start.x, 2) + Math.pow(end.y - start.y, 2));
+    return Math.sqrt((end.x - start.x) ** 2 + (end.y - start.y) ** 2);
   }
 
   private _formatLength(length: number): string {
@@ -5015,7 +5680,7 @@ export class FpbCanvas extends LitElement {
    * consecutive node pairs (walls, doors, and windows alike).
    */
   private _getRoomEdgeIds(roomId: string, floor: Floor): Set<string> {
-    const room = floor.rooms.find(r => r.id === roomId);
+    const room = floor.rooms.find((r) => r.id === roomId);
     if (!room) return new Set();
 
     const verts = room.polygon.vertices;
@@ -5054,29 +5719,39 @@ export class FpbCanvas extends LitElement {
     const layerConfig = layers.value;
     const frid = this._focusedRoomId;
     const focusedEdgeIds = frid ? this._getRoomEdgeIds(frid, floor) : null;
-    const backgroundLayer = layerConfig.find(l => l.id === "background");
-    const structureLayer = layerConfig.find(l => l.id === "structure");
-    const furnitureLayer = layerConfig.find(l => l.id === "furniture");
-    const labelsLayer = layerConfig.find(l => l.id === "labels");
-    const showZonesAboveWalls = this._canvasMode === "furniture" && (activeTool.value === "zone" || !!this._zoneEditor);
-    const furnitureBlock = furnitureLayer?.visible ? svg`
+    const backgroundLayer = layerConfig.find((l) => l.id === "background");
+    const structureLayer = layerConfig.find((l) => l.id === "structure");
+    const furnitureLayer = layerConfig.find((l) => l.id === "furniture");
+    const labelsLayer = layerConfig.find((l) => l.id === "labels");
+    const showZonesAboveWalls =
+      this._canvasMode === "furniture" &&
+      (activeTool.value === "zone" || !!this._zoneEditor);
+    const furnitureBlock = furnitureLayer?.visible
+      ? svg`
       <g class="furniture-layer-container" opacity="${furnitureLayer.opacity ?? 1}">
         ${this._renderFurnitureLayer()}
       </g>
-    ` : null;
-    const wallsBlock = structureLayer?.visible ? svg`
+    `
+      : null;
+    const wallsBlock = structureLayer?.visible
+      ? svg`
       <g class="structure-layer" opacity="${structureLayer.opacity ?? 1}">
         <!-- Edges (rendered as chains for proper corners) -->
         ${this._renderEdgeChains(floor, sel, focusedEdgeIds)}
       </g>
-    ` : null;
+    `
+      : null;
 
     return svg`
       <!-- Background layer -->
-      ${backgroundLayer?.visible && floor.background_image && floor.rooms.length > 0 ? svg`
+      ${
+        backgroundLayer?.visible &&
+        floor.background_image &&
+        floor.rooms.length > 0
+          ? svg`
         <defs>
           <clipPath id="bg-clip-${floor.id}">
-            ${floor.rooms.map(room => svg`<path d="${polygonToPath(room.polygon)}"/>`)}
+            ${floor.rooms.map((room) => svg`<path d="${polygonToPath(room.polygon)}"/>`)}
           </clipPath>
         </defs>
         <image href="${floor.background_image}"
@@ -5086,114 +5761,186 @@ export class FpbCanvas extends LitElement {
                clip-path="url(#bg-clip-${floor.id})"
                opacity="${backgroundLayer.opacity ?? 1}"
                class="${frid ? "room-dimmed" : ""}"/>
-      ` : null}
+      `
+          : null
+      }
 
       <!-- Structure layer (rooms) -->
-      ${structureLayer?.visible ? svg`
+      ${
+        structureLayer?.visible
+          ? svg`
         <g class="structure-layer" opacity="${structureLayer.opacity ?? 1}">
           <!-- Rooms -->
-          ${floor.rooms.map(room => svg`
+          ${floor.rooms.map(
+            (room) => svg`
             <path class="room ${sel.type === "room" && sel.ids.includes(room.id) ? "selected" : ""} ${frid ? (room.id === frid ? "room-focused" : "room-dimmed") : ""}"
                   d="${polygonToPath(room.polygon)}"
                   fill="${room.color}"
                   stroke="none"/>
-          `)}
+          `,
+          )}
           <!-- Room background layers -->
-          ${floor.rooms.filter(r => (r.background_layers ?? []).length > 0 || (this._roomEditor?.room.id === r.id && this._roomEditor.editLayers.length > 0)).map(room => {
-            const vs = room.polygon.vertices;
-            const xs = vs.map(v => v.x), ys = vs.map(v => v.y);
-            const bx = Math.min(...xs), by = Math.min(...ys);
-            const bw = Math.max(...xs) - bx, bh = Math.max(...ys) - by;
-            // Use live editLayers when room editor is open for this room
-            const layers = (this._roomEditor && this._roomEditor.room.id === room.id)
-              ? this._roomEditor.editLayers
-              : (room.background_layers ?? []);
-            return svg`
+          ${floor.rooms
+            .filter(
+              (r) =>
+                (r.background_layers ?? []).length > 0 ||
+                (this._roomEditor?.room.id === r.id &&
+                  this._roomEditor.editLayers.length > 0),
+            )
+            .map((room) => {
+              const vs = room.polygon.vertices;
+              const xs = vs.map((v) => v.x),
+                ys = vs.map((v) => v.y);
+              const bx = Math.min(...xs),
+                by = Math.min(...ys);
+              const bw = Math.max(...xs) - bx,
+                bh = Math.max(...ys) - by;
+              // Use live editLayers when room editor is open for this room
+              const layers =
+                this._roomEditor && this._roomEditor.room.id === room.id
+                  ? this._roomEditor.editLayers
+                  : (room.background_layers ?? []);
+              return svg`
               <clipPath id="room-bg-clip-${room.id}">
                 <path d="${polygonToPath(room.polygon)}"/>
               </clipPath>
               <g clip-path="url(#room-bg-clip-${room.id})"
                  class="${frid ? (room.id === frid ? "room-focused" : "room-dimmed") : ""}">
-                ${layers.filter(l => l.visible).map((layer) => {
-                  const lw = bw * layer.scale;
-                  const lh = bh * layer.scale;
-                  const lx = bx + layer.offset_x;
-                  const ly = by + layer.offset_y;
-                  return svg`
+                ${layers
+                  .filter((l) => l.visible)
+                  .map((layer) => {
+                    const lw = bw * layer.scale;
+                    const lh = bh * layer.scale;
+                    const lx = bx + layer.offset_x;
+                    const ly = by + layer.offset_y;
+                    return svg`
                     <image href="${layer.url}"
                            x="${lx}" y="${ly}" width="${lw}" height="${lh}"
                            preserveAspectRatio="xMidYMid slice"
                            opacity="${layer.opacity}"/>
                   `;
-                })}
+                  })}
               </g>
-              ${this._roomEditor && this._roomEditor.room.id === room.id && this._roomEditor.selectedLayerIdx !== null ? (() => {
-                const selIdx = this._roomEditor!.selectedLayerIdx!;
-                const selLayer = this._roomEditor!.editLayers[selIdx];
-                if (!selLayer) return null;
-                const lw = bw * selLayer.scale;
-                const lh = bh * selLayer.scale;
-                const lx = bx + selLayer.offset_x;
-                const ly = by + selLayer.offset_y;
-                const hr = this._svg ? 5 * this._viewBox.width / this._svg.clientWidth : 5;
-                const sw = this._svg ? 1.5 * this._viewBox.width / this._svg.clientWidth : 1.5;
-                return svg`
+              ${
+                this._roomEditor &&
+                this._roomEditor.room.id === room.id &&
+                this._roomEditor.selectedLayerIdx !== null
+                  ? (
+                      () => {
+                        const selIdx = this._roomEditor!.selectedLayerIdx!;
+                        const selLayer = this._roomEditor!.editLayers[selIdx];
+                        if (!selLayer) return null;
+                        const lw = bw * selLayer.scale;
+                        const lh = bh * selLayer.scale;
+                        const lx = bx + selLayer.offset_x;
+                        const ly = by + selLayer.offset_y;
+                        const hr = this._svg
+                          ? (5 * this._viewBox.width) / this._svg.clientWidth
+                          : 5;
+                        const sw = this._svg
+                          ? (1.5 * this._viewBox.width) / this._svg.clientWidth
+                          : 1.5;
+                        return svg`
                   <rect x="${lx}" y="${ly}" width="${lw}" height="${lh}"
                         fill="none" stroke="var(--primary-color, #2196f3)"
                         stroke-width="${sw}" stroke-dasharray="${sw * 4} ${sw * 2}"
                         pointer-events="none"/>
-                  ${[['tl', lx, ly], ['tr', lx + lw, ly], ['bl', lx, ly + lh], ['br', lx + lw, ly + lh]].map(([c, cx, cy]) => svg`
+                  ${[
+                    ["tl", lx, ly],
+                    ["tr", lx + lw, ly],
+                    ["bl", lx, ly + lh],
+                    ["br", lx + lw, ly + lh],
+                  ].map(
+                    ([c, cx, cy]) => svg`
                     <circle cx="${cx}" cy="${cy}" r="${hr}"
                             fill="white" stroke="var(--primary-color, #2196f3)" stroke-width="${sw}"
-                            style="cursor:${c === 'tl' || c === 'br' ? 'nwse-resize' : 'nesw-resize'}"
+                            style="cursor:${c === "tl" || c === "br" ? "nwse-resize" : "nesw-resize"}"
                             @pointerdown=${(e: PointerEvent) => this._startCornerDrag(e, c as string, selIdx, bx, by, bw, bh)}/>
-                  `)}
+                  `,
+                  )}
                 `;
-              })() : null}
+                      }
+                    )()
+                  : null
+              }
             `;
-          })}
+            })}
         </g>
-      ` : null}
+      `
+          : null
+      }
 
       ${showZonesAboveWalls ? wallsBlock : furnitureBlock}
       ${showZonesAboveWalls ? furnitureBlock : wallsBlock}
 
       <!-- Labels layer (hidden in viewing mode) -->
-      ${labelsLayer?.visible && this._canvasMode !== "viewing" ? svg`
+      ${
+        labelsLayer?.visible && this._canvasMode !== "viewing"
+          ? svg`
         <g class="labels-layer" opacity="${labelsLayer.opacity ?? 1}">
-          ${floor.rooms.map(room => {
+          ${floor.rooms.map((room) => {
             const center = this._getPolygonCenter(room.polygon.vertices);
             if (!center) return null;
-            const displayName = room.ha_area_id ? (this._haAreas.find(a => a.area_id === room.ha_area_id)?.name ?? room.name) : room.name;
+            const displayName = room.ha_area_id
+              ? (this._haAreas.find((a) => a.area_id === room.ha_area_id)
+                  ?.name ?? room.name)
+              : room.name;
             const isLinked = !!room.ha_area_id;
             return svg`
               <g class="room-label-group ${frid ? (room.id === frid ? "label-focused" : "label-dimmed") : ""}" transform="translate(${center.x}, ${center.y})">
                 <text class="room-label" x="0" y="0">
                   ${displayName}
                 </text>
-                ${isLinked ? svg`
+                ${
+                  isLinked
+                    ? svg`
                   <g class="room-link-icon" transform="translate(${displayName.length * 3.8 + 4}, -5) scale(0.55)">
                     <path d="M3.9,12C3.9,10.29 5.29,8.9 7,8.9H11V7H7A5,5 0 0,0 2,12A5,5 0 0,0 7,17H11V15.1H7C5.29,15.1 3.9,13.71 3.9,12M8,13H16V11H8V13M17,7H13V8.9H17C18.71,8.9 20.1,10.29 20.1,12C20.1,13.71 18.71,15.1 17,15.1H13V17H17A5,5 0 0,0 22,12A5,5 0 0,0 17,7Z" fill="white"/>
                   </g>
-                ` : null}
+                `
+                    : null
+                }
               </g>
             `;
           })}
         </g>
-      ` : null}
+      `
+          : null
+      }
     `;
   }
 
-  private _isDeviceInFocusedRegion(deviceRoomId: string | undefined, position: Coordinates, frid: string, floor: Floor): boolean {
+  private _isDeviceInFocusedRegion(
+    deviceRoomId: string | undefined,
+    position: Coordinates,
+    frid: string,
+    floor: Floor,
+  ): boolean {
     if (deviceRoomId === frid) return true;
     // Wall-mounted tolerance: devices snapped to a wall can sit exactly on the edge
     const wallMargin = 5;
     // Check if the device is inside/on a focused zone
-    const focusedZone = floor.zones?.find(z => z.id === frid);
-    if (focusedZone?.polygon?.vertices && this._pointInOrNearPolygon(position, focusedZone.polygon.vertices, wallMargin)) return true;
+    const focusedZone = floor.zones?.find((z) => z.id === frid);
+    if (
+      focusedZone?.polygon?.vertices &&
+      this._pointInOrNearPolygon(
+        position,
+        focusedZone.polygon.vertices,
+        wallMargin,
+      )
+    )
+      return true;
     // Check if the device is inside/on the focused room (or a room containing the focused zone)
-    const focusedRoom = floor.rooms.find(r => r.id === frid);
-    if (focusedRoom && this._pointInOrNearPolygon(position, focusedRoom.polygon.vertices, wallMargin)) return true;
+    const focusedRoom = floor.rooms.find((r) => r.id === frid);
+    if (
+      focusedRoom &&
+      this._pointInOrNearPolygon(
+        position,
+        focusedRoom.polygon.vertices,
+        wallMargin,
+      )
+    )
+      return true;
     return false;
   }
 
@@ -5201,46 +5948,64 @@ export class FpbCanvas extends LitElement {
     const layerConfig = layers.value;
     const frid = this._focusedRoomId;
 
-    if (!layerConfig.find(l => l.id === "devices")?.visible) {
+    if (!layerConfig.find((l) => l.id === "devices")?.visible) {
       return null;
     }
 
     return svg`
-      <g class="devices-layer" opacity="${layerConfig.find(l => l.id === "devices")?.opacity ?? 1}">
+      <g class="devices-layer" opacity="${layerConfig.find((l) => l.id === "devices")?.opacity ?? 1}">
         ${lightPlacements.value
-          .filter(d => d.floor_id === floor.id)
-          .map(light => svg`
+          .filter((d) => d.floor_id === floor.id)
+          .map(
+            (light) => svg`
             <g class="${frid ? (this._isDeviceInFocusedRegion(light.room_id, light.position, frid, floor) ? "device-focused" : "device-dimmed") : ""}">
               ${this._renderLight(light)}
             </g>
-          `)}
+          `,
+          )}
         ${switchPlacements.value
-          .filter(d => d.floor_id === floor.id)
-          .map(sw => svg`
+          .filter((d) => d.floor_id === floor.id)
+          .map(
+            (sw) => svg`
             <g class="${frid ? (this._isDeviceInFocusedRegion(sw.room_id, sw.position, frid, floor) ? "device-focused" : "device-dimmed") : ""}">
               ${this._renderSwitch(sw)}
             </g>
-          `)}
+          `,
+          )}
         ${buttonPlacements.value
-          .filter(d => d.floor_id === floor.id)
-          .map(btn => svg`
+          .filter((d) => d.floor_id === floor.id)
+          .map(
+            (btn) => svg`
             <g class="${frid ? (this._isDeviceInFocusedRegion(btn.room_id, btn.position, frid, floor) ? "device-focused" : "device-dimmed") : ""}">
               ${this._renderButton(btn)}
             </g>
-          `)}
+          `,
+          )}
         ${otherPlacements.value
-          .filter(d => d.floor_id === floor.id)
-          .map(other => svg`
+          .filter((d) => d.floor_id === floor.id)
+          .map(
+            (other) => svg`
             <g class="${frid ? (this._isDeviceInFocusedRegion(other.room_id, other.position, frid, floor) ? "device-focused" : "device-dimmed") : ""}">
               ${this._renderOther(other)}
             </g>
-          `)}
+          `,
+          )}
         ${this._renderMmwaveLayer(floor)}
       </g>
     `;
   }
 
-  private _renderDeviceIcon(x: number, y: number, isOn: boolean, selType: string, selId: string, label: string, bgOnColor: string, iconColor: string, iconData?: IconData) {
+  private _renderDeviceIcon(
+    x: number,
+    y: number,
+    isOn: boolean,
+    selType: string,
+    selId: string,
+    label: string,
+    bgOnColor: string,
+    iconColor: string,
+    iconData?: IconData,
+  ) {
     const sel = selection.value;
     const viewing = this._canvasMode === "viewing";
     const r = viewing ? 16 : 14;
@@ -5252,15 +6017,19 @@ export class FpbCanvas extends LitElement {
       <g class="device-marker ${isOn ? "on" : "off"} ${sel.type === selType && sel.ids.includes(selId) ? "selected" : ""}"
          transform="translate(${x}, ${y})">
         <circle r="${r}"
-          fill="${viewing ? "#fff" : (isOn ? bgOnColor : "#e0e0e0")}"
+          fill="${viewing ? "#fff" : isOn ? bgOnColor : "#e0e0e0"}"
           stroke="${viewing ? "none" : "#333"}"
           stroke-width="${viewing ? 0 : 2}"/>
-        ${resolvedIcon?.path ? svg`
+        ${
+          resolvedIcon?.path
+            ? svg`
           <svg x="${-iconSize / 2}" y="${-iconSize / 2}" width="${iconSize}" height="${iconSize}" viewBox="${viewBox}">
             <path d="${resolvedIcon.path}" fill="${viewing && isOn ? bgOnColor : iconColor}"></path>
             ${resolvedIcon.secondaryPath ? svg`<path d="${resolvedIcon.secondaryPath}" fill="${viewing && isOn ? bgOnColor : iconColor}"></path>` : null}
           </svg>
-        ` : null}
+        `
+            : null
+        }
         ${!viewing ? svg`<text y="${r + 12}" text-anchor="middle" font-size="10" fill="#333">${label}</text>` : null}
       </g>
     `;
@@ -5269,39 +6038,91 @@ export class FpbCanvas extends LitElement {
   private _renderLight(light: LightPlacement) {
     const state = this.hass?.states[light.entity_id];
     const isOn = state?.state === "on";
-    const label = (light.label || state?.attributes.friendly_name || light.entity_id) as string;
+    const label = (light.label ||
+      state?.attributes.friendly_name ||
+      light.entity_id) as string;
     const iconData = this._getEntityIconData(state, "mdi:lightbulb");
-    const rgb = state?.attributes?.rgb_color as [number, number, number] | undefined;
+    const rgb = state?.attributes?.rgb_color as
+      | [number, number, number]
+      | undefined;
     const lightColor = rgb ? `rgb(${rgb[0]},${rgb[1]},${rgb[2]})` : "#ffd600";
-    return this._renderDeviceIcon(light.position.x, light.position.y, isOn, "light", light.id, label, lightColor, isOn ? "#333" : "#616161", iconData);
+    return this._renderDeviceIcon(
+      light.position.x,
+      light.position.y,
+      isOn,
+      "light",
+      light.id,
+      label,
+      lightColor,
+      isOn ? "#333" : "#616161",
+      iconData,
+    );
   }
 
   private _renderSwitch(sw: SwitchPlacement) {
     const state = this.hass?.states[sw.entity_id];
     const isOn = state?.state === "on";
-    const label = (sw.label || state?.attributes.friendly_name || sw.entity_id) as string;
+    const label = (sw.label ||
+      state?.attributes.friendly_name ||
+      sw.entity_id) as string;
     const iconData = this._getEntityIconData(state, "mdi:toggle-switch");
-    return this._renderDeviceIcon(sw.position.x, sw.position.y, isOn, "switch", sw.id, label, "#4caf50", isOn ? "#fff" : "#616161", iconData);
+    return this._renderDeviceIcon(
+      sw.position.x,
+      sw.position.y,
+      isOn,
+      "switch",
+      sw.id,
+      label,
+      "#4caf50",
+      isOn ? "#fff" : "#616161",
+      iconData,
+    );
   }
 
   private _renderButton(btn: ButtonPlacement) {
     const state = this.hass?.states[btn.entity_id];
     const isOn = false;
-    const label = (btn.label || state?.attributes.friendly_name || btn.entity_id) as string;
+    const label = (btn.label ||
+      state?.attributes.friendly_name ||
+      btn.entity_id) as string;
     const iconData = this._getEntityIconData(state, "mdi:gesture-tap-button");
-    return this._renderDeviceIcon(btn.position.x, btn.position.y, isOn, "button", btn.id, label, "#2196f3", "#616161", iconData);
+    return this._renderDeviceIcon(
+      btn.position.x,
+      btn.position.y,
+      isOn,
+      "button",
+      btn.id,
+      label,
+      "#2196f3",
+      "#616161",
+      iconData,
+    );
   }
 
   private _renderOther(other: OtherPlacement) {
     const state = this.hass?.states[other.entity_id];
     const isOn = state?.state === "on";
-    const label = (other.label || state?.attributes.friendly_name || other.entity_id) as string;
+    const label = (other.label ||
+      state?.attributes.friendly_name ||
+      other.entity_id) as string;
     const iconData = this._getEntityIconData(state, "mdi:devices");
-    return this._renderDeviceIcon(other.position.x, other.position.y, isOn, "other", other.id, label, "#9c27b0", isOn ? "#fff" : "#616161", iconData);
+    return this._renderDeviceIcon(
+      other.position.x,
+      other.position.y,
+      isOn,
+      "other",
+      other.id,
+      label,
+      "#9c27b0",
+      isOn ? "#fff" : "#616161",
+      iconData,
+    );
   }
 
   private _renderMmwaveLayer(floor: Floor) {
-    const placements = mmwavePlacements.value.filter(p => p.floor_id === floor.id);
+    const placements = mmwavePlacements.value.filter(
+      (p) => p.floor_id === floor.id,
+    );
     if (placements.length === 0) return null;
 
     const isViewing = this._canvasMode === "viewing";
@@ -5324,8 +6145,13 @@ export class FpbCanvas extends LitElement {
         if (!vs || vs.length < 3) continue;
         let inside = false;
         for (let i = 0, j = vs.length - 1; i < vs.length; j = i++) {
-          if ((vs[i].y > pos.displayY) !== (vs[j].y > pos.displayY) &&
-              pos.displayX < (vs[j].x - vs[i].x) * (pos.displayY - vs[i].y) / (vs[j].y - vs[i].y) + vs[i].x) {
+          if (
+            vs[i].y > pos.displayY !== vs[j].y > pos.displayY &&
+            pos.displayX <
+              ((vs[j].x - vs[i].x) * (pos.displayY - vs[i].y)) /
+                (vs[j].y - vs[i].y) +
+                vs[i].x
+          ) {
             inside = !inside;
           }
         }
@@ -5337,13 +6163,17 @@ export class FpbCanvas extends LitElement {
       <g class="mmwave-layer">
         <!-- Occupied room overlays -->
         ${floor.rooms
-          .filter(r => occupiedRoomIds.has(r.id) && r.polygon?.vertices?.length)
-          .map(r => svg`
+          .filter(
+            (r) => occupiedRoomIds.has(r.id) && r.polygon?.vertices?.length,
+          )
+          .map(
+            (r) => svg`
             <path d="${polygonToPath(r.polygon)}"
                   fill="rgba(255, 255, 255, 0.05)" stroke="none"
                   class="mmwave-occupied-room"/>
-          `)}
-        ${placements.map(p => {
+          `,
+          )}
+        ${placements.map((p) => {
           const isSelected = sel.type === "mmwave" && sel.ids.includes(p.id);
           const halfFov = p.field_of_view / 2;
           const range = p.detection_range;
@@ -5351,8 +6181,8 @@ export class FpbCanvas extends LitElement {
           const py = p.position.y;
 
           // Compute FOV cone arc endpoints
-          const startAngle = (p.angle - halfFov) * Math.PI / 180;
-          const endAngle = (p.angle + halfFov) * Math.PI / 180;
+          const startAngle = ((p.angle - halfFov) * Math.PI) / 180;
+          const endAngle = ((p.angle + halfFov) * Math.PI) / 180;
           const ax = px + range * Math.cos(startAngle);
           const ay = py + range * Math.sin(startAngle);
           const bx = px + range * Math.cos(endAngle);
@@ -5361,33 +6191,41 @@ export class FpbCanvas extends LitElement {
 
           // Rotation handle position (30px out from center along facing angle)
           const handleDist = 30;
-          const angleRad = p.angle * Math.PI / 180;
+          const angleRad = (p.angle * Math.PI) / 180;
           const hx = px + handleDist * Math.cos(angleRad);
           const hy = py + handleDist * Math.sin(angleRad);
 
           // Find room polygon for clipping the FOV cone
           // Try room_id first, then find room containing the sensor position
-          let room = p.room_id ? floor.rooms.find(r => r.id === p.room_id) : null;
+          let room = p.room_id
+            ? floor.rooms.find((r) => r.id === p.room_id)
+            : null;
           if (!room) {
-            room = floor.rooms.find(r => {
-              const vs = r.polygon?.vertices;
-              if (!vs || vs.length < 3) return false;
-              // Point-in-polygon (ray casting)
-              let inside = false;
-              for (let i = 0, j = vs.length - 1; i < vs.length; j = i++) {
-                if ((vs[i].y > py) !== (vs[j].y > py) &&
-                    px < (vs[j].x - vs[i].x) * (py - vs[i].y) / (vs[j].y - vs[i].y) + vs[i].x) {
-                  inside = !inside;
+            room =
+              floor.rooms.find((r) => {
+                const vs = r.polygon?.vertices;
+                if (!vs || vs.length < 3) return false;
+                // Point-in-polygon (ray casting)
+                let inside = false;
+                for (let i = 0, j = vs.length - 1; i < vs.length; j = i++) {
+                  if (
+                    vs[i].y > py !== vs[j].y > py &&
+                    px <
+                      ((vs[j].x - vs[i].x) * (py - vs[i].y)) /
+                        (vs[j].y - vs[i].y) +
+                        vs[i].x
+                  ) {
+                    inside = !inside;
+                  }
                 }
-              }
-              return inside;
-            }) ?? null;
+                return inside;
+              }) ?? null;
           }
           const clipId = `mmwave-clip-${p.id}`;
 
           // Update target goal positions from entity state
           const activeKeys = new Set<string>();
-          const rad = p.angle * Math.PI / 180;
+          const rad = (p.angle * Math.PI) / 180;
           const cosA = Math.cos(rad);
           const sinA = Math.sin(rad);
 
@@ -5399,7 +6237,12 @@ export class FpbCanvas extends LitElement {
             if (!xState || !yState) continue;
             const rawX = parseFloat(xState.state);
             const rawY = parseFloat(yState.state);
-            if (isNaN(rawX) || isNaN(rawY) || (rawX === 0 && rawY === 0)) continue;
+            if (
+              Number.isNaN(rawX) ||
+              Number.isNaN(rawY) ||
+              (rawX === 0 && rawY === 0)
+            )
+              continue;
             // Convert mm (sensor unit) to cm (floor plan unit)
             const localX = rawX / 10;
             const localY = rawY / 10;
@@ -5418,9 +6261,12 @@ export class FpbCanvas extends LitElement {
             } else {
               // New target — start at goal position
               this._mmwaveTargetPositions.set(key, {
-                displayX: wx, displayY: wy,
-                targetX: wx, targetY: wy,
-                arrived: true, isNew: true,
+                displayX: wx,
+                displayY: wy,
+                targetX: wx,
+                targetY: wy,
+                arrived: true,
+                isNew: true,
               });
             }
             this._ensureMmwaveAnimLoop();
@@ -5428,11 +6274,17 @@ export class FpbCanvas extends LitElement {
 
           // Detect disappeared targets — schedule fade-out
           for (const [key, pos] of this._mmwaveTargetPositions) {
-            if (key.startsWith(p.id + "-") && !activeKeys.has(key)) {
-              if (!this._mmwaveFadingTargets.some(f => f.key === key)) {
-                this._mmwaveFadingTargets = [...this._mmwaveFadingTargets, {
-                  key, x: pos.displayX, y: pos.displayY, startTime: Date.now(),
-                }];
+            if (key.startsWith(`${p.id}-`) && !activeKeys.has(key)) {
+              if (!this._mmwaveFadingTargets.some((f) => f.key === key)) {
+                this._mmwaveFadingTargets = [
+                  ...this._mmwaveFadingTargets,
+                  {
+                    key,
+                    x: pos.displayX,
+                    y: pos.displayY,
+                    startTime: Date.now(),
+                  },
+                ];
                 this._ensureMmwaveAnimLoop();
               }
               this._mmwaveTargetPositions.delete(key);
@@ -5448,11 +6300,15 @@ export class FpbCanvas extends LitElement {
             if (pos.isNew) pos.isNew = false; // only animate once
             return svg`
               <g class="mmwave-target" transform="translate(${pos.displayX}, ${pos.displayY})">
-                ${showAppear ? svg`
+                ${
+                  showAppear
+                    ? svg`
                   <animateTransform attributeName="transform" type="scale"
                     from="0 0" to="1 1" dur="0.35s" fill="freeze" additive="sum"/>
                   <animate attributeName="opacity" from="0" to="1" dur="0.35s" fill="freeze"/>
-                ` : null}
+                `
+                    : null
+                }
                 <!-- Pulse ring -->
                 <circle cx="0" cy="0" r="${pulseR}"
                   fill="none" stroke="#ff5722" stroke-width="${scale * 0.06}" opacity="0.4">
@@ -5471,14 +6327,14 @@ export class FpbCanvas extends LitElement {
 
           // Render fading-out targets for this placement
           const fadingDots = this._mmwaveFadingTargets
-            .filter(f => f.key.startsWith(p.id + "-"))
-            .map(f => {
+            .filter((f) => f.key.startsWith(`${p.id}-`))
+            .map((f) => {
               const elapsed = Date.now() - f.startTime;
               const progress = Math.min(elapsed / 800, 1);
               const opacity = 1 - progress;
               const blur = progress * scale * 0.5;
               const dotScale = 1 - progress * 0.3;
-              const filterId = `mmwave-fade-${f.key.replace(/[^a-zA-Z0-9]/g, '_')}`;
+              const filterId = `mmwave-fade-${f.key.replace(/[^a-zA-Z0-9]/g, "_")}`;
               return svg`
                 <g class="mmwave-target-fade" transform="translate(${f.x}, ${f.y}) scale(${dotScale})"
                    opacity="${opacity}">
@@ -5497,8 +6353,12 @@ export class FpbCanvas extends LitElement {
 
           return svg`
             <g class="mmwave-placement ${isSelected ? "selected" : ""}">
-              ${showCoverage ? svg`
-                ${room?.polygon?.vertices?.length ? svg`
+              ${
+                showCoverage
+                  ? svg`
+                ${
+                  room?.polygon?.vertices?.length
+                    ? svg`
                   <!-- FOV cone clipped to room -->
                   <defs>
                     <clipPath id="${clipId}">
@@ -5513,7 +6373,8 @@ export class FpbCanvas extends LitElement {
                     stroke-dasharray="4 2"
                     clip-path="url(#${clipId})"
                   />
-                ` : svg`
+                `
+                    : svg`
                   <!-- FOV cone (no room to clip) -->
                   <path
                     d="M ${px} ${py} L ${ax} ${ay} A ${range} ${range} 0 ${largeArc} 1 ${bx} ${by} Z"
@@ -5522,16 +6383,21 @@ export class FpbCanvas extends LitElement {
                     stroke-width="1"
                     stroke-dasharray="4 2"
                   />
-                `}
+                `
+                }
                 <!-- Sensor icon -->
                 <circle cx="${px}" cy="${py}" r="8"
                   fill="#2196f3" stroke="#fff" stroke-width="2"/>
                 <text x="${px}" y="${py + 3}" text-anchor="middle"
                   font-size="8" fill="#fff" font-weight="bold">R</text>
-              ` : null}
+              `
+                  : null
+              }
               ${targetDots}
               ${fadingDots}
-              ${showCoverage && isSelected ? svg`
+              ${
+                showCoverage && isSelected
+                  ? svg`
                 <!-- Rotation handle -->
                 <g class="rotation-handle"
                    data-mmwave-id="${p.id}"
@@ -5541,7 +6407,9 @@ export class FpbCanvas extends LitElement {
                   <circle class="rotation-handle-dot"
                     cx="${hx}" cy="${hy}" r="4.5" />
                 </g>
-              ` : null}
+              `
+                  : null
+              }
             </g>
           `;
         })}
@@ -5560,15 +6428,17 @@ export class FpbCanvas extends LitElement {
       referencedNodes.add(edge.end_node);
     }
 
-    const dots = floor.nodes.filter(n => referencedNodes.has(n.id));
+    const dots = floor.nodes.filter((n) => referencedNodes.has(n.id));
     if (dots.length === 0) return null;
 
     return svg`
       <g class="node-guide-dots">
-        ${dots.map(n => svg`
+        ${dots.map(
+          (n) => svg`
           <circle cx="${n.x}" cy="${n.y}" r="4"
             fill="rgba(255,255,255,0.7)" stroke="rgba(0,0,0,0.3)" stroke-width="1" />
-        `)}
+        `,
+        )}
       </g>
     `;
   }
@@ -5585,7 +6455,12 @@ export class FpbCanvas extends LitElement {
     }
 
     // Show hovered/dragged node + all pinned nodes (skip orphans)
-    const nodesToShow: Array<{ node: Node; coords: Coordinates; isDragging: boolean; isPinned: boolean }> = [];
+    const nodesToShow: Array<{
+      node: Node;
+      coords: Coordinates;
+      isDragging: boolean;
+      isPinned: boolean;
+    }> = [];
 
     // Always show pinned nodes (only if connected to an edge)
     for (const node of floor.nodes) {
@@ -5601,13 +6476,17 @@ export class FpbCanvas extends LitElement {
 
     if (this._draggingNode && referencedNodes.has(this._draggingNode.node.id)) {
       // Remove if already added as pinned (shouldn't happen since pinned can't drag, but safe)
-      const idx = nodesToShow.findIndex(n => n.node.id === this._draggingNode!.node.id);
+      const idx = nodesToShow.findIndex(
+        (n) => n.node.id === this._draggingNode!.node.id,
+      );
       if (idx >= 0) nodesToShow.splice(idx, 1);
       // Use solver-projected position (respects collinear constraints) instead of raw cursor
       const { positions: dragPreview, blocked: dragBlocked } = previewNodeDrag(
-        floor.nodes, floor.edges,
+        floor.nodes,
+        floor.edges,
         this._draggingNode.node.id,
-        this._cursorPos.x, this._cursorPos.y
+        this._cursorPos.x,
+        this._cursorPos.y,
       );
       // When blocked, keep the node at its original position
       const projected = dragBlocked
@@ -5621,7 +6500,7 @@ export class FpbCanvas extends LitElement {
       });
     } else if (this._hoveredNode && referencedNodes.has(this._hoveredNode.id)) {
       // Don't duplicate if already shown as pinned
-      if (!nodesToShow.some(n => n.node.id === this._hoveredNode!.id)) {
+      if (!nodesToShow.some((n) => n.node.id === this._hoveredNode!.id)) {
         nodesToShow.push({
           node: this._hoveredNode,
           coords: { x: this._hoveredNode.x, y: this._hoveredNode.y },
@@ -5634,11 +6513,14 @@ export class FpbCanvas extends LitElement {
     if (nodesToShow.length === 0) return null;
 
     // MDI pin icon path (24x24 viewBox)
-    const pinIconPath = "M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z";
+    const pinIconPath =
+      "M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z";
 
     return svg`
       <g class="wall-endpoints-layer">
-        ${nodesToShow.map((item) => item.isPinned ? svg`
+        ${nodesToShow.map((item) =>
+          item.isPinned
+            ? svg`
           <g class="wall-endpoint pinned"
              transform="translate(${item.coords.x}, ${item.coords.y})"
              @pointerdown=${(e: PointerEvent) => this._handleNodePointerDown(e, item.node)}>
@@ -5647,7 +6529,8 @@ export class FpbCanvas extends LitElement {
               <path d="${pinIconPath}" fill="var(--primary-color, #2196f3)" />
             </g>
           </g>
-        ` : svg`
+        `
+            : svg`
           <circle
             class="wall-endpoint ${item.isDragging ? "dragging" : ""}"
             cx="${item.coords.x}"
@@ -5655,7 +6538,8 @@ export class FpbCanvas extends LitElement {
             r="6"
             @pointerdown=${(e: PointerEvent) => this._handleNodePointerDown(e, item.node)}
           />
-        `)}
+        `,
+        )}
         ${this._draggingNode ? this._renderDraggedEdgeLengths(floor) : null}
       </g>
     `;
@@ -5670,7 +6554,7 @@ export class FpbCanvas extends LitElement {
       floor.edges,
       this._draggingNode.node.id,
       draggedPos.x,
-      draggedPos.y
+      draggedPos.y,
     );
 
     // When blocked, don't show length labels (walls stay at original positions)
@@ -5685,7 +6569,7 @@ export class FpbCanvas extends LitElement {
       origEnd: Coordinates;
       length: number;
       angle: number;
-      thickness: number
+      thickness: number;
     }> = [];
 
     for (const re of resolved) {
@@ -5752,7 +6636,8 @@ export class FpbCanvas extends LitElement {
         const midX = (start.x + end.x) / 2;
         const midY = (start.y + end.y) / 2;
 
-        const angle = Math.atan2(end.y - start.y, end.x - start.x) * (180 / Math.PI);
+        const angle =
+          Math.atan2(end.y - start.y, end.x - start.x) * (180 / Math.PI);
         const labelAngle = angle > 90 || angle < -90 ? angle + 180 : angle;
 
         return svg`
@@ -5764,8 +6649,9 @@ export class FpbCanvas extends LitElement {
       })}
 
       <!-- 90-degree angle indicators -->
-      ${rightAngles.map(({ point, angle }) => svg`
-        <g transform="translate(${point.x}, ${point.y}) rotate(${angle * 180 / Math.PI})">
+      ${rightAngles.map(
+        ({ point, angle }) => svg`
+        <g transform="translate(${point.x}, ${point.y}) rotate(${(angle * 180) / Math.PI})">
           <path
             class="right-angle-indicator"
             d="M 12 0 L 12 12 L 0 12"
@@ -5774,7 +6660,8 @@ export class FpbCanvas extends LitElement {
             stroke-width="2"
           />
         </g>
-      `)}
+      `,
+      )}
     `;
   }
 
@@ -5816,14 +6703,15 @@ export class FpbCanvas extends LitElement {
 
   // ==================== Zone / Furniture Methods ====================
 
-
   private _handleZonePolyClick(point: Coordinates): void {
     const points = this._zonePolyPoints;
 
     // Check if clicking near the first point to close the polygon
     if (points.length >= 3) {
       const first = points[0];
-      const dist = Math.sqrt((point.x - first.x) ** 2 + (point.y - first.y) ** 2);
+      const dist = Math.sqrt(
+        (point.x - first.x) ** 2 + (point.y - first.y) ** 2,
+      );
       if (dist < 15) {
         this._pendingZonePolygon = [...points];
         this._zonePolyPoints = [];
@@ -5848,7 +6736,9 @@ export class FpbCanvas extends LitElement {
         floor_plan_id: floorPlan.id,
         floor_id: floor.id,
         name,
-        polygon: { vertices: this._pendingZonePolygon.map(v => ({ x: v.x, y: v.y })) },
+        polygon: {
+          vertices: this._pendingZonePolygon.map((v) => ({ x: v.x, y: v.y })),
+        },
         color: "#a1c4fd",
       });
 
@@ -5867,23 +6757,28 @@ export class FpbCanvas extends LitElement {
     const sel = selection.value;
     const frid = this._focusedRoomId;
     const sortedZones = floor.zones;
-    const focusedRoom = frid ? floor.rooms.find(r => r.id === frid) : null;
+    const focusedRoom = frid ? floor.rooms.find((r) => r.id === frid) : null;
 
     // Collect unique zone border edges, deduplicating shared edges and
     // skipping edges that overlap with walls.
     const edgeKey = (a: Coordinates, b: Coordinates) => {
-      const ax = Math.round(a.x), ay = Math.round(a.y);
-      const bx = Math.round(b.x), by = Math.round(b.y);
+      const ax = Math.round(a.x),
+        ay = Math.round(a.y);
+      const bx = Math.round(b.x),
+        by = Math.round(b.y);
       return ax < bx || (ax === bx && ay <= by)
-        ? `${ax},${ay}-${bx},${by}` : `${bx},${by}-${ax},${ay}`;
+        ? `${ax},${ay}-${bx},${by}`
+        : `${bx},${by}-${ax},${ay}`;
     };
 
     // Build list of wall segments to skip zone edges that overlap walls
     // (including when a wall is split into segments by doors/windows)
     const resolved = resolveFloorEdges(floor);
-    const wallSegments = resolved.map(re => ({
-      x1: Math.round(re.startPos.x), y1: Math.round(re.startPos.y),
-      x2: Math.round(re.endPos.x), y2: Math.round(re.endPos.y),
+    const wallSegments = resolved.map((re) => ({
+      x1: Math.round(re.startPos.x),
+      y1: Math.round(re.startPos.y),
+      x2: Math.round(re.endPos.x),
+      y2: Math.round(re.endPos.y),
     }));
     const wallEdgeKeys = new Set<string>();
     for (const re of resolved) {
@@ -5894,7 +6789,8 @@ export class FpbCanvas extends LitElement {
     // (handles walls split by doors/windows — merges collinear segment intervals)
     const isOnWall = (a: Coordinates, b: Coordinates): boolean => {
       if (wallEdgeKeys.has(edgeKey(a, b))) return true;
-      const dx = b.x - a.x, dy = b.y - a.y;
+      const dx = b.x - a.x,
+        dy = b.y - a.y;
       const len2 = dx * dx + dy * dy;
       if (len2 < 1) return false;
       const len = Math.sqrt(len2);
@@ -5922,16 +6818,25 @@ export class FpbCanvas extends LitElement {
     };
 
     // Collect unique zone edges with their color
-    const seenEdges = new Map<string, { a: Coordinates; b: Coordinates; color: string; dimClass: string }>();
+    const seenEdges = new Map<
+      string,
+      { a: Coordinates; b: Coordinates; color: string; dimClass: string }
+    >();
     for (const zone of sortedZones) {
       if (!zone.polygon?.vertices?.length) continue;
       const verts = zone.polygon.vertices;
       const center = this._getPolygonCenter(verts);
-      const zoneInFocusedRoom = frid && (
-        zone.id === frid ||
-        zone.room_id === frid ||
-        (focusedRoom && center && this._pointInOrNearPolygon(center, focusedRoom.polygon.vertices, 5))
-      );
+      const zoneInFocusedRoom =
+        frid &&
+        (zone.id === frid ||
+          zone.room_id === frid ||
+          (focusedRoom &&
+            center &&
+            this._pointInOrNearPolygon(
+              center,
+              focusedRoom.polygon.vertices,
+              5,
+            )));
       const dimClass = frid ? (zoneInFocusedRoom ? "" : "room-dimmed") : "";
       const color = zone.color || "#a1c4fd";
       for (let i = 0; i < verts.length; i++) {
@@ -5952,11 +6857,17 @@ export class FpbCanvas extends LitElement {
           const path = polygonToPath(zone.polygon);
           const isSelected = sel.type === "zone" && sel.ids.includes(zone.id);
           const center = this._getPolygonCenter(zone.polygon.vertices);
-          const zoneInFocusedRoom = frid && (
-            zone.id === frid ||
-            zone.room_id === frid ||
-            (focusedRoom && center && this._pointInOrNearPolygon(center, focusedRoom.polygon.vertices, 5))
-          );
+          const zoneInFocusedRoom =
+            frid &&
+            (zone.id === frid ||
+              zone.room_id === frid ||
+              (focusedRoom &&
+                center &&
+                this._pointInOrNearPolygon(
+                  center,
+                  focusedRoom.polygon.vertices,
+                  5,
+                )));
           const dimClass = frid ? (zoneInFocusedRoom ? "" : "room-dimmed") : "";
 
           return svg`
@@ -5966,19 +6877,25 @@ export class FpbCanvas extends LitElement {
                     fill="${zone.color || "#a1c4fd"}"
                     fill-opacity="0.35"
                     stroke="none"/>
-              ${center ? svg`
+              ${
+                center
+                  ? svg`
                 <text class="zone-label" x="${center.x}" y="${center.y}">${zone.name}</text>
-              ` : null}
-              ${isSelected && !this._draggingZone ? this._renderZoneVertexHandles(zone) : null}
+              `
+                  : null
+              }
+              ${isSelected ? this._renderZoneVertexHandles(zone) : null}
             </g>
           `;
         })}
         <!-- Deduplicated zone border edges (skip wall overlaps) -->
-        ${Array.from(seenEdges.values()).map(({ a, b, color, dimClass }) => svg`
+        ${Array.from(seenEdges.values()).map(
+          ({ a, b, color, dimClass }) => svg`
           <line class="zone-border ${dimClass}" x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}"
                 stroke="${color}" stroke-width="1.5" stroke-dasharray="4,3"
                 pointer-events="none"/>
-        `)}
+        `,
+        )}
       </g>
     `;
   }
@@ -5986,7 +6903,7 @@ export class FpbCanvas extends LitElement {
   private _renderZoneVertexHandles(zone: Zone) {
     const verts = zone.polygon?.vertices;
     if (!verts?.length) return null;
-    const color = zone.color || '#2196f3';
+    const color = zone.color || "#2196f3";
 
     return svg`
       <!-- Midpoint handles for inserting new vertices -->
@@ -6009,7 +6926,8 @@ export class FpbCanvas extends LitElement {
         `;
       })}
       <!-- Vertex handles (drag to move, right-click to remove) -->
-      ${verts.map((v: Coordinates, i: number) => svg`
+      ${verts.map(
+        (v: Coordinates, i: number) => svg`
         <circle
           class="zone-vertex-handle"
           cx="${v.x}" cy="${v.y}" r="6"
@@ -6035,11 +6953,17 @@ export class FpbCanvas extends LitElement {
             }
           }}
         />
-      `)}
+      `,
+      )}
     `;
   }
 
-  private async _insertZoneVertex(zone: Zone, afterIndex: number, point: Coordinates, pointerId: number): Promise<void> {
+  private async _insertZoneVertex(
+    zone: Zone,
+    afterIndex: number,
+    point: Coordinates,
+    pointerId: number,
+  ): Promise<void> {
     if (!zone.polygon?.vertices || !this.hass) return;
     const floorPlan = currentFloorPlan.value;
     if (!floorPlan) return;
@@ -6052,13 +6976,13 @@ export class FpbCanvas extends LitElement {
         type: "inhabit/zones/update",
         floor_plan_id: floorPlan.id,
         zone_id: zone.id,
-        polygon: { vertices: newVerts.map(v => ({ x: v.x, y: v.y })) },
+        polygon: { vertices: newVerts.map((v) => ({ x: v.x, y: v.y })) },
       });
       await reloadFloorData();
 
       // Start dragging the new vertex immediately
       const floor = currentFloor.value;
-      const updatedZone = floor?.zones?.find(z => z.id === zone.id);
+      const updatedZone = floor?.zones?.find((z) => z.id === zone.id);
       if (updatedZone?.polygon?.vertices) {
         this._draggingZoneVertex = {
           zone: updatedZone,
@@ -6079,14 +7003,16 @@ export class FpbCanvas extends LitElement {
     const floorPlan = currentFloorPlan.value;
     if (!floorPlan) return;
 
-    const newVerts = zone.polygon.vertices.filter((_: Coordinates, i: number) => i !== index);
+    const newVerts = zone.polygon.vertices.filter(
+      (_: Coordinates, i: number) => i !== index,
+    );
 
     try {
       await this.hass.callWS({
         type: "inhabit/zones/update",
         floor_plan_id: floorPlan.id,
         zone_id: zone.id,
-        polygon: { vertices: newVerts.map(v => ({ x: v.x, y: v.y })) },
+        polygon: { vertices: newVerts.map((v) => ({ x: v.x, y: v.y })) },
       });
       await reloadFloorData();
     } catch (err) {
@@ -6112,7 +7038,9 @@ export class FpbCanvas extends LitElement {
       let closingHint = null;
       if (points.length >= 3) {
         const first = points[0];
-        const dist = Math.sqrt((cursor.x - first.x) ** 2 + (cursor.y - first.y) ** 2);
+        const dist = Math.sqrt(
+          (cursor.x - first.x) ** 2 + (cursor.y - first.y) ** 2,
+        );
         if (dist < 15) {
           closingHint = svg`<circle cx="${first.x}" cy="${first.y}" r="8" fill="rgba(76, 175, 80, 0.3)" stroke="#4caf50" stroke-width="2"/>`;
         }
@@ -6121,9 +7049,11 @@ export class FpbCanvas extends LitElement {
       return svg`
         <g class="furniture-preview">
           <path class="furniture-poly-preview" d="${pathD}"/>
-          ${points.map(p => svg`
+          ${points.map(
+            (p) => svg`
             <circle cx="${p.x}" cy="${p.y}" r="4" fill="var(--primary-color, #2196f3)" stroke="white" stroke-width="1.5"/>
-          `)}
+          `,
+          )}
           ${closingHint}
         </g>
       `;
@@ -6132,17 +7062,26 @@ export class FpbCanvas extends LitElement {
     return null;
   }
 
-
   private _renderZoneEditor() {
     if (!this._zoneEditor) return null;
-    const assignedHaAreas = this._getAssignedHaAreaIds({ zoneId: this._zoneEditor.zone.id });
+    const assignedHaAreas = this._getAssignedHaAreaIds({
+      zoneId: this._zoneEditor.zone.id,
+    });
     const selectableAreas = this._haAreas.filter(
-      area => !assignedHaAreas.has(area.area_id) || area.area_id === this._zoneEditor?.editAreaId,
+      (area) =>
+        !assignedHaAreas.has(area.area_id) ||
+        area.area_id === this._zoneEditor?.editAreaId,
     );
 
     const ZONE_COLORS = [
-      "#a1c4fd", "#c5e1a5", "#ffe0b2", "#d1c4e9",
-      "#ffccbc", "#b0bec5", "#e0e0e0", "#f8bbd0",
+      "#a1c4fd",
+      "#c5e1a5",
+      "#ffe0b2",
+      "#d1c4e9",
+      "#ffccbc",
+      "#b0bec5",
+      "#e0e0e0",
+      "#f8bbd0",
     ];
 
     return html`
@@ -6151,7 +7090,10 @@ export class FpbCanvas extends LitElement {
            @pointerdown=${(e: Event) => e.stopPropagation()}>
         <div class="wall-editor-header">
           <span class="wall-editor-title">Zone</span>
-          <button class="wall-editor-close" @click=${() => { this._zoneEditor = null; selection.value = { type: "none", ids: [] }; }}><ha-icon icon="mdi:close"></ha-icon></button>
+          <button class="wall-editor-close" @click=${() => {
+            this._zoneEditor = null;
+            selection.value = { type: "none", ids: [] };
+          }}><ha-icon icon="mdi:close"></ha-icon></button>
         </div>
 
         <div class="wall-editor-section">
@@ -6161,7 +7103,7 @@ export class FpbCanvas extends LitElement {
             @change=${(e: Event) => {
               if (!this._zoneEditor) return;
               const val = (e.target as HTMLSelectElement).value;
-              const area = this._haAreas.find(a => a.area_id === val);
+              const area = this._haAreas.find((a) => a.area_id === val);
               this._zoneEditor = {
                 ...this._zoneEditor,
                 editAreaId: val || null,
@@ -6170,9 +7112,11 @@ export class FpbCanvas extends LitElement {
             }}
           >
             <option value="">None</option>
-            ${selectableAreas.map(a => html`
+            ${selectableAreas.map(
+              (a) => html`
               <option value=${a.area_id} ?selected=${this._zoneEditor?.editAreaId === a.area_id}>${a.name}</option>
-            `)}
+            `,
+            )}
           </select>
         </div>
 
@@ -6183,17 +7127,25 @@ export class FpbCanvas extends LitElement {
             .value=${this._zoneEditor.editName}
             @input=${(e: InputEvent) => {
               if (this._zoneEditor) {
-                this._zoneEditor = { ...this._zoneEditor, editName: (e.target as HTMLInputElement).value };
+                this._zoneEditor = {
+                  ...this._zoneEditor,
+                  editName: (e.target as HTMLInputElement).value,
+                };
               }
             }}
             @keydown=${(e: KeyboardEvent) => {
               if (e.key === "Enter") this._handleZoneEditorSave();
-              else if (e.key === "Escape") { this._zoneEditor = null; selection.value = { type: "none", ids: [] }; }
+              else if (e.key === "Escape") {
+                this._zoneEditor = null;
+                selection.value = { type: "none", ids: [] };
+              }
             }}
           />
         </div>
 
-        ${this._zoneEditor.zone.polygon?.vertices?.length ? html`
+        ${
+          this._zoneEditor.zone.polygon?.vertices?.length
+            ? html`
           <div class="wall-editor-section">
             <span class="wall-editor-section-label">Size</span>
             <div style="display:flex; gap:8px; align-items:center;">
@@ -6207,12 +7159,15 @@ export class FpbCanvas extends LitElement {
               />
             </div>
           </div>
-        ` : null}
+        `
+            : null
+        }
 
         <div class="wall-editor-section">
           <span class="wall-editor-section-label">Color</span>
           <div class="wall-editor-colors">
-            ${ZONE_COLORS.map(c => html`
+            ${ZONE_COLORS.map(
+              (c) => html`
               <button
                 class="color-swatch ${this._zoneEditor?.editColor === c ? "active" : ""}"
                 style="background:${c};"
@@ -6222,7 +7177,8 @@ export class FpbCanvas extends LitElement {
                   }
                 }}
               ></button>
-            `)}
+            `,
+            )}
           </div>
         </div>
 
@@ -6236,13 +7192,13 @@ export class FpbCanvas extends LitElement {
 
   private _getZoneBBoxWidth(): number {
     if (!this._zoneEditor?.zone.polygon?.vertices?.length) return 0;
-    const xs = this._zoneEditor.zone.polygon.vertices.map(v => v.x);
+    const xs = this._zoneEditor.zone.polygon.vertices.map((v) => v.x);
     return Math.round(Math.max(...xs) - Math.min(...xs));
   }
 
   private _getZoneBBoxHeight(): number {
     if (!this._zoneEditor?.zone.polygon?.vertices?.length) return 0;
-    const ys = this._zoneEditor.zone.polygon.vertices.map(v => v.y);
+    const ys = this._zoneEditor.zone.polygon.vertices.map((v) => v.y);
     return Math.round(Math.max(...ys) - Math.min(...ys));
   }
 
@@ -6252,10 +7208,12 @@ export class FpbCanvas extends LitElement {
     const verts = zone.polygon?.vertices;
     if (!verts?.length) return;
 
-    const xs = verts.map(v => v.x);
-    const ys = verts.map(v => v.y);
-    const minX = Math.min(...xs), maxX = Math.max(...xs);
-    const minY = Math.min(...ys), maxY = Math.max(...ys);
+    const xs = verts.map((v) => v.x);
+    const ys = verts.map((v) => v.y);
+    const minX = Math.min(...xs),
+      maxX = Math.max(...xs);
+    const minY = Math.min(...ys),
+      maxY = Math.max(...ys);
     const cx = (minX + maxX) / 2;
     const cy = (minY + maxY) / 2;
     const curW = maxX - minX;
@@ -6265,7 +7223,7 @@ export class FpbCanvas extends LitElement {
     const scaleX = dim === "width" ? newVal / curW : 1;
     const scaleY = dim === "height" ? newVal / curH : 1;
 
-    const newVerts = verts.map(v => ({
+    const newVerts = verts.map((v) => ({
       x: cx + (v.x - cx) * scaleX,
       y: cy + (v.y - cy) * scaleY,
     }));
@@ -6279,12 +7237,15 @@ export class FpbCanvas extends LitElement {
     // Auto-save the polygon change
     const floorPlan = currentFloorPlan.value;
     if (floorPlan) {
-      this.hass.callWS({
-        type: "inhabit/zones/update",
-        floor_plan_id: floorPlan.id,
-        zone_id: zone.id,
-        polygon: { vertices: newVerts.map(v => ({ x: v.x, y: v.y })) },
-      }).then(() => reloadFloorData()).catch(err => console.error("Error resizing zone:", err));
+      this.hass
+        .callWS({
+          type: "inhabit/zones/update",
+          floor_plan_id: floorPlan.id,
+          zone_id: zone.id,
+          polygon: { vertices: newVerts.map((v) => ({ x: v.x, y: v.y })) },
+        })
+        .then(() => reloadFloorData())
+        .catch((err) => console.error("Error resizing zone:", err));
     }
   }
 
@@ -6329,32 +7290,6 @@ export class FpbCanvas extends LitElement {
     selection.value = { type: "none", ids: [] };
   }
 
-  private async _finishZoneDrag(): Promise<void> {
-    if (!this._draggingZone || !this.hass) return;
-    const floorPlan = currentFloorPlan.value;
-    if (!floorPlan) return;
-    const zone = this._draggingZone.zone;
-    if (!zone.polygon?.vertices) return;
-
-    try {
-      await this.hass.callWS({
-        type: "inhabit/zones/update",
-        floor_plan_id: floorPlan.id,
-        zone_id: zone.id,
-        polygon: { vertices: zone.polygon.vertices.map((v: Coordinates) => ({ x: v.x, y: v.y })) },
-      });
-      await reloadFloorData();
-    } catch (err) {
-      console.error("Error moving zone:", err);
-      // Restore original vertices
-      if (zone.polygon?.vertices && this._draggingZone.originalVertices) {
-        for (let i = 0; i < zone.polygon.vertices.length; i++) {
-          zone.polygon.vertices[i] = this._draggingZone.originalVertices[i];
-        }
-      }
-    }
-  }
-
   private async _finishZoneVertexDrag(): Promise<void> {
     if (!this._draggingZoneVertex || !this.hass) return;
     const floorPlan = currentFloorPlan.value;
@@ -6367,14 +7302,20 @@ export class FpbCanvas extends LitElement {
         type: "inhabit/zones/update",
         floor_plan_id: floorPlan.id,
         zone_id: zone.id,
-        polygon: { vertices: zone.polygon.vertices.map((v: Coordinates) => ({ x: v.x, y: v.y })) },
+        polygon: {
+          vertices: zone.polygon.vertices.map((v: Coordinates) => ({
+            x: v.x,
+            y: v.y,
+          })),
+        },
       });
       await reloadFloorData();
     } catch (err) {
       console.error("Error moving zone vertex:", err);
       // Restore original vertex
       if (zone.polygon?.vertices && this._draggingZoneVertex) {
-        zone.polygon.vertices[this._draggingZoneVertex.vertexIndex] = this._draggingZoneVertex.originalCoords;
+        zone.polygon.vertices[this._draggingZoneVertex.vertexIndex] =
+          this._draggingZoneVertex.originalCoords;
       }
     }
   }
@@ -6391,7 +7332,8 @@ export class FpbCanvas extends LitElement {
       const midY = (start.y + end.y) / 2;
 
       // Calculate angle for label rotation
-      const angle = Math.atan2(end.y - start.y, end.x - start.x) * (180 / Math.PI);
+      const angle =
+        Math.atan2(end.y - start.y, end.x - start.x) * (180 / Math.PI);
       const labelAngle = angle > 90 || angle < -90 ? angle + 180 : angle;
 
       return svg`
@@ -6472,10 +7414,18 @@ export class FpbCanvas extends LitElement {
     const doorEndY = cy + uy * halfW;
 
     // Swing arc (preview always shows door at full open angle)
-    const arcP = swingArcGeom(hingeX, hingeY, doorEndX, doorEndY, DOOR_SWING_DEG, true);
+    const arcP = swingArcGeom(
+      hingeX,
+      hingeY,
+      doorEndX,
+      doorEndY,
+      DOOR_SWING_DEG,
+      true,
+    );
 
     // Leaf panel (at full open position for preview)
-    const plx = arcP.ox - hingeX, ply = arcP.oy - hingeY;
+    const plx = arcP.ox - hingeX,
+      ply = arcP.oy - hingeY;
     const pll = Math.sqrt(plx * plx + ply * ply);
     const ppnx = pll > 0 ? (-ply / pll) * 1.25 : 0;
     const ppny = pll > 0 ? (plx / pll) * 1.25 : 0;
@@ -6485,8 +7435,10 @@ export class FpbCanvas extends LitElement {
     const prevWedge = `M${hingeX},${hingeY} L${doorEndX},${doorEndY} C${arcP.cp1x},${arcP.cp1y} ${arcP.cp2x},${arcP.cp2y} ${arcP.ox},${arcP.oy} Z`;
 
     // Wall divider lines across wall thickness at opening endpoints
-    const pjSx = cx - ux * halfW, pjSy = cy - uy * halfW;
-    const pjEx = cx + ux * halfW, pjEy = cy + uy * halfW;
+    const pjSx = cx - ux * halfW,
+      pjSy = cy - uy * halfW;
+    const pjEx = cx + ux * halfW,
+      pjEy = cy + uy * halfW;
 
     return svg`
       <g class="opening-ghost">
@@ -6507,8 +7459,12 @@ export class FpbCanvas extends LitElement {
     if (vertices.length === 0) return null;
     if (vertices.length < 3) {
       // Fallback for degenerate polygons: simple average
-      let cx = 0, cy = 0;
-      for (const v of vertices) { cx += v.x; cy += v.y; }
+      let cx = 0,
+        cy = 0;
+      for (const v of vertices) {
+        cx += v.x;
+        cy += v.y;
+      }
       return { x: cx / vertices.length, y: cy / vertices.length };
     }
 
@@ -6520,7 +7476,8 @@ export class FpbCanvas extends LitElement {
 
     for (let i = 0; i < n; i++) {
       const j = (i + 1) % n;
-      const cross = vertices[i].x * vertices[j].y - vertices[j].x * vertices[i].y;
+      const cross =
+        vertices[i].x * vertices[j].y - vertices[j].x * vertices[i].y;
       area += cross;
       cx += (vertices[i].x + vertices[j].x) * cross;
       cy += (vertices[i].y + vertices[j].y) * cross;
@@ -6529,8 +7486,12 @@ export class FpbCanvas extends LitElement {
     area /= 2;
     if (Math.abs(area) < 1e-6) {
       // Near-zero area: fall back to simple average
-      let sx = 0, sy = 0;
-      for (const v of vertices) { sx += v.x; sy += v.y; }
+      let sx = 0,
+        sy = 0;
+      for (const v of vertices) {
+        sx += v.x;
+        sy += v.y;
+      }
       return { x: sx / n, y: sy / n };
     }
 
@@ -6545,7 +7506,11 @@ export class FpbCanvas extends LitElement {
     const isDoor = edge.type === "door";
     const isWindow = edge.type === "window";
     const isOpening = isDoor || isWindow;
-    const title = isDoor ? "Door Properties" : isWindow ? "Window Properties" : "Wall Properties";
+    const title = isDoor
+      ? "Door Properties"
+      : isWindow
+        ? "Window Properties"
+        : "Wall Properties";
 
     return html`
       <div class="wall-editor"
@@ -6556,13 +7521,16 @@ export class FpbCanvas extends LitElement {
           <button class="wall-editor-close" @click=${this._handleEditorCancel}><ha-icon icon="mdi:close"></ha-icon></button>
         </div>
 
-        ${edge.link_group ? (() => {
-          const floor = currentFloor.value;
-          const group = edge.link_group!;
-          const siblingCount = floor
-            ? floor.edges.filter(e => e.link_group === group).length
-            : 0;
-          return html`
+        ${
+          edge.link_group
+            ? (
+                () => {
+                  const floor = currentFloor.value;
+                  const group = edge.link_group!;
+                  const siblingCount = floor
+                    ? floor.edges.filter((e) => e.link_group === group).length
+                    : 0;
+                  return html`
             <div class="wall-editor-section" style="flex-direction:row; align-items:center; gap:8px;">
               <span style="display:inline-flex; align-items:center; gap:4px; font-size:12px; color:${linkGroupColor(group)};">
                 <ha-icon icon="mdi:link-variant" style="--mdc-icon-size:14px;"></ha-icon>
@@ -6576,15 +7544,22 @@ export class FpbCanvas extends LitElement {
               ><ha-icon icon="mdi:link-variant-off" style="--mdc-icon-size:14px;"></ha-icon></button>
             </div>
           `;
-        })() : null}
+                }
+              )()
+            : null
+        }
 
-        ${edge.collinear_group ? (() => {
-          const floor = currentFloor.value;
-          const cGroup = edge.collinear_group!;
-          const siblingCount = floor
-            ? floor.edges.filter(e => e.collinear_group === cGroup).length
-            : 0;
-          return html`
+        ${
+          edge.collinear_group
+            ? (
+                () => {
+                  const floor = currentFloor.value;
+                  const cGroup = edge.collinear_group!;
+                  const siblingCount = floor
+                    ? floor.edges.filter((e) => e.collinear_group === cGroup)
+                        .length
+                    : 0;
+                  return html`
             <div class="wall-editor-section" style="flex-direction:row; align-items:center; gap:8px;">
               <span style="display:inline-flex; align-items:center; gap:4px; font-size:12px; color:${linkGroupColor(cGroup)};">
                 <ha-icon icon="mdi:vector-line" style="--mdc-icon-size:14px;"></ha-icon>
@@ -6598,32 +7573,48 @@ export class FpbCanvas extends LitElement {
               ><ha-icon icon="mdi:link-variant-off" style="--mdc-icon-size:14px;"></ha-icon></button>
             </div>
           `;
-        })() : null}
+                }
+              )()
+            : null
+        }
 
-        ${isOpening ? (() => {
-          const floor = currentFloor.value;
-          if (!floor) return null;
-          const nodeMap = buildNodeMap(floor.nodes);
-          const sn = nodeMap.get(edge.start_node);
-          const en = nodeMap.get(edge.end_node);
-          if (!sn || !en) return null;
-          const mx = (sn.x + en.x) / 2;
-          const my = (sn.y + en.y) / 2;
-          const edx = en.x - sn.x;
-          const edy = en.y - sn.y;
-          const elen = Math.sqrt(edx * edx + edy * edy);
-          if (elen === 0) return null;
-          const pnx = -edy / elen;
-          const pny = edx / elen;
-          const probeD = edge.thickness / 2 + 5;
-          const p1 = { x: mx + pnx * probeD, y: my + pny * probeD };
-          const p2 = { x: mx - pnx * probeD, y: my - pny * probeD };
-          const roomA = floor.rooms.find(r => r.polygon.vertices.length >= 3 && this._pointInPolygon(p1, r.polygon.vertices));
-          const roomB = floor.rooms.find(r => r.polygon.vertices.length >= 3 && this._pointInPolygon(p2, r.polygon.vertices));
-          const nameA = roomA?.name || (edge.is_exterior ? "Outside" : null);
-          const nameB = roomB?.name || (edge.is_exterior ? "Outside" : null);
-          if (!nameA && !nameB) return null;
-          return html`
+        ${
+          isOpening
+            ? (
+                () => {
+                  const floor = currentFloor.value;
+                  if (!floor) return null;
+                  const nodeMap = buildNodeMap(floor.nodes);
+                  const sn = nodeMap.get(edge.start_node);
+                  const en = nodeMap.get(edge.end_node);
+                  if (!sn || !en) return null;
+                  const mx = (sn.x + en.x) / 2;
+                  const my = (sn.y + en.y) / 2;
+                  const edx = en.x - sn.x;
+                  const edy = en.y - sn.y;
+                  const elen = Math.sqrt(edx * edx + edy * edy);
+                  if (elen === 0) return null;
+                  const pnx = -edy / elen;
+                  const pny = edx / elen;
+                  const probeD = edge.thickness / 2 + 5;
+                  const p1 = { x: mx + pnx * probeD, y: my + pny * probeD };
+                  const p2 = { x: mx - pnx * probeD, y: my - pny * probeD };
+                  const roomA = floor.rooms.find(
+                    (r) =>
+                      r.polygon.vertices.length >= 3 &&
+                      this._pointInPolygon(p1, r.polygon.vertices),
+                  );
+                  const roomB = floor.rooms.find(
+                    (r) =>
+                      r.polygon.vertices.length >= 3 &&
+                      this._pointInPolygon(p2, r.polygon.vertices),
+                  );
+                  const nameA =
+                    roomA?.name || (edge.is_exterior ? "Outside" : null);
+                  const nameB =
+                    roomB?.name || (edge.is_exterior ? "Outside" : null);
+                  if (!nameA && !nameB) return null;
+                  return html`
             <div class="wall-editor-section">
               <span class="wall-editor-section-label">Opens into</span>
               <div class="wall-editor-row" style="gap:6px; font-size:12px; align-items:center;">
@@ -6641,32 +7632,58 @@ export class FpbCanvas extends LitElement {
               </div>
             </div>
           `;
-        })() : null}
+                }
+              )()
+            : null
+        }
 
-        ${isOpening ? (() => {
-          // Determine available types based on edge type
-          const types: Array<{ value: 'swing' | 'sliding' | 'tilt'; label: string }> = isDoor
-            ? [{ value: "swing", label: "Swing" }, { value: "sliding", label: "Sliding" }]
-            : [{ value: "swing", label: "Swing" }, { value: "sliding", label: "Sliding" }, { value: "tilt", label: "Tilt" }];
+        ${
+          isOpening
+            ? (
+                () => {
+                  // Determine available types based on edge type
+                  const types: Array<{
+                    value: "swing" | "sliding" | "tilt";
+                    label: string;
+                  }> = isDoor
+                    ? [
+                        { value: "swing", label: "Swing" },
+                        { value: "sliding", label: "Sliding" },
+                      ]
+                    : [
+                        { value: "swing", label: "Swing" },
+                        { value: "sliding", label: "Sliding" },
+                        { value: "tilt", label: "Tilt" },
+                      ];
 
-          // Determine hinge options based on parts + type
-          const showHinges = this._editingOpeningType === "swing";
-          const hingeOptions: Array<{ value: 'left' | 'right'; label: string }> =
-            this._editingOpeningParts === "double"
-              ? [{ value: "left", label: "Left & Right" }] // double swing always has both hinges
-              : [{ value: "left", label: "Left" }, { value: "right", label: "Right" }];
+                  // Determine hinge options based on parts + type
+                  const showHinges = this._editingOpeningType === "swing";
+                  const hingeOptions: Array<{
+                    value: "left" | "right";
+                    label: string;
+                  }> =
+                    this._editingOpeningParts === "double"
+                      ? [{ value: "left", label: "Left & Right" }] // double swing always has both hinges
+                      : [
+                          { value: "left", label: "Left" },
+                          { value: "right", label: "Right" },
+                        ];
 
-          return html`
+                  return html`
             <div class="wall-editor-section">
               <span class="wall-editor-section-label">Parts</span>
               <div class="wall-editor-constraints">
                 <button
                   class="constraint-btn ${this._editingOpeningParts === "single" ? "active" : ""}"
-                  @click=${() => { this._editingOpeningParts = "single"; }}
+                  @click=${() => {
+                    this._editingOpeningParts = "single";
+                  }}
                 >Single</button>
                 <button
                   class="constraint-btn ${this._editingOpeningParts === "double" ? "active" : ""}"
-                  @click=${() => { this._editingOpeningParts = "double"; }}
+                  @click=${() => {
+                    this._editingOpeningParts = "double";
+                  }}
                 >Double</button>
               </div>
             </div>
@@ -6674,87 +7691,150 @@ export class FpbCanvas extends LitElement {
             <div class="wall-editor-section">
               <span class="wall-editor-section-label">Type</span>
               <div class="wall-editor-constraints">
-                ${types.map(t => html`
+                ${types.map(
+                  (t) => html`
                   <button
                     class="constraint-btn ${this._editingOpeningType === t.value ? "active" : ""}"
-                    @click=${() => { this._editingOpeningType = t.value; }}
+                    @click=${() => {
+                      this._editingOpeningType = t.value;
+                    }}
                   >${t.label}</button>
-                `)}
+                `,
+                )}
               </div>
             </div>
 
-            ${showHinges ? html`
+            ${
+              showHinges
+                ? html`
               <div class="wall-editor-section">
                 <span class="wall-editor-section-label">Hinges</span>
                 <div class="wall-editor-constraints">
-                  ${hingeOptions.length === 1 ? html`
+                  ${
+                    hingeOptions.length === 1
+                      ? html`
                     <button class="constraint-btn active">${hingeOptions[0].label}</button>
-                  ` : hingeOptions.map(h => html`
+                  `
+                      : hingeOptions.map(
+                          (h) => html`
                     <button
                       class="constraint-btn ${this._editingSwingDirection === h.value ? "active" : ""}"
-                      @click=${() => { this._editingSwingDirection = h.value; }}
+                      @click=${() => {
+                        this._editingSwingDirection = h.value;
+                      }}
                     >${h.label}</button>
-                  `)}
+                  `,
+                        )
+                  }
                 </div>
               </div>
-            ` : null}
+            `
+                : null
+            }
           `;
-        })() : null}
+                }
+              )()
+            : null
+        }
 
-        ${isOpening ? html`
+        ${
+          isOpening
+            ? html`
           <div class="wall-editor-section">
             <span class="wall-editor-section-label">Sensor</span>
-            ${this._editingEntityId ? (() => {
-              const state = this.hass?.states[this._editingEntityId!];
-              const name = state?.attributes.friendly_name || this._editingEntityId;
-              const icon = (state?.attributes.icon as string) || "mdi:radiobox-marked";
-              const isOn = state?.state === "on";
-              return html`
+            ${
+              this._editingEntityId
+                ? (
+                    () => {
+                      const state = this.hass?.states[this._editingEntityId!];
+                      const name =
+                        state?.attributes.friendly_name ||
+                        this._editingEntityId;
+                      const icon =
+                        (state?.attributes.icon as string) ||
+                        "mdi:radiobox-marked";
+                      const isOn = state?.state === "on";
+                      return html`
                 <div class="wall-editor-row" style="gap:6px; align-items:center;">
                   <ha-icon icon=${icon} style="--mdc-icon-size:18px; color:${isOn ? "var(--state-light-active-color, #ffd600)" : "var(--secondary-text-color, #999)"};"></ha-icon>
                   <span style="flex:1; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${name}</span>
                   <span style="font-size:11px; color:var(--secondary-text-color, #999); font-weight:500;">${state?.state ?? "?"}</span>
                   <button
                     class="constraint-btn"
-                    @click=${() => { this._editingEntityId = null; this._openingSensorPickerOpen = false; this._openingSensorSearch = ""; }}
+                    @click=${() => {
+                      this._editingEntityId = null;
+                      this._openingSensorPickerOpen = false;
+                      this._openingSensorSearch = "";
+                    }}
                     title="Remove sensor"
                     style="padding:2px 6px; font-size:11px;"
                   ><ha-icon icon="mdi:close" style="--mdc-icon-size:14px;"></ha-icon></button>
                 </div>
               `;
-            })() : !this._openingSensorPickerOpen ? html`
+                    }
+                  )()
+                : !this._openingSensorPickerOpen
+                  ? html`
               <button
                 class="constraint-btn"
-                @click=${() => { this._openingSensorPickerOpen = true; this._openingSensorSearch = ""; this.updateComplete.then(() => { (this.shadowRoot?.querySelector('.opening-sensor-search') as HTMLInputElement)?.focus(); }); }}
+                @click=${() => {
+                  this._openingSensorPickerOpen = true;
+                  this._openingSensorSearch = "";
+                  this.updateComplete.then(() => {
+                    (
+                      this.shadowRoot?.querySelector(
+                        ".opening-sensor-search",
+                      ) as HTMLInputElement
+                    )?.focus();
+                  });
+                }}
                 style="width:100%;"
               ><ha-icon icon="mdi:plus" style="--mdc-icon-size:14px;"></ha-icon> Link sensor</button>
-            ` : html`
+            `
+                  : html`
               <div style="display:flex; flex-direction:column; gap:6px;">
                 <input
                   class="opening-sensor-search"
                   type="text"
                   placeholder="Search sensors..."
                   .value=${this._openingSensorSearch}
-                  @input=${(e: InputEvent) => { this._openingSensorSearch = (e.target as HTMLInputElement).value; }}
-                  @keydown=${(e: KeyboardEvent) => { if (e.key === "Escape") { this._openingSensorPickerOpen = false; } }}
+                  @input=${(e: InputEvent) => {
+                    this._openingSensorSearch = (
+                      e.target as HTMLInputElement
+                    ).value;
+                  }}
+                  @keydown=${(e: KeyboardEvent) => {
+                    if (e.key === "Escape") {
+                      this._openingSensorPickerOpen = false;
+                    }
+                  }}
                   style="width:100%; padding:6px 8px; border:1px solid var(--divider-color, #e0e0e0); border-radius:8px; font-size:12px; background:var(--primary-background-color, #fafafa); color:var(--primary-text-color, #333); box-sizing:border-box;"
                 />
                 <div style="max-height:160px; overflow-y:auto;">
-                  ${this._getOpeningSensorEntities().map(entity => html`
+                  ${this._getOpeningSensorEntities().map(
+                    (entity) => html`
                     <div
                       class="entity-item ${entity.state === "on" ? "on" : ""}"
-                      @click=${() => { this._editingEntityId = entity.entity_id; this._openingSensorPickerOpen = false; this._openingSensorSearch = ""; }}
+                      @click=${() => {
+                        this._editingEntityId = entity.entity_id;
+                        this._openingSensorPickerOpen = false;
+                        this._openingSensorSearch = "";
+                      }}
                     >
                       <ha-icon icon=${(entity.attributes.icon as string) || "mdi:radiobox-marked"}></ha-icon>
                       <span class="name">${entity.attributes.friendly_name || entity.entity_id}</span>
                       <span class="state">${entity.state}</span>
                     </div>
-                  `)}
+                  `,
+                  )}
                 </div>
               </div>
-            `}
+            `
+            }
           </div>
-        ` : null}
+        `
+            : null
+        }
 
         <div class="wall-editor-section">
           <span class="wall-editor-section-label">Width</span>
@@ -6762,28 +7842,37 @@ export class FpbCanvas extends LitElement {
             <input
               type="number"
               .value=${this._editingLength}
-              @input=${(e: InputEvent) => this._editingLength = (e.target as HTMLInputElement).value}
+              @input=${(e: InputEvent) => (this._editingLength = (e.target as HTMLInputElement).value)}
               @keydown=${this._handleEditorKeyDown}
               autofocus
             />
             <span class="wall-editor-unit">cm</span>
-            ${!isOpening ? html`
+            ${
+              !isOpening
+                ? html`
               <button
                 class="constraint-btn lock-btn ${this._editingLengthLocked ? "active" : ""}"
-                @click=${() => { this._editingLengthLocked = !this._editingLengthLocked; }}
+                @click=${() => {
+                  this._editingLengthLocked = !this._editingLengthLocked;
+                }}
                 title="${this._editingLengthLocked ? "Unlock length" : "Lock length"}"
               ><ha-icon icon="${this._editingLengthLocked ? "mdi:lock" : "mdi:lock-open-variant"}"></ha-icon></button>
-            ` : null}
+            `
+                : null
+            }
           </div>
         </div>
 
-        ${edge.angle_group ? (() => {
-          const floor = currentFloor.value;
-          const aGroup = edge.angle_group!;
-          const siblingCount = floor
-            ? floor.edges.filter(e => e.angle_group === aGroup).length
-            : 0;
-          return html`
+        ${
+          edge.angle_group
+            ? (
+                () => {
+                  const floor = currentFloor.value;
+                  const aGroup = edge.angle_group!;
+                  const siblingCount = floor
+                    ? floor.edges.filter((e) => e.angle_group === aGroup).length
+                    : 0;
+                  return html`
             <div class="wall-editor-section" style="flex-direction:row; align-items:center; gap:8px;">
               <span style="display:inline-flex; align-items:center; gap:4px; font-size:12px; color:${linkGroupColor(aGroup)};">
                 <ha-icon icon="mdi:angle-acute" style="--mdc-icon-size:14px;"></ha-icon>
@@ -6797,9 +7886,14 @@ export class FpbCanvas extends LitElement {
               ><ha-icon icon="mdi:link-variant-off" style="--mdc-icon-size:14px;"></ha-icon></button>
             </div>
           `;
-        })() : null}
+                }
+              )()
+            : null
+        }
 
-        ${!isOpening ? html`
+        ${
+          !isOpening
+            ? html`
           <div class="wall-editor-section">
             <span class="wall-editor-section-label">Constraints</span>
             <div class="wall-editor-row">
@@ -6807,23 +7901,31 @@ export class FpbCanvas extends LitElement {
               <div class="wall-editor-constraints">
                 <button
                   class="constraint-btn ${this._editingDirection === "free" ? "active" : ""}"
-                  @click=${() => { this._editingDirection = "free"; }}
+                  @click=${() => {
+                    this._editingDirection = "free";
+                  }}
                   title="Free direction"
                 >Free</button>
                 <button
                   class="constraint-btn ${this._editingDirection === "horizontal" ? "active" : ""}"
-                  @click=${() => { this._editingDirection = "horizontal"; }}
+                  @click=${() => {
+                    this._editingDirection = "horizontal";
+                  }}
                   title="Lock horizontal"
                 ><ha-icon icon="mdi:arrow-left-right"></ha-icon> Horizontal</button>
                 <button
                   class="constraint-btn ${this._editingDirection === "vertical" ? "active" : ""}"
-                  @click=${() => { this._editingDirection = "vertical"; }}
+                  @click=${() => {
+                    this._editingDirection = "vertical";
+                  }}
                   title="Lock vertical"
                 ><ha-icon icon="mdi:arrow-up-down"></ha-icon> Vertical</button>
               </div>
             </div>
           </div>
-        ` : null}
+        `
+            : null
+        }
 
         <div class="wall-editor-actions">
           <button class="save-btn" @click=${this._handleEditorSave}><ha-icon icon="mdi:check"></ha-icon> Apply</button>
@@ -6834,7 +7936,10 @@ export class FpbCanvas extends LitElement {
   }
 
   /** Apply a direction constraint. Snaps nodes if possible, blinks blockers if not. Always returns true so the direction is persisted. */
-  private async _applyDirection(edge: Edge, direction: WallDirection): Promise<boolean> {
+  private async _applyDirection(
+    edge: Edge,
+    direction: WallDirection,
+  ): Promise<boolean> {
     if (!this.hass) return false;
 
     const floor = currentFloor.value;
@@ -6842,8 +7947,15 @@ export class FpbCanvas extends LitElement {
     if (!floor || !floorPlan) return false;
 
     // Temporarily clear the edited edge's old constraints so it doesn't block itself
-    const edgeCopy = floor.edges.map(e =>
-      e.id === edge.id ? { ...e, direction: "free" as const, length_locked: false, angle_group: undefined } : e
+    const edgeCopy = floor.edges.map((e) =>
+      e.id === edge.id
+        ? {
+            ...e,
+            direction: "free" as const,
+            length_locked: false,
+            angle_group: undefined,
+          }
+        : e,
     );
     const graph = buildNodeGraph(floor.nodes, edgeCopy);
     const result = solveConstraintSnap(graph, edge.id, direction);
@@ -6873,13 +7985,14 @@ export class FpbCanvas extends LitElement {
     return true;
   }
 
-
   private _renderNodeEditor() {
     if (!this._nodeEditor) return null;
 
     const node = this._nodeEditor.node;
     const floor = currentFloor.value;
-    const connectedEdgeCount = floor ? edgesAtNode(node.id, floor.edges).length : 0;
+    const connectedEdgeCount = floor
+      ? edgesAtNode(node.id, floor.edges).length
+      : 0;
 
     return html`
       <div class="wall-editor"
@@ -6887,7 +8000,9 @@ export class FpbCanvas extends LitElement {
            @pointerdown=${(e: Event) => e.stopPropagation()}>
         <div class="wall-editor-header">
           <span class="wall-editor-title">Point Properties</span>
-          <button class="wall-editor-close" @click=${() => { this._nodeEditor = null; }}><ha-icon icon="mdi:close"></ha-icon></button>
+          <button class="wall-editor-close" @click=${() => {
+            this._nodeEditor = null;
+          }}><ha-icon icon="mdi:close"></ha-icon></button>
         </div>
 
         <div class="wall-editor-section">
@@ -6899,10 +8014,15 @@ export class FpbCanvas extends LitElement {
               .value=${this._nodeEditor.editX}
               @input=${(e: InputEvent) => {
                 if (this._nodeEditor) {
-                  this._nodeEditor = { ...this._nodeEditor, editX: (e.target as HTMLInputElement).value };
+                  this._nodeEditor = {
+                    ...this._nodeEditor,
+                    editX: (e.target as HTMLInputElement).value,
+                  };
                 }
               }}
-              @keydown=${(e: KeyboardEvent) => { if (e.key === "Enter") this._handleNodeEditorSave(); }}
+              @keydown=${(e: KeyboardEvent) => {
+                if (e.key === "Enter") this._handleNodeEditorSave();
+              }}
             />
             <span class="wall-editor-unit">cm</span>
           </div>
@@ -6913,10 +8033,15 @@ export class FpbCanvas extends LitElement {
               .value=${this._nodeEditor.editY}
               @input=${(e: InputEvent) => {
                 if (this._nodeEditor) {
-                  this._nodeEditor = { ...this._nodeEditor, editY: (e.target as HTMLInputElement).value };
+                  this._nodeEditor = {
+                    ...this._nodeEditor,
+                    editY: (e.target as HTMLInputElement).value,
+                  };
                 }
               }}
-              @keydown=${(e: KeyboardEvent) => { if (e.key === "Enter") this._handleNodeEditorSave(); }}
+              @keydown=${(e: KeyboardEvent) => {
+                if (e.key === "Enter") this._handleNodeEditorSave();
+              }}
             />
             <span class="wall-editor-unit">cm</span>
           </div>
@@ -6935,9 +8060,13 @@ export class FpbCanvas extends LitElement {
 
         <div class="wall-editor-actions">
           <button class="save-btn" @click=${() => this._handleNodeEditorSave()}><ha-icon icon="mdi:check"></ha-icon> Apply</button>
-          ${connectedEdgeCount === 2 ? html`
+          ${
+            connectedEdgeCount === 2
+              ? html`
             <button class="delete-btn" @click=${() => this._handleNodeDissolve()}><ha-icon icon="mdi:delete-outline"></ha-icon> Dissolve</button>
-          ` : null}
+          `
+              : null
+          }
         </div>
       </div>
     `;
@@ -6953,7 +8082,7 @@ export class FpbCanvas extends LitElement {
     const node = this._nodeEditor.node;
     const newX = parseFloat(this._nodeEditor.editX);
     const newY = parseFloat(this._nodeEditor.editY);
-    if (isNaN(newX) || isNaN(newY)) return;
+    if (Number.isNaN(newX) || Number.isNaN(newY)) return;
 
     try {
       // Use solver for constraint propagation
@@ -6994,12 +8123,14 @@ export class FpbCanvas extends LitElement {
         type: "inhabit/nodes/update",
         floor_plan_id: floorPlan.id,
         floor_id: floor.id,
-        updates: [{
-          node_id: node.id,
-          x: node.x,
-          y: node.y,
-          pinned: newPinned,
-        }],
+        updates: [
+          {
+            node_id: node.id,
+            x: node.x,
+            y: node.y,
+            pinned: newPinned,
+          },
+        ],
       });
       await reloadFloorData();
       this._refreshNodeEditor(node.id);
@@ -7051,7 +8182,7 @@ export class FpbCanvas extends LitElement {
 
     const domains = ["binary_sensor", "cover"];
     let entities = Object.values(this.hass.states).filter((e) =>
-      domains.some((d) => e.entity_id.startsWith(d + "."))
+      domains.some((d) => e.entity_id.startsWith(`${d}.`)),
     );
 
     // Exclude sensors already assigned to other edges on this floor
@@ -7061,7 +8192,7 @@ export class FpbCanvas extends LitElement {
       const usedEntityIds = new Set(
         floor.edges
           .filter((e) => e.entity_id && e.id !== currentEdgeId)
-          .map((e) => e.entity_id)
+          .map((e) => e.entity_id),
       );
       entities = entities.filter((e) => !usedEntityIds.has(e.entity_id));
     }
@@ -7071,17 +8202,24 @@ export class FpbCanvas extends LitElement {
       entities = entities.filter(
         (e) =>
           e.entity_id.toLowerCase().includes(search) ||
-          ((e.attributes.friendly_name as string) || "").toLowerCase().includes(search)
+          ((e.attributes.friendly_name as string) || "")
+            .toLowerCase()
+            .includes(search),
       );
     }
 
     return entities.slice(0, 30);
   }
 
-  private _getEntityIconData(entity: HassEntity | undefined, fallbackIcon: string): IconData | undefined {
+  private _getEntityIconData(
+    entity: HassEntity | undefined,
+    fallbackIcon: string,
+  ): IconData | undefined {
     if (!entity) return this._getIconData(fallbackIcon);
 
-    const hassWithEntities = this.hass as HomeAssistant & { entities?: Record<string, { icon?: string }> };
+    const hassWithEntities = this.hass as HomeAssistant & {
+      entities?: Record<string, { icon?: string }>;
+    };
     const override = hassWithEntities?.entities?.[entity.entity_id]?.icon;
     const attrIcon = entity.attributes.icon as string | undefined;
     if (override || attrIcon) {
@@ -7098,11 +8236,13 @@ export class FpbCanvas extends LitElement {
 
   private _openEntityDetails(entityId: string) {
     if (!this.hass) return;
-    this.dispatchEvent(new CustomEvent("hass-more-info", {
-      detail: { entityId },
-      bubbles: true,
-      composed: true,
-    }));
+    this.dispatchEvent(
+      new CustomEvent("hass-more-info", {
+        detail: { entityId },
+        bubbles: true,
+        composed: true,
+      }),
+    );
   }
 
   private _toggleEntity(entityId: string): void {
@@ -7110,35 +8250,60 @@ export class FpbCanvas extends LitElement {
     const domain = entityId.split(".")[0];
     if (domain === "button" || domain === "input_button") {
       this.hass.callService("button", "press", { entity_id: entityId });
-    } else if (domain === "light" || domain === "switch" || domain === "input_boolean") {
+    } else if (
+      domain === "light" ||
+      domain === "switch" ||
+      domain === "input_boolean"
+    ) {
       this.hass.callService("homeassistant", "toggle", { entity_id: entityId });
     } else {
       this._openEntityDetails(entityId);
     }
   }
 
-  private _hitTestDevice(point: Coordinates, floor: Floor): { entityId: string; type: "light" | "switch" | "button" | "other" | "mmwave"; id: string } | null {
-    for (const light of lightPlacements.value.filter(d => d.floor_id === floor.id)) {
-      if (Math.hypot(point.x - light.position.x, point.y - light.position.y) < 15) {
+  private _hitTestDevice(
+    point: Coordinates,
+    floor: Floor,
+  ): {
+    entityId: string;
+    type: "light" | "switch" | "button" | "other" | "mmwave";
+    id: string;
+  } | null {
+    for (const light of lightPlacements.value.filter(
+      (d) => d.floor_id === floor.id,
+    )) {
+      if (
+        Math.hypot(point.x - light.position.x, point.y - light.position.y) < 15
+      ) {
         return { entityId: light.entity_id, type: "light", id: light.id };
       }
     }
-    for (const sw of switchPlacements.value.filter(d => d.floor_id === floor.id)) {
+    for (const sw of switchPlacements.value.filter(
+      (d) => d.floor_id === floor.id,
+    )) {
       if (Math.hypot(point.x - sw.position.x, point.y - sw.position.y) < 15) {
         return { entityId: sw.entity_id, type: "switch", id: sw.id };
       }
     }
-    for (const btn of buttonPlacements.value.filter(d => d.floor_id === floor.id)) {
+    for (const btn of buttonPlacements.value.filter(
+      (d) => d.floor_id === floor.id,
+    )) {
       if (Math.hypot(point.x - btn.position.x, point.y - btn.position.y) < 15) {
         return { entityId: btn.entity_id, type: "button", id: btn.id };
       }
     }
-    for (const other of otherPlacements.value.filter(d => d.floor_id === floor.id)) {
-      if (Math.hypot(point.x - other.position.x, point.y - other.position.y) < 15) {
+    for (const other of otherPlacements.value.filter(
+      (d) => d.floor_id === floor.id,
+    )) {
+      if (
+        Math.hypot(point.x - other.position.x, point.y - other.position.y) < 15
+      ) {
         return { entityId: other.entity_id, type: "other", id: other.id };
       }
     }
-    for (const mw of mmwavePlacements.value.filter(p => p.floor_id === floor.id)) {
+    for (const mw of mmwavePlacements.value.filter(
+      (p) => p.floor_id === floor.id,
+    )) {
       if (Math.hypot(point.x - mw.position.x, point.y - mw.position.y) < 15) {
         return { entityId: "", type: "mmwave", id: mw.id };
       }
@@ -7167,8 +8332,13 @@ export class FpbCanvas extends LitElement {
     if (customElements.get("ha-state-icon")) return;
 
     await this._ensureHaIconDefined();
-    const dynamicImport = new Function("path", "return import(path);") as (path: string) => Promise<unknown>;
-    const candidates = ["/frontend_latest/ha-state-icon.js", "/frontend_es5/ha-state-icon.js"];
+    const dynamicImport = new Function("path", "return import(path);") as (
+      path: string,
+    ) => Promise<unknown>;
+    const candidates = [
+      "/frontend_latest/ha-state-icon.js",
+      "/frontend_es5/ha-state-icon.js",
+    ];
 
     for (const path of candidates) {
       try {
@@ -7184,7 +8354,10 @@ export class FpbCanvas extends LitElement {
     }
   }
 
-  private async _loadStateIcon(entity: HassEntity, cacheKey: string): Promise<void> {
+  private async _loadStateIcon(
+    entity: HassEntity,
+    cacheKey: string,
+  ): Promise<void> {
     if (!this.hass) return;
 
     await this._ensureHaStateIconDefined();
@@ -7209,7 +8382,9 @@ export class FpbCanvas extends LitElement {
 
       let iconData: IconData | null = null;
       for (let i = 0; i < 20; i++) {
-        const directSvg = stateEl.shadowRoot?.querySelector("ha-svg-icon") as IconData | null;
+        const directSvg = stateEl.shadowRoot?.querySelector(
+          "ha-svg-icon",
+        ) as IconData | null;
         if (directSvg?.path) {
           iconData = {
             path: directSvg.path,
@@ -7219,8 +8394,12 @@ export class FpbCanvas extends LitElement {
           break;
         }
 
-        const haIcon = stateEl.shadowRoot?.querySelector("ha-icon") as HTMLElement | null;
-        const nestedSvg = haIcon?.shadowRoot?.querySelector("ha-svg-icon") as IconData | null;
+        const haIcon = stateEl.shadowRoot?.querySelector(
+          "ha-icon",
+        ) as HTMLElement | null;
+        const nestedSvg = haIcon?.shadowRoot?.querySelector(
+          "ha-svg-icon",
+        ) as IconData | null;
         if (nestedSvg?.path) {
           iconData = {
             path: nestedSvg.path,
@@ -7264,8 +8443,13 @@ export class FpbCanvas extends LitElement {
   private async _ensureHaIconDefined(): Promise<void> {
     if (customElements.get("ha-icon")) return;
 
-    const dynamicImport = new Function("path", "return import(path);") as (path: string) => Promise<unknown>;
-    const candidates = ["/frontend_latest/ha-icon.js", "/frontend_es5/ha-icon.js"];
+    const dynamicImport = new Function("path", "return import(path);") as (
+      path: string,
+    ) => Promise<unknown>;
+    const candidates = [
+      "/frontend_latest/ha-icon.js",
+      "/frontend_es5/ha-icon.js",
+    ];
 
     for (const path of candidates) {
       try {
@@ -7287,7 +8471,10 @@ export class FpbCanvas extends LitElement {
       return;
     }
 
-    const iconEl = document.createElement("ha-icon") as HTMLElement & { icon?: string; updateComplete?: Promise<unknown> };
+    const iconEl = document.createElement("ha-icon") as HTMLElement & {
+      icon?: string;
+      updateComplete?: Promise<unknown>;
+    };
     iconEl.icon = icon;
     iconEl.style.display = "none";
     const host = this.isConnected ? this : document.body;
@@ -7298,11 +8485,17 @@ export class FpbCanvas extends LitElement {
         await iconEl.updateComplete;
       }
 
-      let iconData: { path?: string; secondaryPath?: string; viewBox?: string } | null = null;
+      let iconData: {
+        path?: string;
+        secondaryPath?: string;
+        viewBox?: string;
+      } | null = null;
       for (let i = 0; i < 10; i++) {
-        const svgIcon = iconEl.shadowRoot?.querySelector("ha-svg-icon") as
-          | { path?: string; secondaryPath?: string; viewBox?: string }
-          | null;
+        const svgIcon = iconEl.shadowRoot?.querySelector("ha-svg-icon") as {
+          path?: string;
+          secondaryPath?: string;
+          viewBox?: string;
+        } | null;
         if (svgIcon?.path) {
           iconData = {
             path: svgIcon.path,
@@ -7331,9 +8524,30 @@ export class FpbCanvas extends LitElement {
     if (!floor || !floorPlan) return;
 
     const tool = activeTool.value;
-    const wsType = tool === "light" ? "inhabit/lights/place" : tool === "button" ? "inhabit/buttons/place" : tool === "other" ? "inhabit/others/place" : "inhabit/switches/place";
-    const removeType = tool === "light" ? "inhabit/lights/remove" : tool === "button" ? "inhabit/buttons/remove" : tool === "other" ? "inhabit/others/remove" : "inhabit/switches/remove";
-    const idKey = tool === "light" ? "light_id" : tool === "button" ? "button_id" : tool === "other" ? "other_id" : "switch_id";
+    const wsType =
+      tool === "light"
+        ? "inhabit/lights/place"
+        : tool === "button"
+          ? "inhabit/buttons/place"
+          : tool === "other"
+            ? "inhabit/others/place"
+            : "inhabit/switches/place";
+    const removeType =
+      tool === "light"
+        ? "inhabit/lights/remove"
+        : tool === "button"
+          ? "inhabit/buttons/remove"
+          : tool === "other"
+            ? "inhabit/others/remove"
+            : "inhabit/switches/remove";
+    const idKey =
+      tool === "light"
+        ? "light_id"
+        : tool === "button"
+          ? "button_id"
+          : tool === "other"
+            ? "other_id"
+            : "switch_id";
 
     const hass = this.hass;
     const fpId = floorPlan.id;
@@ -7449,15 +8663,15 @@ export class FpbCanvas extends LitElement {
     // Get the new position from the signal
     let newPos: Coordinates | undefined;
     if (dp.type === "light") {
-      newPos = lightPlacements.value.find(p => p.id === dp.id)?.position;
+      newPos = lightPlacements.value.find((p) => p.id === dp.id)?.position;
     } else if (dp.type === "switch") {
-      newPos = switchPlacements.value.find(p => p.id === dp.id)?.position;
+      newPos = switchPlacements.value.find((p) => p.id === dp.id)?.position;
     } else if (dp.type === "button") {
-      newPos = buttonPlacements.value.find(p => p.id === dp.id)?.position;
+      newPos = buttonPlacements.value.find((p) => p.id === dp.id)?.position;
     } else if (dp.type === "other") {
-      newPos = otherPlacements.value.find(p => p.id === dp.id)?.position;
+      newPos = otherPlacements.value.find((p) => p.id === dp.id)?.position;
     } else {
-      newPos = mmwavePlacements.value.find(p => p.id === dp.id)?.position;
+      newPos = mmwavePlacements.value.find((p) => p.id === dp.id)?.position;
     }
     if (!newPos) return;
     const finalPos = { ...newPos };
@@ -7504,29 +8718,69 @@ export class FpbCanvas extends LitElement {
         description: `Move ${placementType}`,
         undo: async () => {
           if (placementType === "light") {
-            await hass.callWS({ type: "inhabit/lights/update", light_id: placementId, position: origPos });
+            await hass.callWS({
+              type: "inhabit/lights/update",
+              light_id: placementId,
+              position: origPos,
+            });
           } else if (placementType === "switch") {
-            await hass.callWS({ type: "inhabit/switches/update", switch_id: placementId, position: origPos });
+            await hass.callWS({
+              type: "inhabit/switches/update",
+              switch_id: placementId,
+              position: origPos,
+            });
           } else if (placementType === "button") {
-            await hass.callWS({ type: "inhabit/buttons/update", button_id: placementId, position: origPos });
+            await hass.callWS({
+              type: "inhabit/buttons/update",
+              button_id: placementId,
+              position: origPos,
+            });
           } else if (placementType === "other") {
-            await hass.callWS({ type: "inhabit/others/update", other_id: placementId, position: origPos });
+            await hass.callWS({
+              type: "inhabit/others/update",
+              other_id: placementId,
+              position: origPos,
+            });
           } else {
-            await hass.callWS({ type: "inhabit/mmwave/update", placement_id: placementId, position: origPos });
+            await hass.callWS({
+              type: "inhabit/mmwave/update",
+              placement_id: placementId,
+              position: origPos,
+            });
           }
           await reloadFloorData();
         },
         redo: async () => {
           if (placementType === "light") {
-            await hass.callWS({ type: "inhabit/lights/update", light_id: placementId, position: finalPos });
+            await hass.callWS({
+              type: "inhabit/lights/update",
+              light_id: placementId,
+              position: finalPos,
+            });
           } else if (placementType === "switch") {
-            await hass.callWS({ type: "inhabit/switches/update", switch_id: placementId, position: finalPos });
+            await hass.callWS({
+              type: "inhabit/switches/update",
+              switch_id: placementId,
+              position: finalPos,
+            });
           } else if (placementType === "button") {
-            await hass.callWS({ type: "inhabit/buttons/update", button_id: placementId, position: finalPos });
+            await hass.callWS({
+              type: "inhabit/buttons/update",
+              button_id: placementId,
+              position: finalPos,
+            });
           } else if (placementType === "other") {
-            await hass.callWS({ type: "inhabit/others/update", other_id: placementId, position: finalPos });
+            await hass.callWS({
+              type: "inhabit/others/update",
+              other_id: placementId,
+              position: finalPos,
+            });
           } else {
-            await hass.callWS({ type: "inhabit/mmwave/update", placement_id: placementId, position: finalPos });
+            await hass.callWS({
+              type: "inhabit/mmwave/update",
+              placement_id: placementId,
+              position: finalPos,
+            });
           }
           await reloadFloorData();
         },
@@ -7552,16 +8806,24 @@ export class FpbCanvas extends LitElement {
     try {
       if (sel.type === "light") {
         await hass.callWS({ type: "inhabit/lights/remove", light_id: id });
-        lightPlacements.value = lightPlacements.value.filter(p => p.id !== id);
+        lightPlacements.value = lightPlacements.value.filter(
+          (p) => p.id !== id,
+        );
       } else if (sel.type === "switch") {
         await hass.callWS({ type: "inhabit/switches/remove", switch_id: id });
-        switchPlacements.value = switchPlacements.value.filter(p => p.id !== id);
+        switchPlacements.value = switchPlacements.value.filter(
+          (p) => p.id !== id,
+        );
       } else if (sel.type === "button") {
         await hass.callWS({ type: "inhabit/buttons/remove", button_id: id });
-        buttonPlacements.value = buttonPlacements.value.filter(p => p.id !== id);
+        buttonPlacements.value = buttonPlacements.value.filter(
+          (p) => p.id !== id,
+        );
       } else if (sel.type === "mmwave") {
         await hass.callWS({ type: "inhabit/mmwave/delete", placement_id: id });
-        mmwavePlacements.value = mmwavePlacements.value.filter(p => p.id !== id);
+        mmwavePlacements.value = mmwavePlacements.value.filter(
+          (p) => p.id !== id,
+        );
       } else {
         return;
       }
@@ -7577,7 +8839,7 @@ export class FpbCanvas extends LitElement {
     if (sel.type !== "mmwave" || sel.ids.length !== 1) return;
 
     const id = sel.ids[0];
-    const placement = mmwavePlacements.value.find(p => p.id === id);
+    const placement = mmwavePlacements.value.find((p) => p.id === id);
     if (!placement) return;
 
     const newAngle = (placement.angle + delta + 360) % 360;
@@ -7588,15 +8850,18 @@ export class FpbCanvas extends LitElement {
         placement_id: id,
         angle: newAngle,
       });
-      mmwavePlacements.value = mmwavePlacements.value.map(p =>
-        p.id === id ? { ...p, angle: newAngle } : p
+      mmwavePlacements.value = mmwavePlacements.value.map((p) =>
+        p.id === id ? { ...p, angle: newAngle } : p,
       );
     } catch (err) {
       console.error("Error rotating mmWave:", err);
     }
   }
 
-  private _startMmwaveRotation(e: PointerEvent, placement: import("../../types").MmwavePlacement): void {
+  private _startMmwaveRotation(
+    e: PointerEvent,
+    placement: import("../../types").MmwavePlacement,
+  ): void {
     e.stopPropagation();
     e.preventDefault();
     this._rotatingMmwave = {
@@ -7609,30 +8874,38 @@ export class FpbCanvas extends LitElement {
 
   private _handleMmwaveRotationMove(point: Coordinates): void {
     if (!this._rotatingMmwave) return;
-    const placement = mmwavePlacements.value.find(p => p.id === this._rotatingMmwave!.id);
+    const placement = mmwavePlacements.value.find(
+      (p) => p.id === this._rotatingMmwave!.id,
+    );
     if (!placement) return;
 
     const dx = point.x - placement.position.x;
     const dy = point.y - placement.position.y;
-    let angle = Math.atan2(dy, dx) * 180 / Math.PI;
+    let angle = (Math.atan2(dy, dx) * 180) / Math.PI;
     angle = ((angle % 360) + 360) % 360;
 
     // Snap to 15° increments when not holding shift (checked in pointer move)
     angle = Math.round(angle / 15) * 15;
 
-    mmwavePlacements.value = mmwavePlacements.value.map(p =>
-      p.id === this._rotatingMmwave!.id ? { ...p, angle } : p
+    mmwavePlacements.value = mmwavePlacements.value.map((p) =>
+      p.id === this._rotatingMmwave!.id ? { ...p, angle } : p,
     );
   }
 
   private async _finishMmwaveRotation(): Promise<void> {
     if (!this._rotatingMmwave || !this.hass) return;
     const rm = this._rotatingMmwave;
-    const placement = mmwavePlacements.value.find(p => p.id === rm.id);
-    if (!placement) { this._rotatingMmwave = null; return; }
+    const placement = mmwavePlacements.value.find((p) => p.id === rm.id);
+    if (!placement) {
+      this._rotatingMmwave = null;
+      return;
+    }
 
     const newAngle = placement.angle;
-    if (newAngle === rm.originalAngle) { this._rotatingMmwave = null; return; }
+    if (newAngle === rm.originalAngle) {
+      this._rotatingMmwave = null;
+      return;
+    }
 
     try {
       await this.hass.callWS({
@@ -7643,8 +8916,8 @@ export class FpbCanvas extends LitElement {
     } catch (err) {
       console.error("Error committing mmWave rotation:", err);
       // Revert on failure
-      mmwavePlacements.value = mmwavePlacements.value.map(p =>
-        p.id === rm.id ? { ...p, angle: rm.originalAngle } : p
+      mmwavePlacements.value = mmwavePlacements.value.map((p) =>
+        p.id === rm.id ? { ...p, angle: rm.originalAngle } : p,
       );
     }
     this._rotatingMmwave = null;
@@ -7677,7 +8950,9 @@ export class FpbCanvas extends LitElement {
       }
 
       // Prune finished fade-outs
-      const remaining = this._mmwaveFadingTargets.filter(f => Date.now() - f.startTime < 800);
+      const remaining = this._mmwaveFadingTargets.filter(
+        (f) => Date.now() - f.startTime < 800,
+      );
       this._mmwaveFadingTargets = remaining;
 
       if (anyMoving || remaining.length > 0) {
@@ -7714,7 +8989,16 @@ export class FpbCanvas extends LitElement {
     if (!this._showEntityPickerModal || !this._pendingDevice) return null;
 
     const tool = activeTool.value;
-    const title = tool === "light" ? "Select Light" : tool === "switch" ? "Select Switch" : tool === "button" ? "Select Button" : tool === "other" ? "Select Entity" : "Select Entity";
+    const title =
+      tool === "light"
+        ? "Select Light"
+        : tool === "switch"
+          ? "Select Switch"
+          : tool === "button"
+            ? "Select Button"
+            : tool === "other"
+              ? "Select Entity"
+              : "Select Entity";
 
     return html`
       <fpb-entity-picker
@@ -7739,7 +9023,9 @@ export class FpbCanvas extends LitElement {
       activeTool.value === "select" ? "select-tool" : "",
       mode === "viewing" ? "view-mode" : "",
       `mode-${mode}`,
-    ].filter(Boolean).join(" ");
+    ]
+      .filter(Boolean)
+      .join(" ");
 
     return html`
       <svg
@@ -7790,7 +9076,7 @@ export class FpbCanvas extends LitElement {
     const visible = new Set<string>(sel.ids);
 
     // Build lookup of group memberships for selected edges
-    const selectedEdges = floor.edges.filter(e => sel.ids.includes(e.id));
+    const selectedEdges = floor.edges.filter((e) => sel.ids.includes(e.id));
     const linkGroups = new Set<string>();
     const collinearGroups = new Set<string>();
     const angleGroups = new Set<string>();
@@ -7805,7 +9091,8 @@ export class FpbCanvas extends LitElement {
     for (const e of floor.edges) {
       if (visible.has(e.id)) continue;
       if (e.link_group && linkGroups.has(e.link_group)) visible.add(e.id);
-      if (e.collinear_group && collinearGroups.has(e.collinear_group)) visible.add(e.id);
+      if (e.collinear_group && collinearGroups.has(e.collinear_group))
+        visible.add(e.id);
       if (e.angle_group && angleGroups.has(e.angle_group)) visible.add(e.id);
     }
 
@@ -7823,22 +9110,36 @@ export class FpbCanvas extends LitElement {
 
     return svg`
       <g class="wall-annotations-layer">
-        ${resolved.map(re => {
+        ${resolved.map((re) => {
           if (!visibleIds.has(re.id)) return null;
 
           const midX = (re.startPos.x + re.endPos.x) / 2;
           const midY = (re.startPos.y + re.endPos.y) / 2;
           const length = this._calculateWallLength(re.startPos, re.endPos);
-          const angle = Math.atan2(re.endPos.y - re.startPos.y, re.endPos.x - re.startPos.x) * (180 / Math.PI);
+          const angle =
+            Math.atan2(
+              re.endPos.y - re.startPos.y,
+              re.endPos.x - re.startPos.x,
+            ) *
+            (180 / Math.PI);
           const labelAngle = angle > 90 || angle < -90 ? angle + 180 : angle;
 
           // Build constraint icon paths (24x24 viewBox, rendered at scale 0.35)
           const icons: string[] = [];
-          if (re.length_locked) icons.push("M12,17A2,2 0 0,0 14,15C14,13.89 13.1,13 12,13A2,2 0 0,0 10,15A2,2 0 0,0 12,17M18,8A2,2 0 0,1 20,10V20A2,2 0 0,1 18,22H6A2,2 0 0,1 4,20V10C4,8.89 4.9,8 6,8H7V6A5,5 0 0,1 12,1A5,5 0 0,1 17,6V8H18M12,3A3,3 0 0,0 9,6V8H15V6A3,3 0 0,0 12,3Z"); // lock
+          if (re.length_locked)
+            icons.push(
+              "M12,17A2,2 0 0,0 14,15C14,13.89 13.1,13 12,13A2,2 0 0,0 10,15A2,2 0 0,0 12,17M18,8A2,2 0 0,1 20,10V20A2,2 0 0,1 18,22H6A2,2 0 0,1 4,20V10C4,8.89 4.9,8 6,8H7V6A5,5 0 0,1 12,1A5,5 0 0,1 17,6V8H18M12,3A3,3 0 0,0 9,6V8H15V6A3,3 0 0,0 12,3Z",
+            ); // lock
           // mdi:arrow-left-right (simple horizontal double arrow)
-          if (re.direction === "horizontal") icons.push("M6.45,17.45L1,12L6.45,6.55L7.86,7.96L4.83,11H19.17L16.14,7.96L17.55,6.55L23,12L17.55,17.45L16.14,16.04L19.17,13H4.83L7.86,16.04L6.45,17.45Z");
+          if (re.direction === "horizontal")
+            icons.push(
+              "M6.45,17.45L1,12L6.45,6.55L7.86,7.96L4.83,11H19.17L16.14,7.96L17.55,6.55L23,12L17.55,17.45L16.14,16.04L19.17,13H4.83L7.86,16.04L6.45,17.45Z",
+            );
           // mdi:arrow-up-down (simple vertical double arrow)
-          if (re.direction === "vertical") icons.push("M17.45,17.55L12,23L6.55,17.55L7.96,16.14L11,19.17V4.83L7.96,7.86L6.55,6.45L12,1L17.45,6.45L16.04,7.86L13,4.83V19.17L16.04,16.14L17.45,17.55Z");
+          if (re.direction === "vertical")
+            icons.push(
+              "M17.45,17.55L12,23L6.55,17.55L7.96,16.14L11,19.17V4.83L7.96,7.86L6.55,6.45L12,1L17.45,6.45L16.04,7.86L13,4.83V19.17L16.04,16.14L17.45,17.55Z",
+            );
 
           const label = this._formatLength(length);
           const iconScale = 0.35;
@@ -7853,24 +9154,34 @@ export class FpbCanvas extends LitElement {
 
           return svg`
             <g transform="translate(${midX}, ${midY}) rotate(${labelAngle})">
-              ${re.link_group ? svg`
+              ${
+                re.link_group
+                  ? svg`
                 <circle cx="${linkDotOffset}" cy="${labelY - 1}" r="3.5"
                   fill="${linkGroupColor(re.link_group)}"
                   stroke="white" stroke-width="1.5" paint-order="stroke fill"/>
-              ` : null}
-              ${re.collinear_group ? svg`
+              `
+                  : null
+              }
+              ${
+                re.collinear_group
+                  ? svg`
                 <g transform="translate(${linkDotOffset - (re.link_group ? 10 : 0)}, ${labelY - 1}) rotate(45)">
                   <rect x="-2.8" y="-2.8" width="5.6" height="5.6"
                     fill="${linkGroupColor(re.collinear_group)}"
                     stroke="white" stroke-width="1.5" paint-order="stroke fill"/>
                 </g>
-              ` : null}
+              `
+                  : null
+              }
               <text class="wall-annotation-text" x="0" y="${labelY}">${label}</text>
-              ${icons.map((d, i) => svg`
+              ${icons.map(
+                (d, i) => svg`
                 <g transform="translate(${iconOffset + i * iconStep}, ${labelY}) rotate(${-labelAngle}) scale(${iconScale})">
                   <path d="${d}" fill="#666" stroke="white" stroke-width="3" paint-order="stroke fill" transform="translate(-12,-12)"/>
                 </g>
-              `)}
+              `,
+              )}
             </g>
           `;
         })}
@@ -7891,17 +9202,23 @@ export class FpbCanvas extends LitElement {
     const groupEdges = new Map<string, Edge[]>();
     for (const edge of floor.edges) {
       if (!edge.angle_group) continue;
-      if (!groupEdges.has(edge.angle_group)) groupEdges.set(edge.angle_group, []);
+      if (!groupEdges.has(edge.angle_group))
+        groupEdges.set(edge.angle_group, []);
       groupEdges.get(edge.angle_group)!.push(edge);
     }
 
     // Filter: only keep groups where at least one edge is visible
     for (const [groupId, edges] of groupEdges) {
-      if (!edges.some(e => visibleIds.has(e.id))) groupEdges.delete(groupId);
+      if (!edges.some((e) => visibleIds.has(e.id))) groupEdges.delete(groupId);
     }
 
     // For each angle group pair, find the shared node and draw the indicator there.
-    const indicators: Array<{ x: number; y: number; angle1: number; angle2: number }> = [];
+    const indicators: Array<{
+      x: number;
+      y: number;
+      angle1: number;
+      angle2: number;
+    }> = [];
 
     for (const [, edges] of groupEdges) {
       if (edges.length !== 2) continue;
@@ -7911,7 +9228,10 @@ export class FpbCanvas extends LitElement {
       const nodes1 = new Set([edges[1].start_node, edges[1].end_node]);
       let sharedNodeId: string | null = null;
       for (const n of nodes0) {
-        if (nodes1.has(n)) { sharedNodeId = n; break; }
+        if (nodes1.has(n)) {
+          sharedNodeId = n;
+          break;
+        }
       }
       if (!sharedNodeId) continue;
 
@@ -7922,7 +9242,8 @@ export class FpbCanvas extends LitElement {
       // Get the outgoing directions from this node
       const dirs: number[] = [];
       for (const edge of edges) {
-        const otherId = edge.start_node === nodeId ? edge.end_node : edge.start_node;
+        const otherId =
+          edge.start_node === nodeId ? edge.end_node : edge.start_node;
         const other = nodeMap.get(otherId);
         if (!other) continue;
         dirs.push(Math.atan2(other.y - node.y, other.x - node.x));
@@ -7946,7 +9267,7 @@ export class FpbCanvas extends LitElement {
         const a2 = dirs[(i + 1) % n];
         // Gap = angular region between a1 (CW boundary) and a2 (CCW boundary)
         // going counter-clockwise from a1 to a2
-        const gap = ((a2 - a1) + 2 * Math.PI) % (2 * Math.PI);
+        const gap = (a2 - a1 + 2 * Math.PI) % (2 * Math.PI);
 
         // The indicator should be in the gap region, drawn using the
         // inward-facing directions (flip the outgoing edge directions by π).
@@ -7960,12 +9281,22 @@ export class FpbCanvas extends LitElement {
         const inA = a1 + Math.PI; // inward direction of first wall
         const inB = a2 + Math.PI; // inward direction of second wall
         // Ensure we sweep the short way from inA to inB (should be = interiorAngle)
-        const sweepCheck = ((inB - inA) + 2 * Math.PI) % (2 * Math.PI);
+        const sweepCheck = (inB - inA + 2 * Math.PI) % (2 * Math.PI);
         if (sweepCheck > Math.PI + 0.01) {
           // Swap so we go the short way
-          indicators.push({ x: node.x, y: node.y, angle1: inB, angle2: inB + (2 * Math.PI - sweepCheck) });
+          indicators.push({
+            x: node.x,
+            y: node.y,
+            angle1: inB,
+            angle2: inB + (2 * Math.PI - sweepCheck),
+          });
         } else {
-          indicators.push({ x: node.x, y: node.y, angle1: inA, angle2: inA + sweepCheck });
+          indicators.push({
+            x: node.x,
+            y: node.y,
+            angle1: inA,
+            angle2: inA + sweepCheck,
+          });
         }
       }
     }
@@ -7976,7 +9307,7 @@ export class FpbCanvas extends LitElement {
 
     return svg`
       <g class="angle-constraints-layer">
-        ${indicators.map(ind => {
+        ${indicators.map((ind) => {
           const a1 = ind.angle1;
           const a2 = ind.angle2;
           const sweep = a2 - a1;
@@ -8034,15 +9365,19 @@ export class FpbCanvas extends LitElement {
           }}><ha-icon icon="mdi:close"></ha-icon></button>
         </div>
 
-        ${isCollinear ? html`
+        ${
+          isCollinear
+            ? html`
           <div class="wall-editor-section">
             <span class="wall-editor-section-label">Total Length</span>
             <div class="wall-editor-row">
               <input
                 type="number"
                 .value=${this._editingTotalLength}
-                @input=${(e: InputEvent) => this._editingTotalLength = (e.target as HTMLInputElement).value}
-                @keydown=${(e: KeyboardEvent) => { if (e.key === "Enter") this._applyTotalLength(); }}
+                @input=${(e: InputEvent) => (this._editingTotalLength = (e.target as HTMLInputElement).value)}
+                @keydown=${(e: KeyboardEvent) => {
+                  if (e.key === "Enter") this._applyTotalLength();
+                }}
               />
               <span class="wall-editor-unit">cm</span>
               <button
@@ -8052,14 +9387,17 @@ export class FpbCanvas extends LitElement {
               ><ha-icon icon="mdi:check"></ha-icon></button>
             </div>
           </div>
-        ` : null}
+        `
+            : null
+        }
 
         <div class="wall-editor-section">
           <span class="wall-editor-section-label">Angle Link</span>
           <div class="wall-editor-row">
             ${(() => {
-              const aGroups = edges.map(e => e.angle_group).filter(Boolean);
-              const allSameAGroup = aGroups.length === edges.length && new Set(aGroups).size === 1;
+              const aGroups = edges.map((e) => e.angle_group).filter(Boolean);
+              const allSameAGroup =
+                aGroups.length === edges.length && new Set(aGroups).size === 1;
               if (allSameAGroup) {
                 return html`<button
                   class="constraint-btn active"
@@ -8068,10 +9406,18 @@ export class FpbCanvas extends LitElement {
                 ><ha-icon icon="mdi:angle-acute"></ha-icon> Unlink Angle</button>`;
               }
               // Only enable angle link when exactly 2 edges sharing a common node
-              const canLink = edges.length === 2 && (() => {
-                const nodes0 = new Set([edges[0].start_node, edges[0].end_node]);
-                return nodes0.has(edges[1].start_node) || nodes0.has(edges[1].end_node);
-              })();
+              const canLink =
+                edges.length === 2 &&
+                (() => {
+                  const nodes0 = new Set([
+                    edges[0].start_node,
+                    edges[0].end_node,
+                  ]);
+                  return (
+                    nodes0.has(edges[1].start_node) ||
+                    nodes0.has(edges[1].end_node)
+                  );
+                })();
               if (canLink) {
                 return html`<button
                   class="constraint-btn"
@@ -8092,8 +9438,9 @@ export class FpbCanvas extends LitElement {
           <span class="wall-editor-section-label">Link Group</span>
           <div class="wall-editor-row">
             ${(() => {
-              const groups = edges.map(e => e.link_group).filter(Boolean);
-              const allSameGroup = groups.length === edges.length && new Set(groups).size === 1;
+              const groups = edges.map((e) => e.link_group).filter(Boolean);
+              const allSameGroup =
+                groups.length === edges.length && new Set(groups).size === 1;
               if (allSameGroup) {
                 return html`<button
                   class="constraint-btn active"
@@ -8114,8 +9461,11 @@ export class FpbCanvas extends LitElement {
           <span class="wall-editor-section-label">Collinear Link</span>
           <div class="wall-editor-row">
             ${(() => {
-              const cGroups = edges.map(e => e.collinear_group).filter(Boolean);
-              const allSameCGroup = cGroups.length === edges.length && new Set(cGroups).size === 1;
+              const cGroups = edges
+                .map((e) => e.collinear_group)
+                .filter(Boolean);
+              const allSameCGroup =
+                cGroups.length === edges.length && new Set(cGroups).size === 1;
               if (allSameCGroup) {
                 return html`<button
                   class="constraint-btn active"
@@ -8152,7 +9502,7 @@ export class FpbCanvas extends LitElement {
     const floorPlan = currentFloorPlan.value;
     if (!floor || !floorPlan) return;
 
-    const edgeIds = this._multiEdgeEditor.edges.map(e => e.id);
+    const edgeIds = this._multiEdgeEditor.edges.map((e) => e.id);
     try {
       await this.hass.callWS({
         type: "inhabit/edges/angle_link",
@@ -8164,9 +9514,12 @@ export class FpbCanvas extends LitElement {
       const updatedFloor = currentFloor.value;
       if (updatedFloor) {
         const updatedEdges = edgeIds
-          .map(id => updatedFloor.edges.find(e => e.id === id))
+          .map((id) => updatedFloor.edges.find((e) => e.id === id))
           .filter((e): e is Edge => !!e);
-        this._multiEdgeEditor = { ...this._multiEdgeEditor, edges: updatedEdges };
+        this._multiEdgeEditor = {
+          ...this._multiEdgeEditor,
+          edges: updatedEdges,
+        };
       }
     } catch (err) {
       console.error("Error angle linking edges:", err);
@@ -8180,7 +9533,7 @@ export class FpbCanvas extends LitElement {
     if (!floor || !floorPlan) return;
 
     const edgeIds = this._multiEdgeEditor
-      ? this._multiEdgeEditor.edges.map(e => e.id)
+      ? this._multiEdgeEditor.edges.map((e) => e.id)
       : this._edgeEditor
         ? [this._edgeEditor.edge.id]
         : [];
@@ -8198,11 +9551,16 @@ export class FpbCanvas extends LitElement {
       if (updatedFloor) {
         if (this._multiEdgeEditor) {
           const updatedEdges = edgeIds
-            .map(id => updatedFloor.edges.find(e => e.id === id))
+            .map((id) => updatedFloor.edges.find((e) => e.id === id))
             .filter((e): e is Edge => !!e);
-          this._multiEdgeEditor = { ...this._multiEdgeEditor, edges: updatedEdges };
+          this._multiEdgeEditor = {
+            ...this._multiEdgeEditor,
+            edges: updatedEdges,
+          };
         } else if (this._edgeEditor) {
-          const updatedEdge = updatedFloor.edges.find(e => e.id === edgeIds[0]);
+          const updatedEdge = updatedFloor.edges.find(
+            (e) => e.id === edgeIds[0],
+          );
           if (updatedEdge) {
             this._edgeEditor = { ...this._edgeEditor, edge: updatedEdge };
           }
@@ -8219,7 +9577,7 @@ export class FpbCanvas extends LitElement {
     const floorPlan = currentFloorPlan.value;
     if (!floor || !floorPlan) return;
 
-    const edgeIds = this._multiEdgeEditor.edges.map(e => e.id);
+    const edgeIds = this._multiEdgeEditor.edges.map((e) => e.id);
     try {
       await this.hass.callWS({
         type: "inhabit/edges/link",
@@ -8231,7 +9589,7 @@ export class FpbCanvas extends LitElement {
       const updatedFloor = currentFloor.value;
       if (updatedFloor) {
         const updatedEdges = edgeIds
-          .map(id => updatedFloor.edges.find(e => e.id === id))
+          .map((id) => updatedFloor.edges.find((e) => e.id === id))
           .filter((e): e is Edge => !!e);
         this._multiEdgeEditor = { edges: updatedEdges };
       }
@@ -8248,7 +9606,7 @@ export class FpbCanvas extends LitElement {
 
     // Works for both multi-edge and single-edge unlink
     const edgeIds = this._multiEdgeEditor
-      ? this._multiEdgeEditor.edges.map(e => e.id)
+      ? this._multiEdgeEditor.edges.map((e) => e.id)
       : this._edgeEditor
         ? [this._edgeEditor.edge.id]
         : [];
@@ -8266,11 +9624,13 @@ export class FpbCanvas extends LitElement {
       if (updatedFloor) {
         if (this._multiEdgeEditor) {
           const updatedEdges = edgeIds
-            .map(id => updatedFloor.edges.find(e => e.id === id))
+            .map((id) => updatedFloor.edges.find((e) => e.id === id))
             .filter((e): e is Edge => !!e);
           this._multiEdgeEditor = { edges: updatedEdges };
         } else if (this._edgeEditor) {
-          const updatedEdge = updatedFloor.edges.find(e => e.id === edgeIds[0]);
+          const updatedEdge = updatedFloor.edges.find(
+            (e) => e.id === edgeIds[0],
+          );
           if (updatedEdge) {
             this._edgeEditor = { ...this._edgeEditor, edge: updatedEdge };
           }
@@ -8288,9 +9648,9 @@ export class FpbCanvas extends LitElement {
     if (!floor || !floorPlan) return;
 
     const newTotal = parseFloat(this._editingTotalLength);
-    if (isNaN(newTotal) || newTotal <= 0) return;
+    if (Number.isNaN(newTotal) || newTotal <= 0) return;
 
-    const edgeIds = this._multiEdgeEditor.edges.map(e => e.id);
+    const edgeIds = this._multiEdgeEditor.edges.map((e) => e.id);
     const graph = buildNodeGraph(floor.nodes, floor.edges);
     const result = solveCollinearTotalLength(graph, edgeIds, newTotal);
 
@@ -8306,7 +9666,11 @@ export class FpbCanvas extends LitElement {
         type: "inhabit/nodes/update",
         floor_plan_id: floorPlan.id,
         floor_id: floor.id,
-        updates: result.updates.map(u => ({ node_id: u.nodeId, x: u.x, y: u.y })),
+        updates: result.updates.map((u) => ({
+          node_id: u.nodeId,
+          x: u.x,
+          y: u.y,
+        })),
       });
       await reloadFloorData();
       // Refresh multi-edge editor
@@ -8325,7 +9689,7 @@ export class FpbCanvas extends LitElement {
     const floorPlan = currentFloorPlan.value;
     if (!floor || !floorPlan) return;
 
-    const edgeIds = this._multiEdgeEditor.edges.map(e => e.id);
+    const edgeIds = this._multiEdgeEditor.edges.map((e) => e.id);
     try {
       await this.hass.callWS({
         type: "inhabit/edges/collinear_link",
@@ -8337,9 +9701,12 @@ export class FpbCanvas extends LitElement {
       const updatedFloor = currentFloor.value;
       if (updatedFloor) {
         const updatedEdges = edgeIds
-          .map(id => updatedFloor.edges.find(e => e.id === id))
+          .map((id) => updatedFloor.edges.find((e) => e.id === id))
           .filter((e): e is Edge => !!e);
-        this._multiEdgeEditor = { ...this._multiEdgeEditor, edges: updatedEdges };
+        this._multiEdgeEditor = {
+          ...this._multiEdgeEditor,
+          edges: updatedEdges,
+        };
       }
     } catch (err) {
       console.error("Error collinear linking edges:", err);
@@ -8353,7 +9720,7 @@ export class FpbCanvas extends LitElement {
     if (!floor || !floorPlan) return;
 
     const edgeIds = this._multiEdgeEditor
-      ? this._multiEdgeEditor.edges.map(e => e.id)
+      ? this._multiEdgeEditor.edges.map((e) => e.id)
       : this._edgeEditor
         ? [this._edgeEditor.edge.id]
         : [];
@@ -8371,11 +9738,16 @@ export class FpbCanvas extends LitElement {
       if (updatedFloor) {
         if (this._multiEdgeEditor) {
           const updatedEdges = edgeIds
-            .map(id => updatedFloor.edges.find(e => e.id === id))
+            .map((id) => updatedFloor.edges.find((e) => e.id === id))
             .filter((e): e is Edge => !!e);
-          this._multiEdgeEditor = { ...this._multiEdgeEditor, edges: updatedEdges };
+          this._multiEdgeEditor = {
+            ...this._multiEdgeEditor,
+            edges: updatedEdges,
+          };
         } else if (this._edgeEditor) {
-          const updatedEdge = updatedFloor.edges.find(e => e.id === edgeIds[0]);
+          const updatedEdge = updatedFloor.edges.find(
+            (e) => e.id === edgeIds[0],
+          );
           if (updatedEdge) {
             this._edgeEditor = { ...this._edgeEditor, edge: updatedEdge };
           }
@@ -8416,9 +9788,26 @@ export class FpbCanvas extends LitElement {
 
   private _renderDevicePreview() {
     const tool = activeTool.value;
-    if ((tool !== "light" && tool !== "switch" && tool !== "button" && tool !== "other" && tool !== "mmwave") || this._pendingDevice) return null;
+    if (
+      (tool !== "light" &&
+        tool !== "switch" &&
+        tool !== "button" &&
+        tool !== "other" &&
+        tool !== "mmwave") ||
+      this._pendingDevice
+    )
+      return null;
 
-    const color = tool === "light" ? "#ffd600" : tool === "switch" ? "#4caf50" : tool === "button" ? "#2196f3" : tool === "other" ? "#9c27b0" : "#2196f3";
+    const color =
+      tool === "light"
+        ? "#ffd600"
+        : tool === "switch"
+          ? "#4caf50"
+          : tool === "button"
+            ? "#2196f3"
+            : tool === "other"
+              ? "#9c27b0"
+              : "#2196f3";
 
     return svg`
       <g class="device-preview">

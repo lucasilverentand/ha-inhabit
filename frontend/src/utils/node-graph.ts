@@ -2,7 +2,7 @@
  * Node-graph utilities for resolving edges to coordinates.
  */
 
-import type { Node, Edge, Floor, Coordinates } from '../types';
+import type { Coordinates, Edge, Floor, Node } from "../types";
 
 export interface ResolvedEdge extends Edge {
   startPos: Coordinates;
@@ -17,7 +17,10 @@ export function buildNodeMap(nodes: Node[]): Map<string, Node> {
   return map;
 }
 
-export function resolveEdge(edge: Edge, nodeMap: Map<string, Node>): ResolvedEdge | null {
+export function resolveEdge(
+  edge: Edge,
+  nodeMap: Map<string, Node>,
+): ResolvedEdge | null {
   const startNode = nodeMap.get(edge.start_node);
   const endNode = nodeMap.get(edge.end_node);
   if (!startNode || !endNode) return null;
@@ -39,10 +42,14 @@ export function resolveFloorEdges(floor: Floor): ResolvedEdge[] {
 }
 
 export function edgesAtNode(nodeId: string, edges: Edge[]): Edge[] {
-  return edges.filter(e => e.start_node === nodeId || e.end_node === nodeId);
+  return edges.filter((e) => e.start_node === nodeId || e.end_node === nodeId);
 }
 
-export function findNearestNode(point: Coordinates, nodes: Node[], maxDistance: number): Node | null {
+export function findNearestNode(
+  point: Coordinates,
+  nodes: Node[],
+  maxDistance: number,
+): Node | null {
   let best: Node | null = null;
   let bestDist = maxDistance;
   for (const node of nodes) {

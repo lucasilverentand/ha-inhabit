@@ -12,8 +12,14 @@ export interface HomeAssistant {
   callService(domain: string, service: string, data?: object): Promise<void>;
   callWS<T>(msg: object): Promise<T>;
   connection: {
-    subscribeEvents(callback: (event: HassEvent) => void, eventType: string): Promise<() => void>;
-    subscribeMessage<T>(callback: (msg: T) => void, msg: object): Promise<() => void>;
+    subscribeEvents(
+      callback: (event: HassEvent) => void,
+      eventType: string,
+    ): Promise<() => void>;
+    subscribeMessage<T>(
+      callback: (msg: T) => void,
+      msg: object,
+    ): Promise<() => void>;
   };
 }
 
@@ -54,7 +60,7 @@ export interface Polygon {
 }
 
 // Floor plan types
-export type WallDirection = 'free' | 'horizontal' | 'vertical';
+export type WallDirection = "free" | "horizontal" | "vertical";
 
 // Node (shared vertex in the graph)
 export interface Node {
@@ -65,13 +71,13 @@ export interface Node {
 }
 
 // Edge type
-export type EdgeType = 'wall' | 'door' | 'window';
+export type EdgeType = "wall" | "door" | "window";
 
 // Edge (replaces Wall, Door, Window)
 export interface Edge {
   id: string;
   start_node: string; // Node ID
-  end_node: string;   // Node ID
+  end_node: string; // Node ID
   type: EdgeType;
   thickness: number;
   is_exterior: boolean;
@@ -81,9 +87,9 @@ export interface Edge {
   link_group?: string;
   collinear_group?: string;
   // Opening properties (door & window)
-  opening_parts?: 'single' | 'double';
-  opening_type?: 'swing' | 'sliding' | 'tilt';
-  swing_direction?: 'left' | 'right';
+  opening_parts?: "single" | "double";
+  opening_type?: "swing" | "sliding" | "tilt";
+  swing_direction?: "left" | "right";
   entity_id?: string;
   // Window-specific
   height?: number;
@@ -263,7 +269,12 @@ export interface VisualRule {
 }
 
 // Canvas mode types
-export type CanvasMode = "viewing" | "walls" | "furniture" | "placement" | "occupancy";
+export type CanvasMode =
+  | "viewing"
+  | "walls"
+  | "furniture"
+  | "placement"
+  | "occupancy";
 
 // Simulated target types
 export interface SimulatedTarget {
@@ -324,6 +335,16 @@ export interface CanvasEvent {
 
 // Selection types
 export interface SelectionState {
-  type: "none" | "room" | "edge" | "light" | "switch" | "mmwave" | "button" | "other" | "shape" | "zone";
+  type:
+    | "none"
+    | "room"
+    | "edge"
+    | "light"
+    | "switch"
+    | "mmwave"
+    | "button"
+    | "other"
+    | "shape"
+    | "zone";
   ids: string[];
 }

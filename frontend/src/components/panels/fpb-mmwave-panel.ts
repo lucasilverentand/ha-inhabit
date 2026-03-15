@@ -3,13 +3,10 @@
  * a selected mmWave placement's target mappings, angle, FOV, and range.
  */
 
-import { LitElement, html, css } from "lit";
+import { css, html, LitElement } from "lit";
 import { property, state } from "lit/decorators.js";
-import type {
-  HomeAssistant,
-  MmwavePlacement,
-} from "../../types";
 import { mmwavePlacements } from "../../stores/signals";
+import type { HomeAssistant, MmwavePlacement } from "../../types";
 
 export class FpbMmwavePanel extends LitElement {
   @property({ attribute: false })
@@ -127,7 +124,7 @@ export class FpbMmwavePanel extends LitElement {
     if (!this.hass || !this.placementId) return;
     this._loading = true;
     // Find from signal cache
-    const p = mmwavePlacements.value.find(m => m.id === this.placementId);
+    const p = mmwavePlacements.value.find((m) => m.id === this.placementId);
     this._placement = p ?? null;
     this._loading = false;
   }
@@ -142,8 +139,8 @@ export class FpbMmwavePanel extends LitElement {
       });
       this._placement = result;
       // Update signal cache
-      mmwavePlacements.value = mmwavePlacements.value.map(
-        p => p.id === result.id ? result : p
+      mmwavePlacements.value = mmwavePlacements.value.map((p) =>
+        p.id === result.id ? result : p,
       );
     } catch (err) {
       console.error("Failed to update mmWave placement:", err);
@@ -158,7 +155,7 @@ export class FpbMmwavePanel extends LitElement {
         placement_id: this.placementId,
       });
       mmwavePlacements.value = mmwavePlacements.value.filter(
-        p => p.id !== this.placementId
+        (p) => p.id !== this.placementId,
       );
       this.dispatchEvent(new CustomEvent("close-panel"));
     } catch (err) {
@@ -175,8 +172,12 @@ export class FpbMmwavePanel extends LitElement {
         </button>
       </div>
       <div class="panel-body">
-        ${this._loading ? html`<ha-circular-progress active></ha-circular-progress>` :
-          !this._placement ? html`<p>Placement not found.</p>` : html`
+        ${
+          this._loading
+            ? html`<ha-circular-progress active></ha-circular-progress>`
+            : !this._placement
+              ? html`<p>Placement not found.</p>`
+              : html`
           <!-- Angle, FOV, Range -->
           <div class="section">
             <div class="section-title">Sensor Settings</div>
@@ -210,7 +211,8 @@ export class FpbMmwavePanel extends LitElement {
           <div class="section">
             <button class="delete-btn" @click=${this._deletePlacement}>Delete Sensor</button>
           </div>
-        `}
+        `
+        }
       </div>
     `;
   }
