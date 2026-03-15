@@ -9,8 +9,8 @@
  *   User checks entities, then clicks "Add (N)" to confirm all at once.
  */
 
-import { LitElement, html, css, nothing } from "lit";
-import { property, state, query } from "lit/decorators.js";
+import { css, html, LitElement, nothing } from "lit";
+import { property, query, state } from "lit/decorators.js";
 import type { HomeAssistant } from "../../types";
 
 interface EntityEntry {
@@ -276,8 +276,10 @@ export class FpbEntityPicker extends LitElement {
       return "mdi:checkbox-blank-circle-outline";
     }
     if (entityId.startsWith("event.")) return "mdi:bell-ring";
-    if (entityId.startsWith("button.") || entityId.startsWith("input_button.")) return "mdi:gesture-tap-button";
-    if (entityId.startsWith("switch.") || entityId.startsWith("input_boolean.")) return "mdi:toggle-switch";
+    if (entityId.startsWith("button.") || entityId.startsWith("input_button."))
+      return "mdi:gesture-tap-button";
+    if (entityId.startsWith("switch.") || entityId.startsWith("input_boolean."))
+      return "mdi:toggle-switch";
     if (entityId.startsWith("light.")) return "mdi:lightbulb";
     if (entityId.startsWith("sensor.")) return "mdi:eye";
     return "mdi:ray-vertex";
@@ -293,9 +295,14 @@ export class FpbEntityPicker extends LitElement {
       const nameIdx = name.indexOf(term);
       const eidIdx = eid.indexOf(term);
       if (nameIdx === -1 && eidIdx === -1) return -1;
-      if (nameIdx === 0 || (nameIdx > 0 && name[nameIdx - 1] === " ")) score += 3;
+      if (nameIdx === 0 || (nameIdx > 0 && name[nameIdx - 1] === " "))
+        score += 3;
       else if (nameIdx >= 0) score += 2;
-      if (eidIdx === 0 || (eidIdx > 0 && (eid[eidIdx - 1] === "." || eid[eidIdx - 1] === "_"))) score += 3;
+      if (
+        eidIdx === 0 ||
+        (eidIdx > 0 && (eid[eidIdx - 1] === "." || eid[eidIdx - 1] === "_"))
+      )
+        score += 3;
       else if (eidIdx >= 0) score += 1;
     }
     return score;
@@ -311,19 +318,22 @@ export class FpbEntityPicker extends LitElement {
     const entries: Array<EntityEntry & { score: number }> = [];
 
     for (const eid of Object.keys(this.hass.states)) {
+      const stateObj = this.hass.states[eid];
+      if (!stateObj) continue;
       if (excludeSet.has(eid)) continue;
       const domain = eid.split(".")[0];
       if (domainSet.size > 0 && !domainSet.has(domain)) continue;
       if (excludeDomainSet.size > 0 && excludeDomainSet.has(domain)) continue;
 
       if (this.numericOnly) {
-        const s = this.hass.states[eid].state;
-        if (isNaN(parseFloat(s)) || !isFinite(Number(s))) continue;
+        const s = stateObj.state;
+        if (Number.isNaN(parseFloat(s)) || !Number.isFinite(Number(s)))
+          continue;
       }
 
       const entry: EntityEntry = {
         entity_id: eid,
-        friendly_name: String(this.hass.states[eid].attributes?.friendly_name ?? eid),
+        friendly_name: String(stateObj.attributes?.friendly_name ?? eid),
         domain,
       };
 
@@ -338,7 +348,9 @@ export class FpbEntityPicker extends LitElement {
         const bStaged = this._staged.has(b.entity_id) ? 1 : 0;
         if (aStaged !== bStaged) return bStaged - aStaged;
       }
-      return b.score - a.score || a.friendly_name.localeCompare(b.friendly_name);
+      return (
+        b.score - a.score || a.friendly_name.localeCompare(b.friendly_name)
+      );
     });
     return entries.slice(0, 50);
   }
@@ -359,18 +371,22 @@ export class FpbEntityPicker extends LitElement {
   }
 
   private _confirm(entityIds: string[]): void {
-    this.dispatchEvent(new CustomEvent("entities-confirmed", {
-      detail: { entityIds },
-      bubbles: true,
-      composed: true,
-    }));
+    this.dispatchEvent(
+      new CustomEvent("entities-confirmed", {
+        detail: { entityIds },
+        bubbles: true,
+        composed: true,
+      }),
+    );
     this._close();
   }
 
   private _close(): void {
     this._search = "";
     this._staged = new Set();
-    this.dispatchEvent(new CustomEvent("picker-closed", { bubbles: true, composed: true }));
+    this.dispatchEvent(
+      new CustomEvent("picker-closed", { bubbles: true, composed: true }),
+    );
   }
 
   private _onOverlayClick(e: MouseEvent): void {
@@ -384,7 +400,11 @@ export class FpbEntityPicker extends LitElement {
     const stagedCount = this._staged.size;
 
     return html`
-      <div class="overlay" @click=${this._onOverlayClick} @keydown=${(e: KeyboardEvent) => { if (e.key === "Escape") this._close(); }}>
+      <div class="overlay" @click=${this._onOverlayClick} @keydown=${(
+        e: KeyboardEvent,
+      ) => {
+        if (e.key === "Escape") this._close();
+      }}>
         <div class="dialog">
           <div class="dialog-header">
             <h3>${this.title}</h3>
@@ -399,40 +419,54 @@ export class FpbEntityPicker extends LitElement {
               type="text"
               .placeholder=${this.placeholder}
               .value=${this._search}
-              @input=${(e: Event) => { this._search = (e.target as HTMLInputElement).value; }}
-              @keydown=${(e: KeyboardEvent) => { if (e.key === "Escape") this._close(); }}
+              @input=${(e: Event) => {
+                this._search = (e.target as HTMLInputElement).value;
+              }}
+              @keydown=${(e: KeyboardEvent) => {
+                if (e.key === "Escape") this._close();
+              }}
             />
           </div>
 
           <div class="result-list">
-            ${results.length > 0 ? results.map(ent => {
-              const isStaged = this._staged.has(ent.entity_id);
-              return html`
+            ${
+              results.length > 0
+                ? results.map((ent) => {
+                    const isStaged = this._staged.has(ent.entity_id);
+                    return html`
                 <button
                   class="result-item ${isStaged ? "selected" : ""}"
                   @click=${() => this._onItemClick(ent.entity_id)}
                 >
-                  ${this.multi ? html`
+                  ${
+                    this.multi
+                      ? html`
                     <div class="check">
                       ${isStaged ? html`<span class="check-mark">✓</span>` : nothing}
                     </div>
-                  ` : html`
+                  `
+                      : html`
                     <ha-icon icon=${this._getIcon(ent.entity_id)} style="--mdc-icon-size: 18px;"></ha-icon>
-                  `}
+                  `
+                  }
                   <div class="text">
                     <span class="name">${ent.friendly_name}</span>
                     <span class="eid">${ent.entity_id}</span>
                   </div>
                 </button>
               `;
-            }) : html`
+                  })
+                : html`
               <div class="empty-state">
                 ${this._search ? "No matching entities" : "No entities available"}
               </div>
-            `}
+            `
+            }
           </div>
 
-          ${this.multi ? html`
+          ${
+            this.multi
+              ? html`
             <div class="dialog-footer">
               <button class="footer-btn cancel-btn" @click=${this._close}>Cancel</button>
               <button
@@ -443,7 +477,9 @@ export class FpbEntityPicker extends LitElement {
                 Add${stagedCount > 0 ? ` (${stagedCount})` : ""}
               </button>
             </div>
-          ` : nothing}
+          `
+              : nothing
+          }
         </div>
       </div>
     `;
