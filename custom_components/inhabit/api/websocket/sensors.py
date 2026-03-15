@@ -138,7 +138,10 @@ def ws_sensor_config_update(
         config.presence_affects = msg["presence_affects"]
     if "door_seals_room" in msg:
         config.door_seals_room = msg["door_seals_room"]
-        config.door_blocks_vacancy = msg["door_seals_room"]  # Keep in sync
+    elif "door_blocks_vacancy" in msg:
+        config.door_seals_room = msg["door_blocks_vacancy"]
+    # Always keep legacy field in sync
+    config.door_blocks_vacancy = config.door_seals_room
     if "seal_max_duration" in msg:
         config.seal_max_duration = msg["seal_max_duration"]
     if "long_stay" in msg:
@@ -147,10 +150,6 @@ def ws_sensor_config_update(
         config.override_trigger_entity = msg["override_trigger_entity"]
     if "override_trigger_action" in msg:
         config.override_trigger_action = msg["override_trigger_action"]
-    # Legacy field: map to door_seals_room
-    if "door_blocks_vacancy" in msg and "door_seals_room" not in msg:
-        config.door_seals_room = msg["door_blocks_vacancy"]
-        config.door_blocks_vacancy = msg["door_blocks_vacancy"]
     if "door_open_resets_checking" in msg:
         config.door_open_resets_checking = msg["door_open_resets_checking"]
     if "occupied_threshold" in msg:

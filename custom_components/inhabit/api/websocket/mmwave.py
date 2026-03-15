@@ -12,7 +12,7 @@ from ...const import DOMAIN, WS_PREFIX
 from ...engine.mmwave_target_processor import MmwaveTargetProcessor
 from ...models.floor_plan import Coordinates
 from ...models.mmwave_sensor import MmwavePlacement
-from ._helpers import _require_admin
+from ._helpers import _require_admin, _validate_placement_location
 
 
 def register(hass: HomeAssistant) -> None:
@@ -47,6 +47,8 @@ def ws_mmwave_place(
     if not _require_admin(connection, msg):
         return
     store = hass.data[DOMAIN]["store"]
+    if not _validate_placement_location(connection, msg, store):
+        return
     placement = MmwavePlacement(
         floor_plan_id=msg["floor_plan_id"],
         floor_id=msg["floor_id"],

@@ -121,6 +121,43 @@ def _require_admin(
     return True
 
 
+def _validate_placement_location(
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+    store: Any,
+) -> bool:
+    """Validate that floor_plan_id, floor_id, and optional room_id exist.
+
+    Sends a ``not_found`` error on the connection and returns ``False`` when
+    validation fails.
+    """
+    floor_plan = store.get_floor_plan(msg["floor_plan_id"])
+    if not floor_plan:
+        connection.send_error(
+            msg["id"], "not_found", "Floor plan not found"
+        )
+        return False
+
+    floor = floor_plan.get_floor(msg["floor_id"])
+    if not floor:
+        connection.send_error(
+            msg["id"], "not_found", "Floor not found"
+        )
+        return False
+
+    room_id = msg.get("room_id")
+    if room_id:
+        in_rooms = any(r.id == room_id for r in floor.rooms)
+        in_zones = any(z.id == room_id for z in floor.zones)
+        if not in_rooms and not in_zones:
+            connection.send_error(
+                msg["id"], "not_found", "Room or zone not found on floor"
+            )
+            return False
+
+    return True
+
+
 def _remove_device(hass: HomeAssistant, region_id: str) -> None:
     """Remove the HA device for a room or zone."""
     dev_reg = dr.async_get(hass)
