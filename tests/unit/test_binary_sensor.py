@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from unittest.mock import ANY, MagicMock, call, patch
 
 from custom_components.inhabit.const import (
     ATTR_CONFIDENCE,
@@ -13,6 +14,7 @@ from custom_components.inhabit.const import (
     DOMAIN,
     OccupancyState,
 )
+from custom_components.inhabit.entities import binary_sensor
 from custom_components.inhabit.models.virtual_sensor import OccupancyStateData
 
 
@@ -235,3 +237,35 @@ class TestSensorDeviceInfo:
         sensor_name = f"{room_name} Occupancy"
 
         assert sensor_name == "Living Room Occupancy"
+
+
+class TestSensorPlatformSetup:
+    """Test binary sensor platform setup behavior."""
+
+    async def test_dispatcher_unsubscribers_registered_for_entry_unload(
+        self, mock_hass
+    ):
+        """Dispatcher listeners should be unsubscribed on config entry unload."""
+        store = MagicMock()
+        store.get_floor_plans.return_value = []
+        mock_hass.data = {DOMAIN: {"store": store}}
+        config_entry = MagicMock()
+        async_add_entities = MagicMock()
+        unsubscribe_added = MagicMock()
+        unsubscribe_removed = MagicMock()
+
+        with patch(
+            "custom_components.inhabit.entities.binary_sensor.async_dispatcher_connect",
+            side_effect=[unsubscribe_added, unsubscribe_removed],
+        ) as connect:
+            await binary_sensor.async_setup_entry(
+                mock_hass, config_entry, async_add_entities
+            )
+
+        assert connect.call_args_list == [
+            call(mock_hass, f"{DOMAIN}_sensor_added", ANY),
+            call(mock_hass, f"{DOMAIN}_sensor_removed", ANY),
+        ]
+        config_entry.async_on_unload.assert_has_calls(
+            [call(unsubscribe_added), call(unsubscribe_removed)]
+        )
