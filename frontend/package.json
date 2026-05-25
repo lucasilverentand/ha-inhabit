@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "rollup -c",
+    "build": "tsc -p tsconfig.json && BUILD_FROM_TSC=1 rollup -c",
     "watch": "rollup -c -w",
     "lint": "biome check src",
     "format": "biome check --fix src",
