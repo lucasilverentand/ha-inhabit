@@ -16,7 +16,8 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
-ALLOWED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"}
+ALLOWED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
+READABLE_EXTENSIONS = ALLOWED_EXTENSIONS | {".svg"}
 
 
 class ImageStore:
@@ -37,8 +38,8 @@ class ImageStore:
 
     def get_image_path(self, image_id: str) -> Path | None:
         """Get the path for an image by ID."""
-        # Look for the image with any allowed extension
-        for ext in ALLOWED_EXTENSIONS:
+        # Look for existing images, including legacy SVG uploads.
+        for ext in READABLE_EXTENSIONS:
             path = self._storage_path / f"{image_id}{ext}"
             if path.exists():
                 return path
@@ -96,7 +97,7 @@ class ImageStore:
             images = []
             if self._storage_path.exists():
                 for path in self._storage_path.iterdir():
-                    if path.suffix.lower() in ALLOWED_EXTENSIONS:
+                    if path.suffix.lower() in READABLE_EXTENSIONS:
                         image_id = path.stem
                         images.append(
                             {
