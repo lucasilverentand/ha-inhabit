@@ -133,16 +133,12 @@ def _validate_placement_location(
     """
     floor_plan = store.get_floor_plan(msg["floor_plan_id"])
     if not floor_plan:
-        connection.send_error(
-            msg["id"], "not_found", "Floor plan not found"
-        )
+        connection.send_error(msg["id"], "not_found", "Floor plan not found")
         return False
 
     floor = floor_plan.get_floor(msg["floor_id"])
     if not floor:
-        connection.send_error(
-            msg["id"], "not_found", "Floor not found"
-        )
+        connection.send_error(msg["id"], "not_found", "Floor not found")
         return False
 
     room_id = msg.get("room_id")
