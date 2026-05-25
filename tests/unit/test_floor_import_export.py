@@ -40,9 +40,9 @@ from custom_components.inhabit.models.virtual_sensor import (  # noqa: E402
     VirtualSensorConfig,
 )
 from custom_components.inhabit.models.zone import Zone  # noqa: E402
-from custom_components.inhabit.store.floor_plan_store import (
+from custom_components.inhabit.store.floor_plan_store import (  # noqa: E402
     FloorPlanStore,
-)  # noqa: E402
+)
 
 
 def _mock_storage() -> MagicMock:
