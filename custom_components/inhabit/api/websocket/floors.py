@@ -9,8 +9,14 @@ from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant, callback
 
 from ...const import DOMAIN, WS_PREFIX
-from ...models.device_placement import LightPlacement, SwitchPlacement
+from ...models.device_placement import (
+    ButtonPlacement,
+    LightPlacement,
+    OtherPlacement,
+    SwitchPlacement,
+)
 from ...models.floor_plan import Floor, _generate_id
+from ...models.mmwave_sensor import MmwavePlacement
 from ...models.virtual_sensor import VirtualSensorConfig
 from ._helpers import _remove_device, _require_admin, _safe_engine_op
 
@@ -171,37 +177,62 @@ def ws_floors_export(
         connection.send_error(msg["id"], "not_found", "Floor not found")
         return
 
-    # Gather light and switch placements on this floor
+    connection.send_result(
+        msg["id"], _build_floor_export(store, msg["floor_plan_id"], floor)
+    )
+
+
+def _build_floor_export(
+    store: Any,
+    floor_plan_id: str,
+    floor: Floor,
+) -> dict[str, Any]:
+    """Build export data for a single floor."""
     lights = [
         d.to_dict()
-        for d in store.get_light_placements(msg["floor_plan_id"])
+        for d in store.get_light_placements(floor_plan_id)
         if d.floor_id == floor.id
     ]
     switches = [
         d.to_dict()
-        for d in store.get_switch_placements(msg["floor_plan_id"])
+        for d in store.get_switch_placements(floor_plan_id)
+        if d.floor_id == floor.id
+    ]
+    buttons = [
+        d.to_dict()
+        for d in store.get_button_placements(floor_plan_id)
+        if d.floor_id == floor.id
+    ]
+    others = [
+        d.to_dict()
+        for d in store.get_other_placements(floor_plan_id)
+        if d.floor_id == floor.id
+    ]
+    mmwave_placements = [
+        d.to_dict()
+        for d in store.get_mmwave_placements(floor_plan_id)
         if d.floor_id == floor.id
     ]
 
-    # Gather sensor configs for rooms on this floor
-    room_ids = {r.id for r in floor.rooms}
+    # Gather sensor configs for rooms and zones on this floor
+    region_ids = {r.id for r in floor.rooms} | {z.id for z in floor.zones}
     sensor_configs = []
-    for room_id in room_ids:
-        cfg = store.get_sensor_config(room_id)
+    for region_id in region_ids:
+        cfg = store.get_sensor_config(region_id)
         if cfg:
             sensor_configs.append(cfg.to_dict())
 
-    connection.send_result(
-        msg["id"],
-        {
-            "inhabit_version": "1.0",
-            "export_type": "floor",
-            "floor": floor.to_dict(),
-            "lights": lights,
-            "switches": switches,
-            "sensor_configs": sensor_configs,
-        },
-    )
+    return {
+        "inhabit_version": "1.0",
+        "export_type": "floor",
+        "floor": floor.to_dict(),
+        "lights": lights,
+        "switches": switches,
+        "buttons": buttons,
+        "others": others,
+        "mmwave_placements": mmwave_placements,
+        "sensor_configs": sensor_configs,
+    }
 
 
 def _remap_floor_ids(floor: Floor) -> dict[str, str]:
@@ -281,14 +312,27 @@ def ws_floors_import(
         )
         return
 
-    # Parse floor and remap all IDs to avoid collisions
+    result = _import_floor_data(store, floor_plan_id, data)
+    if not result:
+        connection.send_error(msg["id"], "import_failed", "Failed to import floor")
+        return
+
+    connection.send_result(msg["id"], result.to_dict())
+
+
+def _import_floor_data(
+    store: Any,
+    floor_plan_id: str,
+    data: dict[str, Any],
+) -> Floor | None:
+    """Import floor export data into a floor plan."""
+    floor_data = data["floor"]
     floor = Floor.from_dict(floor_data)
     id_map = _remap_floor_ids(floor)
 
     result = store.add_floor(floor_plan_id, floor)
     if not result:
-        connection.send_error(msg["id"], "import_failed", "Failed to import floor")
-        return
+        return None
 
     # Import light placements
     for dev_data in data.get("lights", []):
@@ -310,12 +354,45 @@ def ws_floors_import(
         )
         store.place_switch(floor_plan_id, switch)
 
+    # Import button placements
+    for dev_data in data.get("buttons", []):
+        button = ButtonPlacement.from_dict(dev_data)
+        button.id = _generate_id()
+        button.floor_id = floor.id
+        button.room_id = (
+            id_map.get(button.room_id, button.room_id) if button.room_id else None
+        )
+        store.place_button(floor_plan_id, button)
+
+    # Import other device placements
+    for dev_data in data.get("others", []):
+        other = OtherPlacement.from_dict(dev_data)
+        other.id = _generate_id()
+        other.floor_id = floor.id
+        other.room_id = (
+            id_map.get(other.room_id, other.room_id) if other.room_id else None
+        )
+        store.place_other(floor_plan_id, other)
+
+    # Import mmWave placements
+    for dev_data in data.get("mmwave_placements", []):
+        mmwave = MmwavePlacement.from_dict(dev_data)
+        mmwave.id = _generate_id()
+        mmwave.floor_plan_id = floor_plan_id
+        mmwave.floor_id = floor.id
+        mmwave.room_id = (
+            id_map.get(mmwave.room_id, mmwave.room_id) if mmwave.room_id else None
+        )
+        store.create_mmwave_placement(mmwave)
+
     # Import sensor configs
     for cfg_data in data.get("sensor_configs", []):
         cfg = VirtualSensorConfig.from_dict(cfg_data)
         old_room_id = cfg.room_id
         cfg.room_id = id_map.get(old_room_id, old_room_id)
+        if cfg.parent_room_id:
+            cfg.parent_room_id = id_map.get(cfg.parent_room_id, cfg.parent_room_id)
         cfg.floor_plan_id = floor_plan_id
         store.create_sensor_config(cfg)
 
-    connection.send_result(msg["id"], result.to_dict())
+    return result
