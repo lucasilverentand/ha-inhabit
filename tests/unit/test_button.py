@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from unittest.mock import ANY, MagicMock, call, patch
+
 from custom_components.inhabit.const import DOMAIN, OccupancyState
+from custom_components.inhabit.entities import button
 from custom_components.inhabit.models.virtual_sensor import OccupancyStateData
 
 
@@ -117,3 +120,33 @@ class TestOrphanCleanup:
     def test_unrelated_entity_not_orphaned(self):
         valid = {"room_a"}
         assert self._is_orphaned("some_other_entity", valid) is False
+
+
+class TestButtonPlatformSetup:
+    """Test button platform setup behavior."""
+
+    async def test_dispatcher_unsubscribers_registered_for_entry_unload(
+        self, mock_hass
+    ):
+        """Dispatcher listeners should be unsubscribed on config entry unload."""
+        store = MagicMock()
+        store.get_floor_plans.return_value = []
+        mock_hass.data = {DOMAIN: {"store": store}}
+        config_entry = MagicMock()
+        async_add_entities = MagicMock()
+        unsubscribe_added = MagicMock()
+        unsubscribe_removed = MagicMock()
+
+        with patch(
+            "custom_components.inhabit.entities.button.async_dispatcher_connect",
+            side_effect=[unsubscribe_added, unsubscribe_removed],
+        ) as connect:
+            await button.async_setup_entry(mock_hass, config_entry, async_add_entities)
+
+        assert connect.call_args_list == [
+            call(mock_hass, f"{DOMAIN}_sensor_added", ANY),
+            call(mock_hass, f"{DOMAIN}_sensor_removed", ANY),
+        ]
+        config_entry.async_on_unload.assert_has_calls(
+            [call(unsubscribe_added), call(unsubscribe_removed)]
+        )
