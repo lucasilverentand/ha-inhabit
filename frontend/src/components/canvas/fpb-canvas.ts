@@ -126,6 +126,8 @@ const LINK_COLORS = [
   "#f44336",
   "#673ab7",
 ];
+const MIN_RENDER_SEGMENT_LENGTH = 0.5;
+
 function linkGroupColor(group: string): string {
   let hash = 0;
   for (let i = 0; i < group.length; i++)
@@ -5126,7 +5128,9 @@ export class FpbCanvas extends LitElement {
 
     // Door and window edges (not part of wall chains)
     const openingEdges = edgesForChains.filter(
-      (e) => e.type === "door" || e.type === "window",
+      (e) =>
+        (e.type === "door" || e.type === "window") &&
+        this._isRenderableSegment(e.startPos, e.endPos),
     );
 
     // When a room is focused, split chains into sub-chains of consecutive
@@ -5171,12 +5175,21 @@ export class FpbCanvas extends LitElement {
 
     return svg`
       <!-- Base edges rendered as chains (split by focus state) -->
-      ${wallSegments.map(
-        (seg) => svg`
+      ${wallSegments.map((seg) => {
+        const path = wallChainPath(
+          seg.edges.map((e) => ({
+            start: e.startPos,
+            end: e.endPos,
+            thickness: e.thickness,
+          })),
+        );
+        return path
+          ? svg`
         <path class="wall ${seg.dimClass}"
-              d="${wallChainPath(seg.edges.map((e) => ({ start: e.startPos, end: e.endPos, thickness: e.thickness })))}"/>
-      `,
-      )}
+              d="${path}"/>
+      `
+          : null;
+      })}
 
       <!-- Door and window openings -->
       ${openingEdges.map((edge) => {
@@ -5185,6 +5198,7 @@ export class FpbCanvas extends LitElement {
           end: edge.endPos,
           thickness: edge.thickness,
         });
+        if (!rectPath) return null;
         const edgeFocused = focusedEdgeIds
           ? focusedEdgeIds.has(edge.id)
           : false;
@@ -5232,7 +5246,9 @@ export class FpbCanvas extends LitElement {
         const dx = edge.endPos.x - edge.startPos.x;
         const dy = edge.endPos.y - edge.startPos.y;
         const edgeLen = Math.sqrt(dx * dx + dy * dy);
-        if (edgeLen === 0) return null;
+        if (!Number.isFinite(edgeLen) || edgeLen < MIN_RENDER_SEGMENT_LENGTH) {
+          return null;
+        }
 
         const ux = dx / edgeLen;
         const uy = dy / edgeLen;
@@ -5551,33 +5567,57 @@ export class FpbCanvas extends LitElement {
       ${
         conflictEdgeIds.size > 0
           ? edgesForChains
-              .filter((e) => conflictEdgeIds.has(e.id))
-              .map(
-                (edge) => svg`
-          <path class="wall-conflict-highlight"
-                d="${this._singleEdgePath({ start: edge.startPos, end: edge.endPos, thickness: edge.thickness })}"/>
-        `,
+              .filter(
+                (e) =>
+                  conflictEdgeIds.has(e.id) &&
+                  this._isRenderableSegment(e.startPos, e.endPos),
               )
+              .map((edge) => {
+                const path = this._singleEdgePath({
+                  start: edge.startPos,
+                  end: edge.endPos,
+                  thickness: edge.thickness,
+                });
+                return path
+                  ? svg`
+          <path class="wall-conflict-highlight"
+                d="${path}"/>
+        `
+                  : null;
+              })
           : null
       }
 
       <!-- Selected edge highlights -->
-      ${selectedEdges.map(
-        (edge) => svg`
+      ${selectedEdges.map((edge) => {
+        const path = this._singleEdgePath({
+          start: edge.startPos,
+          end: edge.endPos,
+          thickness: edge.thickness,
+        });
+        return path
+          ? svg`
         <path class="wall-selected-highlight"
-              d="${this._singleEdgePath({ start: edge.startPos, end: edge.endPos, thickness: edge.thickness })}"/>
-      `,
-      )}
+              d="${path}"/>
+      `
+          : null;
+      })}
 
       <!-- Blocked edge blink -->
       ${
         this._blinkingEdgeIds.length > 0
           ? this._blinkingEdgeIds.map((id) => {
               const blinkEdge = edgesForChains.find((w) => w.id === id);
-              return blinkEdge
+              if (!blinkEdge) return null;
+              const path = this._singleEdgePath({
+                start: blinkEdge.startPos,
+                end: blinkEdge.endPos,
+                thickness: blinkEdge.thickness,
+              });
+              return path
                 ? svg`
           <path class="wall-blocked-blink"
-                d="${this._singleEdgePath({ start: blinkEdge.startPos, end: blinkEdge.endPos, thickness: blinkEdge.thickness })}"/>
+                d="${path}"/>
         `
                 : null;
             })
@@ -5594,6 +5634,15 @@ export class FpbCanvas extends LitElement {
     r: number,
     color: string,
   ) {
+    if (
+      !path ||
+      !Number.isFinite(cx) ||
+      !Number.isFinite(cy) ||
+      !Number.isFinite(r)
+    ) {
+      return null;
+    }
+
     return svg`
       <defs>
         <radialGradient id="wg-${id}" cx="${cx}" cy="${cy}" r="${r}" gradientUnits="userSpaceOnUse">
@@ -5611,20 +5660,36 @@ export class FpbCanvas extends LitElement {
     thickness: number;
   }): string {
     const { start, end, thickness } = edge;
+    if (!this._isFinitePoint(start) || !this._isFinitePoint(end)) return "";
+
     const dx = end.x - start.x;
     const dy = end.y - start.y;
     const len = Math.sqrt(dx * dx + dy * dy);
 
-    if (len === 0) return "";
+    if (!Number.isFinite(len) || len < MIN_RENDER_SEGMENT_LENGTH) return "";
 
-    const nx = (-dy / len) * (thickness / 2);
-    const ny = (dx / len) * (thickness / 2);
+    const safeThickness =
+      Number.isFinite(thickness) && thickness > 0 ? thickness : 6;
+    const nx = (-dy / len) * (safeThickness / 2);
+    const ny = (dx / len) * (safeThickness / 2);
 
     return `M${start.x + nx},${start.y + ny}
             L${end.x + nx},${end.y + ny}
             L${end.x - nx},${end.y - ny}
             L${start.x - nx},${start.y - ny}
             Z`;
+  }
+
+  private _isFinitePoint(point: Coordinates): boolean {
+    return Number.isFinite(point.x) && Number.isFinite(point.y);
+  }
+
+  private _isRenderableSegment(start: Coordinates, end: Coordinates): boolean {
+    return (
+      this._isFinitePoint(start) &&
+      this._isFinitePoint(end) &&
+      Math.hypot(end.x - start.x, end.y - start.y) >= MIN_RENDER_SEGMENT_LENGTH
+    );
   }
 
   private _blinkEdges(edgeIds: string | string[]): void {
