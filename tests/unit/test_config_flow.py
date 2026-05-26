@@ -1,11 +1,39 @@
 """Unit tests for config flow."""
 
+# ruff: noqa: E402
+
 from __future__ import annotations
 
+import importlib
+import sys
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import voluptuous as vol
+
+
+def _load_real_homeassistant_modules() -> None:
+    """Use real Home Assistant flow classes when the package is installed."""
+    if not isinstance(sys.modules.get("homeassistant.config_entries"), MagicMock):
+        return
+
+    for module_name in list(sys.modules):
+        if (
+            module_name == "homeassistant"
+            or module_name.startswith("homeassistant.")
+            or module_name == "aiohttp"
+            or module_name.startswith("aiohttp.")
+        ):
+            del sys.modules[module_name]
+
+    importlib.import_module("homeassistant.config_entries")
+    importlib.import_module("homeassistant.core")
+    importlib.import_module("homeassistant.data_entry_flow")
+
+
+_load_real_homeassistant_modules()
+
+from homeassistant.config_entries import OptionsFlow
 from homeassistant.data_entry_flow import AbortFlow, FlowResultType
 
 from custom_components.inhabit.config_flow import InhabitConfigFlow, InhabitOptionsFlow
@@ -138,10 +166,11 @@ class TestConfigFlow:
     def test_async_get_options_flow_returns_options_flow(self):
         """The factory should return an InhabitOptionsFlow bound to the entry."""
         entry = MagicMock()
+        entry.options = {"default_grid_size": 20}
         options_flow = InhabitConfigFlow.async_get_options_flow(entry)
 
         assert isinstance(options_flow, InhabitOptionsFlow)
-        assert options_flow.config_entry is entry
+        assert options_flow._options == entry.options
 
 
 # ---------------------------------------------------------------------------
@@ -151,6 +180,11 @@ class TestConfigFlow:
 
 class TestOptionsFlow:
     """Test the options flow and its voluptuous schema."""
+
+    def test_inherits_home_assistant_options_flow(self):
+        """Options flow must use Home Assistant's OptionsFlow base contract."""
+        assert issubclass(InhabitOptionsFlow, OptionsFlow)
+        assert isinstance(_make_options_flow(), OptionsFlow)
 
     @pytest.mark.asyncio
     async def test_init_shows_form_without_user_input(self):
