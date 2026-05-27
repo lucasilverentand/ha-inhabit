@@ -7,7 +7,7 @@
  * Filter out the outer (unbounded) face and faces below a minimum area threshold.
  */
 
-import type { Coordinates, Node, Edge } from "../types";
+import type { Coordinates, Edge, Node } from "../types";
 
 export interface RoomCandidate {
   vertices: Coordinates[];
@@ -26,7 +26,10 @@ interface AdjEntry {
 /**
  * Detect all closed rooms formed by edge loops.
  */
-export function detectRoomsFromEdges(nodes: Node[], edges: Edge[]): RoomCandidate[] {
+export function detectRoomsFromEdges(
+  nodes: Node[],
+  edges: Edge[],
+): RoomCandidate[] {
   if (edges.length === 0) return [];
 
   // Build node map
@@ -90,7 +93,7 @@ export function detectRoomsFromEdges(nodes: Node[], edges: Edge[]): RoomCandidat
         const nextNode = nodeMap.get(nextId)!;
         const incomingAngle = Math.atan2(
           currentNode.y - nextNode.y,
-          currentNode.x - nextNode.x
+          currentNode.x - nextNode.x,
         );
 
         // At nextId, find the next edge with smallest clockwise angle after incomingAngle
@@ -123,10 +126,12 @@ export function detectRoomsFromEdges(nodes: Node[], edges: Edge[]): RoomCandidat
       }
 
       if (valid && face.length >= 3) {
-        faces.push(face.map(id => {
-          const n = nodeMap.get(id)!;
-          return { x: n.x, y: n.y };
-        }));
+        faces.push(
+          face.map((id) => {
+            const n = nodeMap.get(id)!;
+            return { x: n.x, y: n.y };
+          }),
+        );
       }
     }
   }
@@ -151,7 +156,7 @@ export function detectRoomsFromEdges(nodes: Node[], edges: Edge[]): RoomCandidat
   const unique = new Map<string, RoomCandidate>();
   for (const room of rooms) {
     const sig = room.vertices
-      .map(v => `${Math.round(v.x)},${Math.round(v.y)}`)
+      .map((v) => `${Math.round(v.x)},${Math.round(v.y)}`)
       .sort()
       .join("|");
     if (!unique.has(sig) || unique.get(sig)!.area < room.area) {
@@ -178,8 +183,12 @@ function signedArea(vertices: Coordinates[]): number {
 function computeCentroid(vertices: Coordinates[]): Coordinates {
   const n = vertices.length;
   if (n < 3) {
-    let cx = 0, cy = 0;
-    for (const v of vertices) { cx += v.x; cy += v.y; }
+    let cx = 0,
+      cy = 0;
+    for (const v of vertices) {
+      cx += v.x;
+      cy += v.y;
+    }
     return { x: cx / n, y: cy / n };
   }
 
@@ -197,8 +206,12 @@ function computeCentroid(vertices: Coordinates[]): Coordinates {
 
   area /= 2;
   if (Math.abs(area) < 1e-6) {
-    let sx = 0, sy = 0;
-    for (const v of vertices) { sx += v.x; sy += v.y; }
+    let sx = 0,
+      sy = 0;
+    for (const v of vertices) {
+      sx += v.x;
+      sy += v.y;
+    }
     return { x: sx / n, y: sy / n };
   }
 

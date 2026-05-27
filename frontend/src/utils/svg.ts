@@ -4,6 +4,37 @@
 
 import type { Coordinates, Polygon, ViewBox } from "../types";
 
+const MIN_RENDER_SEGMENT_LENGTH = 0.5;
+const LOOP_CLOSE_TOLERANCE = 1;
+const THICKNESS_TOLERANCE = 0.01;
+const DEFAULT_WALL_THICKNESS = 6;
+const MAX_MITER_SCALE = 3;
+
+function isFinitePoint(point: Coordinates): boolean {
+  return Number.isFinite(point.x) && Number.isFinite(point.y);
+}
+
+function segmentLength(start: Coordinates, end: Coordinates): number {
+  return Math.hypot(end.x - start.x, end.y - start.y);
+}
+
+function normalizedThickness(thickness: number): number {
+  return Number.isFinite(thickness) && thickness > 0
+    ? thickness
+    : DEFAULT_WALL_THICKNESS;
+}
+
+function sameThickness(a: number, b: number): boolean {
+  return (
+    Math.abs(normalizedThickness(a) - normalizedThickness(b)) <=
+    THICKNESS_TOLERANCE
+  );
+}
+
+function samePoint(a: Coordinates, b: Coordinates, tolerance: number): boolean {
+  return Math.abs(a.x - b.x) <= tolerance && Math.abs(a.y - b.y) <= tolerance;
+}
+
 /**
  * Convert a polygon to SVG path data
  */
@@ -16,7 +47,7 @@ export function polygonToPath(polygon: Polygon): string {
     return `${cmd}${v.x},${v.y}`;
   });
 
-  return parts.join(" ") + " Z";
+  return `${parts.join(" ")} Z`;
 }
 
 /**
@@ -40,7 +71,7 @@ export function sectorPath(
   center: Coordinates,
   radius: number,
   startAngle: number,
-  endAngle: number
+  endAngle: number,
 ): string {
   const startRad = (startAngle * Math.PI) / 180;
   const endRad = (endAngle * Math.PI) / 180;
@@ -72,7 +103,7 @@ export function rectPath(
   x: number,
   y: number,
   width: number,
-  height: number
+  height: number,
 ): string {
   return `M${x},${y} h${width} v${height} h${-width} Z`;
 }
@@ -85,7 +116,7 @@ export function roundedRectPath(
   y: number,
   width: number,
   height: number,
-  radius: number
+  radius: number,
 ): string {
   const r = Math.min(radius, width / 2, height / 2);
   return `M${x + r},${y}
@@ -106,7 +137,7 @@ export function roundedRectPath(
 export function ellipsePath(
   center: Coordinates,
   rx: number,
-  ry: number
+  ry: number,
 ): string {
   return `M${center.x - rx},${center.y}
           a${rx},${ry} 0 1,0 ${rx * 2},0
@@ -120,7 +151,7 @@ export function doorSwingPath(
   hingePoint: Coordinates,
   doorWidth: number,
   direction: "left" | "right",
-  angle: number = 85
+  angle: number = 85,
 ): string {
   const startAngle = direction === "left" ? 0 : 180 - angle;
   const endAngle = direction === "left" ? angle : 180;
@@ -145,17 +176,20 @@ export function doorSwingPath(
 export function wallPath(
   start: Coordinates,
   end: Coordinates,
-  thickness: number
+  thickness: number,
 ): string {
+  if (!isFinitePoint(start) || !isFinitePoint(end)) return "";
+
   const dx = end.x - start.x;
   const dy = end.y - start.y;
   const len = Math.sqrt(dx * dx + dy * dy);
 
-  if (len === 0) return "";
+  if (len < MIN_RENDER_SEGMENT_LENGTH) return "";
 
   // Perpendicular offset
-  const nx = (-dy / len) * (thickness / 2);
-  const ny = (dx / len) * (thickness / 2);
+  const safeThickness = normalizedThickness(thickness);
+  const nx = (-dy / len) * (safeThickness / 2);
+  const ny = (dx / len) * (safeThickness / 2);
 
   return `M${start.x + nx},${start.y + ny}
           L${end.x + nx},${end.y + ny}
@@ -169,80 +203,100 @@ export function wallPath(
  * Only chains wall-type edges; doors/windows break chains.
  */
 export function groupEdgesIntoChains(
-  edges: Array<{ id: string; start_node: string; end_node: string; startPos: Coordinates; endPos: Coordinates; thickness: number; type: string }>
-): Array<Array<{ id: string; start_node: string; end_node: string; startPos: Coordinates; endPos: Coordinates; thickness: number; type: string }>> {
-  // Only chain wall-type edges
-  const wallEdges = edges.filter(e => e.type === 'wall');
+  edges: Array<{
+    id: string;
+    start_node: string;
+    end_node: string;
+    startPos: Coordinates;
+    endPos: Coordinates;
+    thickness: number;
+    type: string;
+  }>,
+): Array<
+  Array<{
+    id: string;
+    start_node: string;
+    end_node: string;
+    startPos: Coordinates;
+    endPos: Coordinates;
+    thickness: number;
+    type: string;
+  }>
+> {
+  const wallEdges = edges.filter(
+    (e) =>
+      e.type === "wall" &&
+      isFinitePoint(e.startPos) &&
+      isFinitePoint(e.endPos) &&
+      segmentLength(e.startPos, e.endPos) >= MIN_RENDER_SEGMENT_LENGTH,
+  );
   if (wallEdges.length === 0) return [];
 
+  type WallEdge = (typeof wallEdges)[0];
+
+  const incident = new Map<string, WallEdge[]>();
+  for (const edge of wallEdges) {
+    for (const nodeId of [edge.start_node, edge.end_node]) {
+      if (!incident.has(nodeId)) incident.set(nodeId, []);
+      incident.get(nodeId)!.push(edge);
+    }
+  }
+
   const used = new Set<string>();
-  const chains: Array<Array<typeof wallEdges[0]>> = [];
+  const chains: Array<Array<WallEdge>> = [];
+
+  const reverseEdge = (edge: WallEdge): WallEdge => ({
+    ...edge,
+    start_node: edge.end_node,
+    end_node: edge.start_node,
+    startPos: edge.endPos,
+    endPos: edge.startPos,
+  });
+
+  const nextEdgeAt = (nodeId: string, fromEdge: WallEdge): WallEdge | null => {
+    const candidates = (incident.get(nodeId) ?? []).filter(
+      (edge) =>
+        edge.id !== fromEdge.id &&
+        !used.has(edge.id) &&
+        sameThickness(edge.thickness, fromEdge.thickness),
+    );
+
+    // Branches and thickness transitions render as separate chains. Greedy
+    // chaining through these nodes produces incorrect filled geometry.
+    if ((incident.get(nodeId) ?? []).length !== 2 || candidates.length !== 1) {
+      return null;
+    }
+
+    const edge = candidates[0];
+    return edge.start_node === nodeId ? edge : reverseEdge(edge);
+  };
+
+  const extend = (
+    chain: WallEdge[],
+    direction: "forward" | "backward",
+  ): void => {
+    while (chain.length > 0) {
+      const edge = direction === "forward" ? chain[chain.length - 1] : chain[0];
+      const nodeId = direction === "forward" ? edge.end_node : edge.start_node;
+      const next = nextEdgeAt(nodeId, edge);
+      if (!next) return;
+
+      used.add(next.id);
+      if (direction === "forward") {
+        chain.push(next);
+      } else {
+        chain.unshift(reverseEdge(next));
+      }
+    }
+  };
 
   for (const startEdge of wallEdges) {
     if (used.has(startEdge.id)) continue;
 
-    const chain: typeof wallEdges = [startEdge];
+    const chain: WallEdge[] = [startEdge];
     used.add(startEdge.id);
-
-    // Extend forward from end_node
-    let currentEndNode = startEdge.end_node;
-    let found = true;
-    while (found) {
-      found = false;
-      for (const edge of wallEdges) {
-        if (used.has(edge.id)) continue;
-        if (edge.start_node === currentEndNode) {
-          chain.push(edge);
-          used.add(edge.id);
-          currentEndNode = edge.end_node;
-          found = true;
-          break;
-        } else if (edge.end_node === currentEndNode) {
-          // Reverse the edge
-          chain.push({
-            ...edge,
-            start_node: edge.end_node,
-            end_node: edge.start_node,
-            startPos: edge.endPos,
-            endPos: edge.startPos,
-          });
-          used.add(edge.id);
-          currentEndNode = edge.start_node;
-          found = true;
-          break;
-        }
-      }
-    }
-
-    // Extend backward from start_node
-    let currentStartNode = startEdge.start_node;
-    found = true;
-    while (found) {
-      found = false;
-      for (const edge of wallEdges) {
-        if (used.has(edge.id)) continue;
-        if (edge.end_node === currentStartNode) {
-          chain.unshift(edge);
-          used.add(edge.id);
-          currentStartNode = edge.start_node;
-          found = true;
-          break;
-        } else if (edge.start_node === currentStartNode) {
-          // Reverse the edge
-          chain.unshift({
-            ...edge,
-            start_node: edge.end_node,
-            end_node: edge.start_node,
-            startPos: edge.endPos,
-            endPos: edge.startPos,
-          });
-          used.add(edge.id);
-          currentStartNode = edge.end_node;
-          found = true;
-          break;
-        }
-      }
-    }
+    extend(chain, "forward");
+    extend(chain, "backward");
 
     chains.push(chain);
   }
@@ -254,23 +308,48 @@ export function groupEdgesIntoChains(
  * Create a wall chain path with proper miter joints at corners
  */
 export function wallChainPath(
-  chain: Array<{ start: Coordinates; end: Coordinates; thickness: number }>
+  chain: Array<{ start: Coordinates; end: Coordinates; thickness: number }>,
 ): string {
   if (chain.length === 0) return "";
 
-  const thickness = chain[0].thickness;
+  const safeChain = chain.filter(
+    (wall) =>
+      isFinitePoint(wall.start) &&
+      isFinitePoint(wall.end) &&
+      segmentLength(wall.start, wall.end) >= MIN_RENDER_SEGMENT_LENGTH,
+  );
+  if (safeChain.length === 0) return "";
+
+  const thickness = normalizedThickness(safeChain[0].thickness);
   const halfThick = thickness / 2;
 
   // Build list of vertices along the centerline
-  const centerline: Coordinates[] = [chain[0].start];
-  for (const wall of chain) {
-    centerline.push(wall.end);
+  const centerline: Coordinates[] = [{ ...safeChain[0].start }];
+  for (const wall of safeChain) {
+    const end = wall.end;
+    const last = centerline[centerline.length - 1];
+    if (!samePoint(last, end, MIN_RENDER_SEGMENT_LENGTH)) {
+      centerline.push({ ...end });
+    }
   }
 
   // Check if it's a closed loop
-  const isClosed = centerline.length > 2 &&
-    Math.abs(centerline[0].x - centerline[centerline.length - 1].x) < 1 &&
-    Math.abs(centerline[0].y - centerline[centerline.length - 1].y) < 1;
+  const isClosed =
+    centerline.length > 2 &&
+    samePoint(
+      centerline[0],
+      centerline[centerline.length - 1],
+      LOOP_CLOSE_TOLERANCE,
+    );
+
+  if (isClosed) {
+    centerline[centerline.length - 1] = { ...centerline[0] };
+  }
+
+  if (centerline.length < 2) return "";
+  if (centerline.length === 2) {
+    return wallPath(centerline[0], centerline[1], thickness);
+  }
 
   // Calculate offset points on both sides
   const leftPoints: Coordinates[] = [];
@@ -289,7 +368,7 @@ export function wallChainPath(
       const dx = curr.x - prev.x;
       const dy = curr.y - prev.y;
       const len = Math.sqrt(dx * dx + dy * dy);
-      if (len > 0) {
+      if (len >= MIN_RENDER_SEGMENT_LENGTH) {
         prevDir = { x: dx / len, y: dy / len };
       }
     }
@@ -300,7 +379,7 @@ export function wallChainPath(
       const dx = next.x - curr.x;
       const dy = next.y - curr.y;
       const len = Math.sqrt(dx * dx + dy * dy);
-      if (len > 0) {
+      if (len >= MIN_RENDER_SEGMENT_LENGTH) {
         nextDir = { x: dx / len, y: dy / len };
       }
     }
@@ -327,11 +406,15 @@ export function wallChainPath(
         // Scale to maintain wall thickness at the miter
         // The miter length = thickness / (2 * cos(angle/2))
         const dot = prevPerp.x * offsetDir.x + prevPerp.y * offsetDir.y;
-        if (Math.abs(dot) > 0.1) {
+        if (Number.isFinite(dot) && Math.abs(dot) > 0.1) {
           const scale = 1 / dot;
           // Limit miter extension to avoid very long points
-          const limitedScale = Math.min(Math.abs(scale), 3) * Math.sign(scale);
-          offsetDir = { x: offsetDir.x * limitedScale, y: offsetDir.y * limitedScale };
+          const limitedScale =
+            Math.min(Math.abs(scale), MAX_MITER_SCALE) * Math.sign(scale);
+          offsetDir = {
+            x: offsetDir.x * limitedScale,
+            y: offsetDir.y * limitedScale,
+          };
         }
       }
     } else if (prevDir) {
@@ -339,6 +422,10 @@ export function wallChainPath(
     } else if (nextDir) {
       offsetDir = { x: -nextDir.y, y: nextDir.x };
     } else {
+      offsetDir = { x: 1, y: 0 };
+    }
+
+    if (!isFinitePoint(offsetDir)) {
       offsetDir = { x: 1, y: 0 };
     }
 
@@ -464,7 +551,7 @@ export function viewBoxToString(vb: ViewBox): string {
 export function screenToSvg(
   screenPoint: Coordinates,
   svgElement: SVGSVGElement,
-  viewBox: ViewBox
+  viewBox: ViewBox,
 ): Coordinates {
   const rect = svgElement.getBoundingClientRect();
   const scaleX = viewBox.width / rect.width;
@@ -482,7 +569,7 @@ export function screenToSvg(
 export function svgToScreen(
   svgPoint: Coordinates,
   svgElement: SVGSVGElement,
-  viewBox: ViewBox
+  viewBox: ViewBox,
 ): Coordinates {
   const rect = svgElement.getBoundingClientRect();
   const scaleX = rect.width / viewBox.width;
@@ -499,7 +586,7 @@ export function svgToScreen(
  */
 export function createGridPattern(
   gridSize: number,
-  color: string = "#e0e0e0"
+  color: string = "#e0e0e0",
 ): string {
   return `
     <pattern id="grid" width="${gridSize}" height="${gridSize}" patternUnits="userSpaceOnUse">
@@ -515,7 +602,7 @@ export function createGridPatternMajorMinor(
   gridSize: number,
   majorGridSize: number,
   minorColor: string = "#f0f0f0",
-  majorColor: string = "#d0d0d0"
+  majorColor: string = "#d0d0d0",
 ): string {
   return `
     <pattern id="minor-grid" width="${gridSize}" height="${gridSize}" patternUnits="userSpaceOnUse">

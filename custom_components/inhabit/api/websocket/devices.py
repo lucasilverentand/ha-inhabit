@@ -16,7 +16,7 @@ from ...models.device_placement import (
     SwitchPlacement,
 )
 from ...models.floor_plan import Coordinates
-from ._helpers import _require_admin
+from ._helpers import _require_admin, _validate_placement_location
 
 
 def register(hass: HomeAssistant) -> None:
@@ -63,6 +63,8 @@ def ws_lights_place(
     if not _require_admin(connection, msg):
         return
     store = hass.data[DOMAIN]["store"]
+    if not _validate_placement_location(connection, msg, store):
+        return
     light = LightPlacement(
         entity_id=msg["entity_id"],
         floor_id=msg["floor_id"],
@@ -179,6 +181,8 @@ def ws_switches_place(
     if not _require_admin(connection, msg):
         return
     store = hass.data[DOMAIN]["store"]
+    if not _validate_placement_location(connection, msg, store):
+        return
     switch = SwitchPlacement(
         entity_id=msg["entity_id"],
         floor_id=msg["floor_id"],
@@ -295,6 +299,8 @@ def ws_buttons_place(
     if not _require_admin(connection, msg):
         return
     store = hass.data[DOMAIN]["store"]
+    if not _validate_placement_location(connection, msg, store):
+        return
     button = ButtonPlacement(
         entity_id=msg["entity_id"],
         floor_id=msg["floor_id"],
@@ -411,6 +417,8 @@ def ws_others_place(
     if not _require_admin(connection, msg):
         return
     store = hass.data[DOMAIN]["store"]
+    if not _validate_placement_location(connection, msg, store):
+        return
     other = OtherPlacement(
         entity_id=msg["entity_id"],
         floor_id=msg["floor_id"],

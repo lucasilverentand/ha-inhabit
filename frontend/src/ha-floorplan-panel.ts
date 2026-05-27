@@ -2,17 +2,17 @@
  * Unified Floorplan Panel – viewer by default, editor mode for admins.
  */
 
-import { LitElement, html, css, PropertyValues } from "lit";
+import { css, html, LitElement, type PropertyValues } from "lit";
 import { property, state } from "lit/decorators.js";
 import type {
-  HomeAssistant,
-  FloorPlan,
-  Floor,
-  LightPlacement,
-  SwitchPlacement,
   ButtonPlacement,
-  OtherPlacement,
+  Floor,
+  FloorPlan,
+  HomeAssistant,
+  LightPlacement,
   MmwavePlacement,
+  OtherPlacement,
+  SwitchPlacement,
 } from "./types";
 
 // Import sub-components
@@ -25,58 +25,57 @@ import "./components/panels/fpb-device-panel";
 import type { FpbImportExportDialog } from "./components/dialogs/fpb-import-export-dialog";
 import { clearHistory } from "./stores/history-store";
 import { polygonArea } from "./utils/geometry";
-import { validateConstraints } from "./utils/wall-solver";
 import type { ConstraintViolation } from "./utils/wall-solver";
+import { validateConstraints } from "./utils/wall-solver";
 
 // Re-export shared signals so existing imports from this module keep working
 export {
-  currentFloorPlan,
-  currentFloor,
-  canvasMode,
   activeTool,
-  selection,
-  viewBox,
+  buttonPlacements,
+  canvasMode,
+  constraintConflicts,
+  currentFloor,
+  currentFloorPlan,
+  devicePanelTarget,
+  focusedRoomId,
   gridSize,
-  snapToGrid,
-  showGrid,
   layers,
   lightPlacements,
-  switchPlacements,
-  buttonPlacements,
-  otherPlacements,
-  constraintConflicts,
-  focusedRoomId,
-  occupancyPanelTarget,
-  devicePanelTarget,
   mmwavePlacements,
-  setCanvasMode,
-  setReloadFunction,
+  occupancyPanelTarget,
+  otherPlacements,
   reloadFloorData,
   resetSignals,
-} from "./stores/signals";
-
-import {
-  currentFloorPlan,
-  currentFloor,
-  canvasMode,
-  activeTool,
   selection,
-  gridSize,
-  showGrid,
-  lightPlacements,
-  switchPlacements,
-  buttonPlacements,
-  otherPlacements,
-  constraintConflicts,
-  focusedRoomId,
-  occupancyPanelTarget,
-  devicePanelTarget,
-  mmwavePlacements,
+  setCanvasMode,
   setReloadFunction,
-  resetSignals,
+  showGrid,
+  snapToGrid,
+  switchPlacements,
+  viewBox,
 } from "./stores/signals";
 
 import { effect } from "@preact/signals-core";
+import {
+  activeTool,
+  buttonPlacements,
+  canvasMode,
+  constraintConflicts,
+  currentFloor,
+  currentFloorPlan,
+  devicePanelTarget,
+  focusedRoomId,
+  gridSize,
+  lightPlacements,
+  mmwavePlacements,
+  occupancyPanelTarget,
+  otherPlacements,
+  resetSignals,
+  selection,
+  setReloadFunction,
+  showGrid,
+  switchPlacements,
+} from "./stores/signals";
 
 export class HaFloorplanPanel extends LitElement {
   @property({ attribute: false })
@@ -98,16 +97,27 @@ export class HaFloorplanPanel extends LitElement {
   private _floorCount = 1;
 
   @state()
-  private _haAreas: Array<{ area_id: string; name: string; icon?: string | null }> = [];
+  private _haAreas: Array<{
+    area_id: string;
+    name: string;
+    icon?: string | null;
+  }> = [];
 
   @state()
   private _focusedRoomId: string | null = null;
 
   @state()
-  private _occupancyPanelTarget: { id: string; name: string; type: "room" | "zone" } | null = null;
+  private _occupancyPanelTarget: {
+    id: string;
+    name: string;
+    type: "room" | "zone";
+  } | null = null;
 
   @state()
-  private _devicePanelTarget: { id: string; type: "light" | "switch" | "mmwave" | "button" | "other" } | null = null;
+  private _devicePanelTarget: {
+    id: string;
+    type: "light" | "switch" | "mmwave" | "button" | "other";
+  } | null = null;
 
   @state()
   private _editorMode = false;
@@ -371,13 +381,13 @@ export class HaFloorplanPanel extends LitElement {
       effect(() => {
         void currentFloor.value;
         this.requestUpdate();
-      })
+      }),
     );
   }
 
   override disconnectedCallback(): void {
     super.disconnectedCallback();
-    this._cleanupEffects.forEach(cleanup => cleanup());
+    for (const cleanup of this._cleanupEffects) cleanup();
     this._cleanupEffects = [];
   }
 
@@ -404,7 +414,9 @@ export class HaFloorplanPanel extends LitElement {
   private async _loadHaAreas(): Promise<void> {
     if (!this.hass) return;
     try {
-      const areas = await this.hass.callWS<Array<{ area_id: string; name: string; icon?: string | null }>>({
+      const areas = await this.hass.callWS<
+        Array<{ area_id: string; name: string; icon?: string | null }>
+      >({
         type: "config/area_registry/list",
       });
       this._haAreas = areas;
@@ -426,13 +438,15 @@ export class HaFloorplanPanel extends LitElement {
 
       this._floorPlans = result;
 
-      const updatedFp = result.find(p => p.id === fp.id);
+      const updatedFp = result.find((p) => p.id === fp.id);
       if (updatedFp) {
         currentFloorPlan.value = updatedFp;
 
         const currentFloorId = currentFloor.value?.id;
         if (currentFloorId) {
-          const updatedFloor = updatedFp.floors.find(f => f.id === currentFloorId);
+          const updatedFloor = updatedFp.floors.find(
+            (f) => f.id === currentFloorId,
+          );
           if (updatedFloor) {
             currentFloor.value = updatedFloor;
           } else if (updatedFp.floors.length > 0) {
@@ -457,7 +471,7 @@ export class HaFloorplanPanel extends LitElement {
         conflicts.set(floor.id, violations);
         console.warn(
           `[inhabit] Detected ${violations.length} constraint conflict(s) on floor "${floor.id}":`,
-          violations.map(v => `${v.edgeId} (${v.type})`)
+          violations.map((v) => `${v.edgeId} (${v.type})`),
         );
       }
     }
@@ -509,36 +523,51 @@ export class HaFloorplanPanel extends LitElement {
   private async _loadDevicePlacements(floorPlanId: string): Promise<void> {
     if (!this.hass) return;
 
-    try {
-      const [lights, switches, buttons, others, mmwave] = await Promise.all([
-        this.hass.callWS<LightPlacement[]>({
-          type: "inhabit/lights/list",
-          floor_plan_id: floorPlanId,
-        }),
-        this.hass.callWS<SwitchPlacement[]>({
-          type: "inhabit/switches/list",
-          floor_plan_id: floorPlanId,
-        }),
-        this.hass.callWS<ButtonPlacement[]>({
-          type: "inhabit/buttons/list",
-          floor_plan_id: floorPlanId,
-        }),
-        this.hass.callWS<OtherPlacement[]>({
-          type: "inhabit/others/list",
-          floor_plan_id: floorPlanId,
-        }),
-        this.hass.callWS<MmwavePlacement[]>({
-          type: "inhabit/mmwave/list",
-          floor_plan_id: floorPlanId,
-        }),
-      ]);
-      lightPlacements.value = lights;
-      switchPlacements.value = switches;
-      buttonPlacements.value = buttons;
-      otherPlacements.value = others;
-      mmwavePlacements.value = mmwave;
-    } catch (err) {
-      console.error("Error loading device placements:", err);
+    const results = await Promise.allSettled([
+      this.hass.callWS<LightPlacement[]>({
+        type: "inhabit/lights/list",
+        floor_plan_id: floorPlanId,
+      }),
+      this.hass.callWS<SwitchPlacement[]>({
+        type: "inhabit/switches/list",
+        floor_plan_id: floorPlanId,
+      }),
+      this.hass.callWS<ButtonPlacement[]>({
+        type: "inhabit/buttons/list",
+        floor_plan_id: floorPlanId,
+      }),
+      this.hass.callWS<OtherPlacement[]>({
+        type: "inhabit/others/list",
+        floor_plan_id: floorPlanId,
+      }),
+      this.hass.callWS<MmwavePlacement[]>({
+        type: "inhabit/mmwave/list",
+        floor_plan_id: floorPlanId,
+      }),
+    ]);
+
+    const labels = [
+      "lights",
+      "switches",
+      "buttons",
+      "others",
+      "mmwave",
+    ] as const;
+    const signals = [
+      lightPlacements,
+      switchPlacements,
+      buttonPlacements,
+      otherPlacements,
+      mmwavePlacements,
+    ] as const;
+
+    for (let i = 0; i < results.length; i++) {
+      const result = results[i];
+      if (result.status === "fulfilled") {
+        (signals[i] as (typeof signals)[number]).value = result.value as any;
+      } else {
+        console.error(`Error loading ${labels[i]} placements:`, result.reason);
+      }
     }
   }
 
@@ -575,7 +604,9 @@ export class HaFloorplanPanel extends LitElement {
       gridSize.value = result.grid_size;
     } catch (err) {
       console.error("Error creating floors:", err);
-      alert(`Failed to create floors: ${err instanceof Error ? err.message : err}`);
+      alert(
+        `Failed to create floors: ${err instanceof Error ? err.message : err}`,
+      );
     }
   }
 
@@ -597,7 +628,9 @@ export class HaFloorplanPanel extends LitElement {
       });
 
       const updatedFp = { ...fp, floors: [...fp.floors, floor] };
-      this._floorPlans = this._floorPlans.map(p => p.id === fp.id ? updatedFp : p);
+      this._floorPlans = this._floorPlans.map((p) =>
+        p.id === fp.id ? updatedFp : p,
+      );
       currentFloorPlan.value = updatedFp;
       currentFloor.value = floor;
     } catch (err) {
@@ -619,9 +652,11 @@ export class HaFloorplanPanel extends LitElement {
         floor_id: floorId,
       });
 
-      const updatedFloors = fp.floors.filter(f => f.id !== floorId);
+      const updatedFloors = fp.floors.filter((f) => f.id !== floorId);
       const updatedFp = { ...fp, floors: updatedFloors };
-      this._floorPlans = this._floorPlans.map(p => p.id === fp.id ? updatedFp : p);
+      this._floorPlans = this._floorPlans.map((p) =>
+        p.id === fp.id ? updatedFp : p,
+      );
       currentFloorPlan.value = updatedFp;
 
       if (currentFloor.value?.id === floorId) {
@@ -630,7 +665,9 @@ export class HaFloorplanPanel extends LitElement {
       }
     } catch (err) {
       console.error("Error deleting floor:", err);
-      alert(`Failed to delete floor: ${err instanceof Error ? err.message : err}`);
+      alert(
+        `Failed to delete floor: ${err instanceof Error ? err.message : err}`,
+      );
     }
   }
 
@@ -648,11 +685,13 @@ export class HaFloorplanPanel extends LitElement {
         name,
       });
 
-      const updatedFloors = fp.floors.map(f =>
-        f.id === floorId ? { ...f, name } : f
+      const updatedFloors = fp.floors.map((f) =>
+        f.id === floorId ? { ...f, name } : f,
       );
       const updatedFp = { ...fp, floors: updatedFloors };
-      this._floorPlans = this._floorPlans.map(p => p.id === fp.id ? updatedFp : p);
+      this._floorPlans = this._floorPlans.map((p) =>
+        p.id === fp.id ? updatedFp : p,
+      );
       currentFloorPlan.value = updatedFp;
 
       if (currentFloor.value?.id === floorId) {
@@ -664,13 +703,17 @@ export class HaFloorplanPanel extends LitElement {
   }
 
   private _openImportExport(): void {
-    const dialog = this.shadowRoot?.querySelector("fpb-import-export-dialog") as FpbImportExportDialog | null;
+    const dialog = this.shadowRoot?.querySelector(
+      "fpb-import-export-dialog",
+    ) as FpbImportExportDialog | null;
     dialog?.show();
   }
 
   private async _handleFloorsImported(e: CustomEvent): Promise<void> {
     const { floorPlan, switchTo } = e.detail;
-    this._floorPlans = this._floorPlans.map(p => p.id === floorPlan.id ? floorPlan : p);
+    this._floorPlans = this._floorPlans.map((p) =>
+      p.id === floorPlan.id ? floorPlan : p,
+    );
     currentFloorPlan.value = floorPlan;
     if (switchTo) {
       clearHistory();
@@ -700,9 +743,6 @@ export class HaFloorplanPanel extends LitElement {
 
   private _handleRoomChipClick(roomId: string | null): void {
     if (roomId === null) {
-      if (focusedRoomId.value === null) {
-        focusedRoomId.value = "__reset__";
-      }
       focusedRoomId.value = null;
       occupancyPanelTarget.value = null;
     } else if (focusedRoomId.value === roomId) {
@@ -750,9 +790,9 @@ export class HaFloorplanPanel extends LitElement {
           <ha-icon icon="mdi:home-outline" style="--mdc-icon-size: 16px;"></ha-icon>
           <span>All</span>
         </button>
-        ${sortedRooms.map(room => {
+        ${sortedRooms.map((room) => {
           const area = room.ha_area_id
-            ? this._haAreas.find(a => a.area_id === room.ha_area_id)
+            ? this._haAreas.find((a) => a.area_id === room.ha_area_id)
             : null;
           const icon = area?.icon || "mdi:floor-plan";
           const displayName = area?.name ?? room.name;
@@ -778,8 +818,9 @@ export class HaFloorplanPanel extends LitElement {
     return html`
       <div class="viewer-toolbar">
         <ha-icon icon="mdi:floor-plan"></ha-icon>
-        ${floors.length > 1
-          ? html`
+        ${
+          floors.length > 1
+            ? html`
               <select
                 class="floor-select"
                 .value=${activeFloorId ?? ""}
@@ -793,10 +834,12 @@ export class HaFloorplanPanel extends LitElement {
                 )}
               </select>
             `
-          : null}
+            : null
+        }
         <span style="flex:1"></span>
-        ${this._isAdmin
-          ? html`
+        ${
+          this._isAdmin
+            ? html`
               <button
                 class="edit-toggle ${this._editorMode ? "active" : ""}"
                 @click=${this._toggleEditorMode}
@@ -806,7 +849,8 @@ export class HaFloorplanPanel extends LitElement {
                 <span>${this._editorMode ? "Done" : "Edit"}</span>
               </button>
             `
-          : null}
+            : null
+        }
       </div>
     `;
   }
@@ -890,24 +934,35 @@ export class HaFloorplanPanel extends LitElement {
 
             <div class="canvas-container">
               <fpb-canvas .hass=${this.hass}></fpb-canvas>
-              ${this._occupancyPanelTarget ? html`
+              ${
+                this._occupancyPanelTarget
+                  ? html`
                 <fpb-occupancy-panel
                   class="floating-panel"
                   .hass=${this.hass}
                   .targetId=${this._occupancyPanelTarget.id}
                   .targetName=${this._occupancyPanelTarget.name}
                   .targetType=${this._occupancyPanelTarget.type}
-                  @close-panel=${() => { occupancyPanelTarget.value = null; focusedRoomId.value = null; }}
+                  @close-panel=${() => {
+                    occupancyPanelTarget.value = null;
+                    focusedRoomId.value = null;
+                  }}
                 ></fpb-occupancy-panel>
-              ` : null}
-              ${this._devicePanelTarget ? html`
+              `
+                  : null
+              }
+              ${
+                this._devicePanelTarget
+                  ? html`
                 <fpb-device-panel
                   class="floating-panel"
                   .hass=${this.hass}
                   .placementId=${this._devicePanelTarget.id}
                   .deviceType=${this._devicePanelTarget.type}
                 ></fpb-device-panel>
-              ` : null}
+              `
+                  : null
+              }
             </div>
           </div>
         </div>

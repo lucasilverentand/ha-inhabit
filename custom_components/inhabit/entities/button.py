@@ -96,10 +96,12 @@ async def async_setup_entry(
                     )
                     return
 
-    async_dispatcher_connect(
-        hass,
-        f"{DOMAIN}_sensor_added",
-        async_add_button,
+    config_entry.async_on_unload(
+        async_dispatcher_connect(
+            hass,
+            f"{DOMAIN}_sensor_added",
+            async_add_button,
+        )
     )
 
     @callback
@@ -110,10 +112,12 @@ async def async_setup_entry(
             _LOGGER.info("Removing occupancy override button for region %s", region_id)
             hass.async_create_task(entity.async_remove())
 
-    async_dispatcher_connect(
-        hass,
-        f"{DOMAIN}_sensor_removed",
-        async_remove_button,
+    config_entry.async_on_unload(
+        async_dispatcher_connect(
+            hass,
+            f"{DOMAIN}_sensor_removed",
+            async_remove_button,
+        )
     )
 
 

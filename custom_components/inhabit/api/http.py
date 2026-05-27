@@ -9,12 +9,15 @@ from aiohttp import web
 from homeassistant.components.http import HomeAssistantView
 from homeassistant.core import HomeAssistant
 
-from ..const import DOMAIN
+from ..const import DOMAIN, MAX_IMAGE_SIZE
 
 if TYPE_CHECKING:
     from ..store.image_store import ImageStore
 
 _LOGGER = logging.getLogger(__name__)
+
+HASS_USER_KEY = "hass_user"
+UPLOAD_CHUNK_SIZE = 64 * 1024
 
 
 def async_register_http_handlers(hass: HomeAssistant) -> None:
@@ -31,9 +34,13 @@ class ImageUploadView(HomeAssistantView):
     url = "/api/inhabit/images/upload"
     name = "api:inhabit:images:upload"
     requires_auth = True
+    requires_admin = True
 
     async def post(self, request: web.Request) -> web.Response:
         """Handle POST request for image upload."""
+        if not _request_user_is_admin(request):
+            return _admin_required_response()
+
         hass: HomeAssistant = request.app["hass"]
         image_store: ImageStore = hass.data[DOMAIN]["image_store"]
 
@@ -54,8 +61,15 @@ class ImageUploadView(HomeAssistantView):
                 status=400,
             )
 
-        # Read file content
-        content = await field.read()
+        # Read file content without buffering oversized uploads entirely.
+        content = bytearray()
+        while chunk := await field.read_chunk(UPLOAD_CHUNK_SIZE):
+            content.extend(chunk)
+            if len(content) > MAX_IMAGE_SIZE:
+                return web.json_response(
+                    {"error": "Image too large"},
+                    status=413,
+                )
 
         if not content:
             return web.json_response(
@@ -64,7 +78,7 @@ class ImageUploadView(HomeAssistantView):
             )
 
         # Save image
-        image_id = await image_store.async_save_image(content, filename)
+        image_id = await image_store.async_save_image(bytes(content), filename)
         if not image_id:
             return web.json_response(
                 {"error": "Failed to save image"},
@@ -101,9 +115,13 @@ class ImageDeleteView(HomeAssistantView):
     url = "/api/inhabit/images/{image_id}"
     name = "api:inhabit:images:delete"
     requires_auth = True
+    requires_admin = True
 
     async def delete(self, request: web.Request, image_id: str) -> web.Response:
         """Handle DELETE request to remove an image."""
+        if not _request_user_is_admin(request):
+            return _admin_required_response()
+
         hass: HomeAssistant = request.app["hass"]
         image_store: ImageStore = hass.data[DOMAIN]["image_store"]
 
@@ -114,3 +132,17 @@ class ImageDeleteView(HomeAssistantView):
                 {"error": "Image not found"},
                 status=404,
             )
+
+
+def _request_user_is_admin(request: web.Request) -> bool:
+    """Return whether the authenticated Home Assistant user is an admin."""
+    user = request.get(HASS_USER_KEY)
+    return bool(getattr(user, "is_admin", False))
+
+
+def _admin_required_response() -> web.Response:
+    """Return a consistent admin-only response."""
+    return web.json_response(
+        {"error": "Admin privileges required"},
+        status=403,
+    )

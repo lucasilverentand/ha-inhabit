@@ -7,14 +7,17 @@
  * and angle group constraints (pair-based angle preservation) on edges.
  */
 
-import type { Coordinates, Node, Edge, WallDirection } from "../types";
+import type { Coordinates, Edge, Node, WallDirection } from "../types";
 import { distance, fitLine, projectOntoLine } from "./geometry";
 
 export interface NodeGraph {
   nodes: Map<string, Node>;
   edges: Map<string, Edge>;
   /** Map from node ID to list of edges connected at that node */
-  nodeToEdges: Map<string, Array<{ edgeId: string; endpoint: 'start' | 'end' }>>;
+  nodeToEdges: Map<
+    string,
+    Array<{ edgeId: string; endpoint: "start" | "end" }>
+  >;
 }
 
 export interface NodeUpdate {
@@ -45,7 +48,9 @@ type PositionMap = Map<string, Coordinates>;
 // Debug logging (set to true or run `localStorage.setItem('inhabit_debug_solver', '1')`)
 // ─────────────────────────────────────────────────────────────────────────────
 
-const DEBUG = typeof localStorage !== 'undefined' && localStorage.getItem('inhabit_debug_solver') === '1';
+const DEBUG =
+  typeof localStorage !== "undefined" &&
+  localStorage.getItem("inhabit_debug_solver") === "1";
 
 const LOG_PREFIX = "%c[constraint]";
 const LOG_STYLE = "color:#8b5cf6;font-weight:bold";
@@ -64,14 +69,14 @@ function fmtEdge(edge: Edge, nodeMap: Map<string, Node>): string {
   const constraints: string[] = [];
   if (edge.direction !== "free") constraints.push(edge.direction);
   if (edge.length_locked) constraints.push("len🔒");
-  if (edge.angle_group) constraints.push(`ang:${edge.angle_group.slice(0,4)}`);
+  if (edge.angle_group) constraints.push(`ang:${edge.angle_group.slice(0, 4)}`);
   const cStr = constraints.length > 0 ? ` [${constraints.join(",")}]` : "";
   const len = s && e ? distance(s, e).toFixed(1) : "?";
   return `${edge.id.slice(0, 8)}… (${len}cm${cStr})`;
 }
 
 function fmtNodeId(id: string): string {
-  return id.slice(0, 8) + "…";
+  return `${id.slice(0, 8)}…`;
 }
 
 /**
@@ -80,7 +85,10 @@ function fmtNodeId(id: string): string {
 export function buildNodeGraph(nodes: Node[], edges: Edge[]): NodeGraph {
   const nodesMap = new Map<string, Node>();
   const edgesMap = new Map<string, Edge>();
-  const nodeToEdges = new Map<string, Array<{ edgeId: string; endpoint: 'start' | 'end' }>>();
+  const nodeToEdges = new Map<
+    string,
+    Array<{ edgeId: string; endpoint: "start" | "end" }>
+  >();
 
   for (const node of nodes) {
     nodesMap.set(node.id, node);
@@ -92,12 +100,14 @@ export function buildNodeGraph(nodes: Node[], edges: Edge[]): NodeGraph {
     if (!nodeToEdges.has(edge.start_node)) {
       nodeToEdges.set(edge.start_node, []);
     }
-    nodeToEdges.get(edge.start_node)!.push({ edgeId: edge.id, endpoint: 'start' });
+    nodeToEdges
+      .get(edge.start_node)!
+      .push({ edgeId: edge.id, endpoint: "start" });
 
     if (!nodeToEdges.has(edge.end_node)) {
       nodeToEdges.set(edge.end_node, []);
     }
-    nodeToEdges.get(edge.end_node)!.push({ edgeId: edge.id, endpoint: 'end' });
+    nodeToEdges.get(edge.end_node)!.push({ edgeId: edge.id, endpoint: "end" });
   }
 
   return { nodes: nodesMap, edges: edgesMap, nodeToEdges };
@@ -150,7 +160,8 @@ function bfsEdgeOrder(graph: NodeGraph, pinned: Set<string>): Edge[] {
 
       orderedEdges.push(edge);
 
-      const otherNodeId = edge.start_node === nodeId ? edge.end_node : edge.start_node;
+      const otherNodeId =
+        edge.start_node === nodeId ? edge.end_node : edge.start_node;
       if (!visitedNodes.has(otherNodeId)) {
         visitedNodes.add(otherNodeId);
         queue.push(otherNodeId);
@@ -171,7 +182,7 @@ function constrainPartnerTo(
   _anchorNodeId: string,
   anchorPos: Coordinates,
   partnerPos: Coordinates,
-  graph: NodeGraph
+  graph: NodeGraph,
 ): Coordinates {
   let result: Coordinates = { x: partnerPos.x, y: partnerPos.y };
 
@@ -211,7 +222,7 @@ function constrainSymmetric(
   edge: Edge,
   startPos: Coordinates,
   endPos: Coordinates,
-  graph: NodeGraph
+  graph: NodeGraph,
 ): { idealStart: Coordinates; idealEnd: Coordinates } {
   const origStart = graph.nodes.get(edge.start_node)!;
   const origEnd = graph.nodes.get(edge.end_node)!;
@@ -240,7 +251,7 @@ function constrainSymmetric(
     const currentDist = Math.sqrt(dx * dx + dy * dy);
 
     if (currentDist > 0 && originalLength > 0) {
-      const halfScale = (originalLength / 2) / (currentDist / 2);
+      const halfScale = originalLength / 2 / (currentDist / 2);
       s = {
         x: midX - (dx / 2) * halfScale,
         y: midY - (dy / 2) * halfScale,
@@ -263,7 +274,7 @@ function applyEdgeConstraint(
   startPos: Coordinates,
   endPos: Coordinates,
   pinned: Set<string>,
-  graph: NodeGraph
+  graph: NodeGraph,
 ): { idealStart: Coordinates; idealEnd: Coordinates } {
   const startPinned = pinned.has(edge.start_node);
   const endPinned = pinned.has(edge.end_node);
@@ -274,12 +285,24 @@ function applyEdgeConstraint(
   }
 
   if (startPinned) {
-    const idealEnd = constrainPartnerTo(edge, edge.start_node, startPos, endPos, graph);
+    const idealEnd = constrainPartnerTo(
+      edge,
+      edge.start_node,
+      startPos,
+      endPos,
+      graph,
+    );
     return { idealStart: startPos, idealEnd };
   }
 
   if (endPinned) {
-    const idealStart = constrainPartnerTo(edge, edge.end_node, endPos, startPos, graph);
+    const idealStart = constrainPartnerTo(
+      edge,
+      edge.end_node,
+      endPos,
+      startPos,
+      graph,
+    );
     return { idealStart, idealEnd: endPos };
   }
 
@@ -293,8 +316,12 @@ function applyEdgeConstraint(
  */
 function computeViolations(
   graph: NodeGraph,
-  positions: PositionMap
-): { maxViolation: number; violatingEdgeIds: string[]; magnitudes: Map<string, number> } {
+  positions: PositionMap,
+): {
+  maxViolation: number;
+  violatingEdgeIds: string[];
+  magnitudes: Map<string, number>;
+} {
   let maxViolation = 0;
   const violatingEdgeIds: string[] = [];
   const magnitudes = new Map<string, number>();
@@ -367,32 +394,40 @@ function computeViolations(
     if (!sharedPos) continue;
 
     let groupViolation = 0;
-    let totalLen = 0;
-    let edgeCount = 0;
+    let _totalLen = 0;
+    let _edgeCount = 0;
 
     // Check all pairs of edges in the group for relative angle deviation
     for (let i = 0; i < group.edgeIds.length; i++) {
       const ei = graph.edges.get(group.edgeIds[i])!;
-      const otherIId = ei.start_node === group.sharedNodeId ? ei.end_node : ei.start_node;
+      const otherIId =
+        ei.start_node === group.sharedNodeId ? ei.end_node : ei.start_node;
       const otherIPos = positions.get(otherIId);
       if (!otherIPos) continue;
 
-      const currentAngleI = Math.atan2(otherIPos.y - sharedPos.y, otherIPos.x - sharedPos.x);
+      const currentAngleI = Math.atan2(
+        otherIPos.y - sharedPos.y,
+        otherIPos.x - sharedPos.x,
+      );
       let driftI = currentAngleI - group.originalAngles[i];
       while (driftI > Math.PI) driftI -= 2 * Math.PI;
       while (driftI < -Math.PI) driftI += 2 * Math.PI;
 
       const lenI = distance(sharedPos, otherIPos);
-      totalLen += lenI;
-      edgeCount++;
+      _totalLen += lenI;
+      _edgeCount++;
 
       for (let j = i + 1; j < group.edgeIds.length; j++) {
         const ej = graph.edges.get(group.edgeIds[j])!;
-        const otherJId = ej.start_node === group.sharedNodeId ? ej.end_node : ej.start_node;
+        const otherJId =
+          ej.start_node === group.sharedNodeId ? ej.end_node : ej.start_node;
         const otherJPos = positions.get(otherJId);
         if (!otherJPos) continue;
 
-        const currentAngleJ = Math.atan2(otherJPos.y - sharedPos.y, otherJPos.x - sharedPos.x);
+        const currentAngleJ = Math.atan2(
+          otherJPos.y - sharedPos.y,
+          otherJPos.x - sharedPos.x,
+        );
         let driftJ = currentAngleJ - group.originalAngles[j];
         while (driftJ > Math.PI) driftJ -= 2 * Math.PI;
         while (driftJ < -Math.PI) driftJ += 2 * Math.PI;
@@ -428,13 +463,19 @@ function computeViolations(
       const e = graph.edges.get(eid)!;
       const sPos = positions.get(e.start_node);
       const ePos = positions.get(e.end_node);
-      if (!sPos || !ePos) { lengths.push(0); continue; }
+      if (!sPos || !ePos) {
+        lengths.push(0);
+        continue;
+      }
       lengths.push(distance(sPos, ePos));
     }
     // Max deviation from target length
     let groupViolation = 0;
     for (const len of lengths) {
-      groupViolation = Math.max(groupViolation, Math.abs(len - group.targetLength));
+      groupViolation = Math.max(
+        groupViolation,
+        Math.abs(len - group.targetLength),
+      );
     }
 
     // Record magnitude for first edge
@@ -466,7 +507,7 @@ function solveIterative(
   graph: NodeGraph,
   pinned: Set<string>,
   positions: PositionMap,
-  preExistingViolations?: Map<string, number>
+  preExistingViolations?: Map<string, number>,
 ): SolverResult {
   const edgeOrder = bfsEdgeOrder(graph, pinned);
   const constrainedEdges = edgeOrder.filter(hasConstraint);
@@ -478,25 +519,33 @@ function solveIterative(
 
   if (DEBUG) {
     console.groupCollapsed(
-      LOG_PREFIX + " solveIterative: %c%d constrained edges, %d pinned nodes",
-      LOG_STYLE, LOG_DIM,
+      `${LOG_PREFIX} solveIterative: %c%d constrained edges, %d pinned nodes`,
+      LOG_STYLE,
+      LOG_DIM,
       constrainedEdges.length,
-      pinned.size
+      pinned.size,
     );
     console.log(
-      "  Pinned nodes:", [...pinned].map(fmtNodeId).join(", ") || "(none)"
+      "  Pinned nodes:",
+      [...pinned].map(fmtNodeId).join(", ") || "(none)",
     );
     console.log(
       "  Constrained edges:",
-      constrainedEdges.map(e => fmtEdge(e, graph.nodes)).join(" | ") || "(none)"
+      constrainedEdges.map((e) => fmtEdge(e, graph.nodes)).join(" | ") ||
+        "(none)",
     );
     if (preExistingViolations && preExistingViolations.size > 0) {
       console.log(
         "  Pre-existing violations:",
-        [...preExistingViolations.entries()].map(([id, mag]) => {
-          const e = graph.edges.get(id);
-          return (e ? fmtEdge(e, graph.nodes) : id.slice(0, 8) + "…") + ` (${mag.toFixed(2)})`;
-        }).join(" | ")
+        [...preExistingViolations.entries()]
+          .map(([id, mag]) => {
+            const e = graph.edges.get(id);
+            return (
+              (e ? fmtEdge(e, graph.nodes) : `${id.slice(0, 8)}…`) +
+              ` (${mag.toFixed(2)})`
+            );
+          })
+          .join(" | "),
       );
     }
   }
@@ -517,13 +566,17 @@ function solveIterative(
       if (!startPos || !endPos) continue;
 
       const { idealStart, idealEnd } = applyEdgeConstraint(
-        edge, startPos, endPos, settled, graph
+        edge,
+        startPos,
+        endPos,
+        settled,
+        graph,
       );
 
       if (!pinned.has(edge.start_node)) {
         const delta = Math.max(
           Math.abs(idealStart.x - startPos.x),
-          Math.abs(idealStart.y - startPos.y)
+          Math.abs(idealStart.y - startPos.y),
         );
         maxDelta = Math.max(maxDelta, delta);
         positions.set(edge.start_node, idealStart);
@@ -532,7 +585,7 @@ function solveIterative(
       if (!pinned.has(edge.end_node)) {
         const delta = Math.max(
           Math.abs(idealEnd.x - endPos.x),
-          Math.abs(idealEnd.y - endPos.y)
+          Math.abs(idealEnd.y - endPos.y),
         );
         maxDelta = Math.max(maxDelta, delta);
         positions.set(edge.end_node, idealEnd);
@@ -554,7 +607,7 @@ function solveIterative(
         const projected = projectOntoLine(pos, group.anchor, group.dir);
         const delta = Math.max(
           Math.abs(projected.x - pos.x),
-          Math.abs(projected.y - pos.y)
+          Math.abs(projected.y - pos.y),
         );
         if (delta > EPSILON) {
           maxDelta = Math.max(maxDelta, delta);
@@ -564,7 +617,12 @@ function solveIterative(
     }
 
     // Angle group pass: enforce inter-edge angles at shared nodes
-    const angleDelta = enforceAngleGroups(graph, angleGroups, pinned, positions);
+    const angleDelta = enforceAngleGroups(
+      graph,
+      angleGroups,
+      pinned,
+      positions,
+    );
     maxDelta = Math.max(maxDelta, angleDelta);
 
     // Link group pass: synchronize linked edge lengths
@@ -578,7 +636,10 @@ function solveIterative(
   const updates: NodeUpdate[] = [];
   for (const [nodeId, pos] of positions) {
     const orig = graph.nodes.get(nodeId)!;
-    if (Math.abs(pos.x - orig.x) > EPSILON || Math.abs(pos.y - orig.y) > EPSILON) {
+    if (
+      Math.abs(pos.x - orig.x) > EPSILON ||
+      Math.abs(pos.y - orig.y) > EPSILON
+    ) {
       updates.push({ nodeId, x: pos.x, y: pos.y });
     }
   }
@@ -586,7 +647,11 @@ function solveIterative(
   const converged = maxDelta < EPSILON;
 
   if (!converged) {
-    const { violatingEdgeIds, maxViolation, magnitudes: postMagnitudes } = computeViolations(graph, positions);
+    const {
+      violatingEdgeIds,
+      maxViolation,
+      magnitudes: postMagnitudes,
+    } = computeViolations(graph, positions);
     // Block if: (a) new violation, or (b) pre-existing violation got worse
     const newViolations: string[] = [];
     for (const id of violatingEdgeIds) {
@@ -611,20 +676,33 @@ function solveIterative(
       if (DEBUG) {
         console.log(
           `${LOG_PREFIX} %cBLOCKED%c — ${iterationsUsed} iterations, maxDelta=${maxDelta.toFixed(3)}, maxViolation=${maxViolation.toFixed(3)}`,
-          LOG_STYLE, LOG_ERR, ""
+          LOG_STYLE,
+          LOG_ERR,
+          "",
         );
-        console.log("  All violating edges:", violatingEdgeIds.map(id => {
-          const e = graph.edges.get(id);
-          return e ? fmtEdge(e, graph.nodes) : id.slice(0, 8) + "…";
-        }).join(" | "));
-        console.log("  NEW violations (blocking):", newViolations.map(id => {
-          const e = graph.edges.get(id);
-          if (!e) return id.slice(0, 8) + "…";
-          const sPos = positions.get(e.start_node);
-          const ePos = positions.get(e.end_node);
-          const posInfo = sPos && ePos ? ` now ${fmtPos(sPos)}→${fmtPos(ePos)}` : "";
-          return fmtEdge(e, graph.nodes) + posInfo;
-        }).join(" | "));
+        console.log(
+          "  All violating edges:",
+          violatingEdgeIds
+            .map((id) => {
+              const e = graph.edges.get(id);
+              return e ? fmtEdge(e, graph.nodes) : `${id.slice(0, 8)}…`;
+            })
+            .join(" | "),
+        );
+        console.log(
+          "  NEW violations (blocking):",
+          newViolations
+            .map((id) => {
+              const e = graph.edges.get(id);
+              if (!e) return `${id.slice(0, 8)}…`;
+              const sPos = positions.get(e.start_node);
+              const ePos = positions.get(e.end_node);
+              const posInfo =
+                sPos && ePos ? ` now ${fmtPos(sPos)}→${fmtPos(ePos)}` : "";
+              return fmtEdge(e, graph.nodes) + posInfo;
+            })
+            .join(" | "),
+        );
         console.groupEnd();
       }
       return { updates, blocked: true, blockedBy: newViolations };
@@ -633,13 +711,19 @@ function solveIterative(
     if (DEBUG) {
       console.log(
         `${LOG_PREFIX} %cDID NOT CONVERGE%c but no new violations — ${iterationsUsed} iters, maxDelta=${maxDelta.toFixed(3)}`,
-        LOG_STYLE, LOG_WARN, ""
+        LOG_STYLE,
+        LOG_WARN,
+        "",
       );
     }
   } else if (DEBUG) {
     console.log(
-      LOG_PREFIX + " %cConverged%c in %d iteration(s), %d node(s) moved",
-      LOG_STYLE, LOG_OK, "", iterationsUsed, updates.length
+      `${LOG_PREFIX} %cConverged%c in %d iteration(s), %d node(s) moved`,
+      LOG_STYLE,
+      LOG_OK,
+      "",
+      iterationsUsed,
+      updates.length,
     );
   }
 
@@ -662,7 +746,7 @@ interface CollinearGroupInfo {
  */
 function buildCollinearGroups(
   graph: NodeGraph,
-  positions: PositionMap
+  positions: PositionMap,
 ): Map<string, CollinearGroupInfo> {
   const groups = new Map<string, CollinearGroupInfo>();
 
@@ -708,9 +792,7 @@ interface AngleGroupInfo {
  * Supports N ≥ 2 edges sharing a common node.
  * Uses graph.nodes (original positions) to compute reference angles.
  */
-function buildAngleGroups(
-  graph: NodeGraph
-): Map<string, AngleGroupInfo> {
+function buildAngleGroups(graph: NodeGraph): Map<string, AngleGroupInfo> {
   const groups = new Map<string, AngleGroupInfo>();
 
   // Collect edge IDs per group
@@ -727,7 +809,7 @@ function buildAngleGroups(
     if (edgeIds.length < 2) continue;
 
     // Find shared node: node common to ALL edges
-    const edgeObjs = edgeIds.map(id => graph.edges.get(id)!);
+    const edgeObjs = edgeIds.map((id) => graph.edges.get(id)!);
     // Count node appearances — shared node appears in every edge
     const nodeCount = new Map<string, number>();
     for (const e of edgeObjs) {
@@ -736,7 +818,10 @@ function buildAngleGroups(
     }
     let sharedNodeId: string | null = null;
     for (const [nid, count] of nodeCount) {
-      if (count === edgeIds.length) { sharedNodeId = nid; break; }
+      if (count === edgeIds.length) {
+        sharedNodeId = nid;
+        break;
+      }
     }
     if (!sharedNodeId) continue;
 
@@ -749,8 +834,13 @@ function buildAngleGroups(
     for (const e of edgeObjs) {
       const otherId = e.start_node === sharedNodeId ? e.end_node : e.start_node;
       const other = graph.nodes.get(otherId);
-      if (!other) { valid = false; break; }
-      originalAngles.push(Math.atan2(other.y - sharedNode.y, other.x - sharedNode.x));
+      if (!other) {
+        valid = false;
+        break;
+      }
+      originalAngles.push(
+        Math.atan2(other.y - sharedNode.y, other.x - sharedNode.x),
+      );
     }
     if (!valid) continue;
 
@@ -776,7 +866,7 @@ function enforceAngleGroups(
   graph: NodeGraph,
   angleGroups: Map<string, AngleGroupInfo>,
   pinned: Set<string>,
-  positions: PositionMap
+  positions: PositionMap,
 ): number {
   let maxDelta = 0;
 
@@ -793,12 +883,18 @@ function enforceAngleGroups(
     let valid = true;
     for (let i = 0; i < N; i++) {
       const e = graph.edges.get(group.edgeIds[i])!;
-      const otherId = e.start_node === group.sharedNodeId ? e.end_node : e.start_node;
+      const otherId =
+        e.start_node === group.sharedNodeId ? e.end_node : e.start_node;
       const otherPos = positions.get(otherId);
-      if (!otherPos) { valid = false; break; }
+      if (!otherPos) {
+        valid = false;
+        break;
+      }
       outerIds.push(otherId);
       outerPositions.push(otherPos);
-      currentAngles.push(Math.atan2(otherPos.y - sharedPos.y, otherPos.x - sharedPos.x));
+      currentAngles.push(
+        Math.atan2(otherPos.y - sharedPos.y, otherPos.x - sharedPos.x),
+      );
     }
     if (!valid) continue;
 
@@ -812,7 +908,7 @@ function enforceAngleGroups(
     }
 
     // Determine which outer nodes are pinned
-    const isPinned = outerIds.map(id => pinned.has(id));
+    const isPinned = outerIds.map((id) => pinned.has(id));
     const pinnedCount = isPinned.filter(Boolean).length;
 
     // If all outer nodes are pinned, skip
@@ -820,7 +916,8 @@ function enforceAngleGroups(
 
     // Compute mean drift using circular mean
     // If any outer nodes are pinned, use only their drifts as the reference
-    let sinSum = 0, cosSum = 0;
+    let sinSum = 0,
+      cosSum = 0;
     if (pinnedCount > 0) {
       for (let i = 0; i < N; i++) {
         if (isPinned[i]) {
@@ -847,7 +944,7 @@ function enforceAngleGroups(
       };
       const delta = Math.max(
         Math.abs(newPos.x - outerPositions[i].x),
-        Math.abs(newPos.y - outerPositions[i].y)
+        Math.abs(newPos.y - outerPositions[i].y),
       );
       maxDelta = Math.max(maxDelta, delta);
       positions.set(outerIds[i], newPos);
@@ -909,7 +1006,7 @@ function enforceLinkGroups(
   graph: NodeGraph,
   linkGroups: Map<string, LinkGroupInfo>,
   pinned: Set<string>,
-  positions: PositionMap
+  positions: PositionMap,
 ): number {
   let maxDelta = 0;
 
@@ -938,7 +1035,10 @@ function enforceLinkGroups(
           x: sPos.x + dx * scale,
           y: sPos.y + dy * scale,
         };
-        const delta = Math.max(Math.abs(newEnd.x - ePos.x), Math.abs(newEnd.y - ePos.y));
+        const delta = Math.max(
+          Math.abs(newEnd.x - ePos.x),
+          Math.abs(newEnd.y - ePos.y),
+        );
         maxDelta = Math.max(maxDelta, delta);
         positions.set(edge.end_node, newEnd);
       } else if (endPinned) {
@@ -946,7 +1046,10 @@ function enforceLinkGroups(
           x: ePos.x - dx * scale,
           y: ePos.y - dy * scale,
         };
-        const delta = Math.max(Math.abs(newStart.x - sPos.x), Math.abs(newStart.y - sPos.y));
+        const delta = Math.max(
+          Math.abs(newStart.x - sPos.x),
+          Math.abs(newStart.y - sPos.y),
+        );
         maxDelta = Math.max(maxDelta, delta);
         positions.set(edge.start_node, newStart);
       } else {
@@ -962,8 +1065,10 @@ function enforceLinkGroups(
           y: midY + (dy / 2) * halfScale,
         };
         const delta = Math.max(
-          Math.abs(newStart.x - sPos.x), Math.abs(newStart.y - sPos.y),
-          Math.abs(newEnd.x - ePos.x), Math.abs(newEnd.y - ePos.y)
+          Math.abs(newStart.x - sPos.x),
+          Math.abs(newStart.y - sPos.y),
+          Math.abs(newEnd.x - ePos.x),
+          Math.abs(newEnd.y - ePos.y),
         );
         maxDelta = Math.max(maxDelta, delta);
         positions.set(edge.start_node, newStart);
@@ -982,7 +1087,7 @@ function enforceLinkGroups(
 export function solveCollinearTotalLength(
   graph: NodeGraph,
   edgeIds: string[],
-  newTotal: number
+  newTotal: number,
 ): SolverResult {
   // Gather all unique nodes from these edges
   const nodeIdSet = new Set<string>();
@@ -1021,11 +1126,17 @@ export function solveCollinearTotalLength(
   }
 
   // Find outermost nodes
-  let minT = Infinity, maxT = -Infinity;
+  let minT = Infinity,
+    maxT = -Infinity;
   let minNode = "";
   for (const [nid, t] of nodeTs) {
-    if (t < minT) { minT = t; minNode = nid; }
-    if (t > maxT) { maxT = t; }
+    if (t < minT) {
+      minT = t;
+      minNode = nid;
+    }
+    if (t > maxT) {
+      maxT = t;
+    }
   }
 
   const currentTotal = maxT - minT;
@@ -1059,8 +1170,11 @@ export function solveCollinearTotalLength(
     const pos = positions.get(nid);
     const orig = graph.nodes.get(nid)!;
     if (!pos) continue;
-    if (Math.abs(pos.x - orig.x) > EPSILON || Math.abs(pos.y - orig.y) > EPSILON) {
-      if (!result.updates.some(u => u.nodeId === nid)) {
+    if (
+      Math.abs(pos.x - orig.x) > EPSILON ||
+      Math.abs(pos.y - orig.y) > EPSILON
+    ) {
+      if (!result.updates.some((u) => u.nodeId === nid)) {
         result.updates.push({ nodeId: nid, x: pos.x, y: pos.y });
       }
     }
@@ -1090,7 +1204,7 @@ export function solveNodeMove(
   graph: NodeGraph,
   nodeId: string,
   newX: number,
-  newY: number
+  newY: number,
 ): SolverResult {
   let effectiveX = newX;
   let effectiveY = newY;
@@ -1116,7 +1230,10 @@ export function solveNodeMove(
 
   // Snapshot pre-existing violations so we don't blame this move for them
   const originalPositions = snapshotPositions(graph);
-  const { magnitudes: preMagnitudes } = computeViolations(graph, originalPositions);
+  const { magnitudes: preMagnitudes } = computeViolations(
+    graph,
+    originalPositions,
+  );
 
   const positions = snapshotPositions(graph);
   positions.set(nodeId, { x: effectiveX, y: effectiveY });
@@ -1130,7 +1247,7 @@ export function solveNodeMove(
   const result = solveIterative(graph, pinned, positions, preMagnitudes);
 
   // Always include the moved node itself in updates
-  const hasMovedNode = result.updates.some(u => u.nodeId === nodeId);
+  const hasMovedNode = result.updates.some((u) => u.nodeId === nodeId);
   if (!hasMovedNode) {
     const orig = graph.nodes.get(nodeId)!;
     if (orig.x !== effectiveX || orig.y !== effectiveY) {
@@ -1139,19 +1256,24 @@ export function solveNodeMove(
   }
 
   // Update the moved node's position to the effective (projected) position
-  const movedNodeUpdate = result.updates.find(u => u.nodeId === nodeId);
+  const movedNodeUpdate = result.updates.find((u) => u.nodeId === nodeId);
   if (movedNodeUpdate) {
     movedNodeUpdate.x = effectiveX;
     movedNodeUpdate.y = effectiveY;
   }
 
   // Filter out pinned nodes (except the actively moved node) from result updates
-  result.updates = result.updates.filter(u => u.nodeId === nodeId || !graph.nodes.get(u.nodeId)?.pinned);
+  result.updates = result.updates.filter(
+    (u) => u.nodeId === nodeId || !graph.nodes.get(u.nodeId)?.pinned,
+  );
 
   // Final violation check: if the solver converged but post-processing
   // introduced new constraint violations, block the move.
   if (!result.blocked) {
-    const { violatingEdgeIds, magnitudes: postMagnitudes } = computeViolations(graph, positions);
+    const { violatingEdgeIds, magnitudes: postMagnitudes } = computeViolations(
+      graph,
+      positions,
+    );
     const newViolations: string[] = [];
     for (const id of violatingEdgeIds) {
       const preMag = preMagnitudes.get(id);
@@ -1185,7 +1307,10 @@ function _findCollinearGroup(graph: NodeGraph, nodeId: string): string | null {
 }
 
 /** Collect all node IDs belonging to a collinear group. */
-function _collectCollinearNodeIds(graph: NodeGraph, groupId: string): Set<string> {
+function _collectCollinearNodeIds(
+  graph: NodeGraph,
+  groupId: string,
+): Set<string> {
   const nodeIds = new Set<string>();
   for (const [, edge] of graph.edges) {
     if (edge.collinear_group === groupId) {
@@ -1203,22 +1328,28 @@ function _collectCollinearNodeIds(graph: NodeGraph, groupId: string): Set<string
 export function solveEdgeLengthChange(
   graph: NodeGraph,
   edgeId: string,
-  newLength: number
+  newLength: number,
 ): SolverResult {
   const edge = graph.edges.get(edgeId);
   if (!edge) return { updates: [], blocked: false };
 
   if (DEBUG) {
     console.log(
-      LOG_PREFIX + " solveEdgeLengthChange: %c%s → %scm",
-      LOG_STYLE, LOG_DIM,
+      `${LOG_PREFIX} solveEdgeLengthChange: %c%s → %scm`,
+      LOG_STYLE,
+      LOG_DIM,
       fmtEdge(edge, graph.nodes),
-      newLength.toFixed(1)
+      newLength.toFixed(1),
     );
   }
 
   if (edge.length_locked) {
-    if (DEBUG) console.log(LOG_PREFIX + " %c→ BLOCKED: edge is length-locked", LOG_STYLE, LOG_ERR);
+    if (DEBUG)
+      console.log(
+        `${LOG_PREFIX} %c→ BLOCKED: edge is length-locked`,
+        LOG_STYLE,
+        LOG_ERR,
+      );
     return { updates: [], blocked: true, blockedBy: [edge.id] };
   }
 
@@ -1260,16 +1391,27 @@ export function solveEdgeLengthChange(
   const result = solveIterative(graph, pinned, positions);
 
   // Always include both endpoint updates
-  if (!result.updates.some(u => u.nodeId === edge.start_node)) {
-    result.updates.unshift({ nodeId: edge.start_node, x: newStartPos.x, y: newStartPos.y });
+  if (!result.updates.some((u) => u.nodeId === edge.start_node)) {
+    result.updates.unshift({
+      nodeId: edge.start_node,
+      x: newStartPos.x,
+      y: newStartPos.y,
+    });
   }
-  if (!result.updates.some(u => u.nodeId === edge.end_node)) {
-    result.updates.push({ nodeId: edge.end_node, x: newEndPos.x, y: newEndPos.y });
+  if (!result.updates.some((u) => u.nodeId === edge.end_node)) {
+    result.updates.push({
+      nodeId: edge.end_node,
+      x: newEndPos.x,
+      y: newEndPos.y,
+    });
   }
 
   // Filter out user-pinned nodes (except the two endpoints being changed) from result updates
-  result.updates = result.updates.filter(u =>
-    u.nodeId === edge.start_node || u.nodeId === edge.end_node || !graph.nodes.get(u.nodeId)?.pinned
+  result.updates = result.updates.filter(
+    (u) =>
+      u.nodeId === edge.start_node ||
+      u.nodeId === edge.end_node ||
+      !graph.nodes.get(u.nodeId)?.pinned,
   );
 
   // Non-convergence of neighbor propagation should not block the length change.
@@ -1283,7 +1425,9 @@ export function solveEdgeLengthChange(
 /**
  * Convert solver updates to a preview map keyed by node ID.
  */
-function updatesToPreview(updates: NodeUpdate[]): Map<string, { x: number; y: number }> {
+function updatesToPreview(
+  updates: NodeUpdate[],
+): Map<string, { x: number; y: number }> {
   const preview = new Map<string, { x: number; y: number }>();
   for (const update of updates) {
     preview.set(update.nodeId, { x: update.x, y: update.y });
@@ -1299,8 +1443,12 @@ export function previewNodeDrag(
   edges: Edge[],
   nodeId: string,
   newX: number,
-  newY: number
-): { positions: Map<string, { x: number; y: number }>; blocked: boolean; blockedBy?: string[] } {
+  newY: number,
+): {
+  positions: Map<string, { x: number; y: number }>;
+  blocked: boolean;
+  blockedBy?: string[];
+} {
   const graph = buildNodeGraph(nodes, edges);
   const result = solveNodeMove(graph, nodeId, newX, newY);
   return {
@@ -1317,7 +1465,7 @@ export function previewLengthChange(
   nodes: Node[],
   edges: Edge[],
   edgeId: string,
-  newLength: number
+  newLength: number,
 ): Map<string, { x: number; y: number }> {
   const graph = buildNodeGraph(nodes, edges);
   const result = solveEdgeLengthChange(graph, edgeId, newLength);
@@ -1331,7 +1479,7 @@ export function previewLengthChange(
 export function snapEdgeToConstraint(
   edge: Edge,
   direction: WallDirection,
-  nodeMap: Map<string, Node>
+  nodeMap: Map<string, Node>,
 ): { nodeUpdates: NodeUpdate[] } | null {
   if (direction === "free") return null;
 
@@ -1350,8 +1498,16 @@ export function snapEdgeToConstraint(
     const startLeft = startNode.x <= endNode.x;
     return {
       nodeUpdates: [
-        { nodeId: edge.start_node, x: startLeft ? midX - halfLen : midX + halfLen, y: midY },
-        { nodeId: edge.end_node, x: startLeft ? midX + halfLen : midX - halfLen, y: midY },
+        {
+          nodeId: edge.start_node,
+          x: startLeft ? midX - halfLen : midX + halfLen,
+          y: midY,
+        },
+        {
+          nodeId: edge.end_node,
+          x: startLeft ? midX + halfLen : midX - halfLen,
+          y: midY,
+        },
       ],
     };
   }
@@ -1362,8 +1518,16 @@ export function snapEdgeToConstraint(
     const startTop = startNode.y <= endNode.y;
     return {
       nodeUpdates: [
-        { nodeId: edge.start_node, x: midX, y: startTop ? midY - halfLen : midY + halfLen },
-        { nodeId: edge.end_node, x: midX, y: startTop ? midY + halfLen : midY - halfLen },
+        {
+          nodeId: edge.start_node,
+          x: midX,
+          y: startTop ? midY - halfLen : midY + halfLen,
+        },
+        {
+          nodeId: edge.end_node,
+          x: midX,
+          y: startTop ? midY + halfLen : midY - halfLen,
+        },
       ],
     };
   }
@@ -1378,7 +1542,7 @@ export function snapEdgeToConstraint(
 export function solveConstraintSnap(
   graph: NodeGraph,
   edgeId: string,
-  direction: WallDirection
+  direction: WallDirection,
 ): SolverResult {
   const edge = graph.edges.get(edgeId);
   if (!edge) return { updates: [], blocked: false };
@@ -1388,20 +1552,26 @@ export function solveConstraintSnap(
 
   if (DEBUG) {
     console.group(
-      LOG_PREFIX + " solveConstraintSnap: %csnap %s → %s",
-      LOG_STYLE, LOG_DIM,
+      `${LOG_PREFIX} solveConstraintSnap: %csnap %s → %s`,
+      LOG_STYLE,
+      LOG_DIM,
       fmtEdge(edge, graph.nodes),
-      direction
+      direction,
     );
     console.log(
-      `  Nodes: ${fmtNodeId(edge.start_node)} ${fmtPos(startNode)} → ${fmtNodeId(edge.end_node)} ${fmtPos(endNode)}`
+      `  Nodes: ${fmtNodeId(edge.start_node)} ${fmtPos(startNode)} → ${fmtNodeId(edge.end_node)} ${fmtPos(endNode)}`,
     );
   }
 
   const snapped = snapEdgeToConstraint(edge, direction, graph.nodes);
   if (!snapped) {
     if (DEBUG) {
-      console.log(LOG_PREFIX + " %cAlready satisfies %s — no-op", LOG_STYLE, LOG_OK, direction);
+      console.log(
+        `${LOG_PREFIX} %cAlready satisfies %s — no-op`,
+        LOG_STYLE,
+        LOG_OK,
+        direction,
+      );
       console.groupEnd();
     }
     return { updates: [], blocked: false };
@@ -1409,14 +1579,19 @@ export function solveConstraintSnap(
 
   // Snapshot pre-existing violations so we don't blame this operation for them
   const originalPositions = snapshotPositions(graph);
-  const { magnitudes: preMagnitudes } = computeViolations(graph, originalPositions);
+  const { magnitudes: preMagnitudes } = computeViolations(
+    graph,
+    originalPositions,
+  );
 
-  const newStart = snapped.nodeUpdates.find(u => u.nodeId === edge.start_node)!;
-  const newEnd = snapped.nodeUpdates.find(u => u.nodeId === edge.end_node)!;
+  const newStart = snapped.nodeUpdates.find(
+    (u) => u.nodeId === edge.start_node,
+  )!;
+  const newEnd = snapped.nodeUpdates.find((u) => u.nodeId === edge.end_node)!;
 
   if (DEBUG) {
     console.log(
-      `  Snap target: ${fmtNodeId(edge.start_node)} ${fmtPos(newStart)} → ${fmtNodeId(edge.end_node)} ${fmtPos(newEnd)}`
+      `  Snap target: ${fmtNodeId(edge.start_node)} ${fmtPos(newStart)} → ${fmtNodeId(edge.end_node)} ${fmtPos(newEnd)}`,
     );
   }
 
@@ -1434,32 +1609,45 @@ export function solveConstraintSnap(
   const result = solveIterative(graph, pinned, positions, preMagnitudes);
 
   // Always include snapped endpoint updates
-  if (!result.updates.some(u => u.nodeId === edge.start_node)) {
-    result.updates.unshift({ nodeId: edge.start_node, x: newStart.x, y: newStart.y });
+  if (!result.updates.some((u) => u.nodeId === edge.start_node)) {
+    result.updates.unshift({
+      nodeId: edge.start_node,
+      x: newStart.x,
+      y: newStart.y,
+    });
   }
-  if (!result.updates.some(u => u.nodeId === edge.end_node)) {
+  if (!result.updates.some((u) => u.nodeId === edge.end_node)) {
     result.updates.push({ nodeId: edge.end_node, x: newEnd.x, y: newEnd.y });
   }
 
   // Filter out user-pinned nodes (except the two endpoints being snapped) from result updates
-  result.updates = result.updates.filter(u =>
-    u.nodeId === edge.start_node || u.nodeId === edge.end_node || !graph.nodes.get(u.nodeId)?.pinned
+  result.updates = result.updates.filter(
+    (u) =>
+      u.nodeId === edge.start_node ||
+      u.nodeId === edge.end_node ||
+      !graph.nodes.get(u.nodeId)?.pinned,
   );
 
   if (DEBUG) {
     if (result.blocked) {
       console.log(
-        LOG_PREFIX + " %c→ SNAP BLOCKED by: %s",
-        LOG_STYLE, LOG_ERR,
-        (result.blockedBy || []).map(id => {
-          const e = graph.edges.get(id);
-          return e ? fmtEdge(e, graph.nodes) : id.slice(0, 8) + "…";
-        }).join(" | ")
+        `${LOG_PREFIX} %c→ SNAP BLOCKED by: %s`,
+        LOG_STYLE,
+        LOG_ERR,
+        (result.blockedBy || [])
+          .map((id) => {
+            const e = graph.edges.get(id);
+            return e ? fmtEdge(e, graph.nodes) : `${id.slice(0, 8)}…`;
+          })
+          .join(" | "),
       );
     } else {
       console.log(
-        LOG_PREFIX + " %c→ Snap OK%c, %d node(s) to update",
-        LOG_STYLE, LOG_OK, "", result.updates.length
+        `${LOG_PREFIX} %c→ Snap OK%c, %d node(s) to update`,
+        LOG_STYLE,
+        LOG_OK,
+        "",
+        result.updates.length,
       );
     }
     console.groupEnd();
@@ -1477,31 +1665,47 @@ export function checkConstraintsFeasible(
   nodes: Node[],
   edges: Edge[],
   edgeId: string,
-  proposed: { direction?: WallDirection; length_locked?: boolean; angle_group?: string | null }
+  proposed: {
+    direction?: WallDirection;
+    length_locked?: boolean;
+    angle_group?: string | null;
+  },
 ): { feasible: boolean; blockedBy?: string[] } {
   if (DEBUG) {
-    const propsStr = Object.entries(proposed).map(([k, v]) => `${k}=${v}`).join(", ");
+    const propsStr = Object.entries(proposed)
+      .map(([k, v]) => `${k}=${v}`)
+      .join(", ");
     console.group(
-      LOG_PREFIX + " checkConstraintsFeasible: %cedge %s → {%s}",
-      LOG_STYLE, LOG_DIM,
-      edgeId.slice(0, 8) + "…",
-      propsStr
+      `${LOG_PREFIX} checkConstraintsFeasible: %cedge %s → {%s}`,
+      LOG_STYLE,
+      LOG_DIM,
+      `${edgeId.slice(0, 8)}…`,
+      propsStr,
     );
   }
 
   // Snapshot pre-existing violations with the ORIGINAL edges
   const originalGraph = buildNodeGraph(nodes, edges);
   const originalPositions = snapshotPositions(originalGraph);
-  const { magnitudes: preMagnitudes } = computeViolations(originalGraph, originalPositions);
+  const { magnitudes: preMagnitudes } = computeViolations(
+    originalGraph,
+    originalPositions,
+  );
 
   // Build edges with the proposed change applied
-  const modifiedEdges = edges.map(e => {
+  const modifiedEdges = edges.map((e) => {
     if (e.id !== edgeId) return e;
     return {
       ...e,
-      ...(proposed.direction !== undefined && { direction: proposed.direction }),
-      ...(proposed.length_locked !== undefined && { length_locked: proposed.length_locked }),
-      ...(proposed.angle_group !== undefined && { angle_group: proposed.angle_group ?? undefined }),
+      ...(proposed.direction !== undefined && {
+        direction: proposed.direction,
+      }),
+      ...(proposed.length_locked !== undefined && {
+        length_locked: proposed.length_locked,
+      }),
+      ...(proposed.angle_group !== undefined && {
+        angle_group: proposed.angle_group ?? undefined,
+      }),
     };
   });
 
@@ -1520,12 +1724,16 @@ export function checkConstraintsFeasible(
   if (result.blocked) {
     if (DEBUG) {
       console.log(
-        LOG_PREFIX + " %c→ NOT FEASIBLE%c — blocked by: %s",
-        LOG_STYLE, LOG_ERR, "",
-        (result.blockedBy || []).map(id => {
-          const e = graph.edges.get(id);
-          return e ? fmtEdge(e, graph.nodes) : id.slice(0, 8) + "…";
-        }).join(" | ")
+        `${LOG_PREFIX} %c→ NOT FEASIBLE%c — blocked by: %s`,
+        LOG_STYLE,
+        LOG_ERR,
+        "",
+        (result.blockedBy || [])
+          .map((id) => {
+            const e = graph.edges.get(id);
+            return e ? fmtEdge(e, graph.nodes) : `${id.slice(0, 8)}…`;
+          })
+          .join(" | "),
       );
       console.groupEnd();
     }
@@ -1533,7 +1741,7 @@ export function checkConstraintsFeasible(
   }
 
   if (DEBUG) {
-    console.log(LOG_PREFIX + " %c→ Feasible", LOG_STYLE, LOG_OK);
+    console.log(`${LOG_PREFIX} %c→ Feasible`, LOG_STYLE, LOG_OK);
     console.groupEnd();
   }
   return { feasible: true };
@@ -1558,7 +1766,7 @@ const DEGENERATE_THRESHOLD = 0.5;
 export function findDegenerateEdges(
   nodes: Node[],
   edges: Edge[],
-  threshold: number = DEGENERATE_THRESHOLD
+  threshold: number = DEGENERATE_THRESHOLD,
 ): string[] {
   const nodeMap = new Map<string, Node>();
   for (const n of nodes) nodeMap.set(n.id, n);
@@ -1582,7 +1790,12 @@ export function findDegenerateEdges(
 
 export interface ConstraintViolation {
   edgeId: string;
-  type: 'direction' | 'length_locked' | 'angle_group' | 'collinear' | 'link_group';
+  type:
+    | "direction"
+    | "length_locked"
+    | "angle_group"
+    | "collinear"
+    | "link_group";
   expected: number;
   actual: number;
 }
@@ -1594,7 +1807,7 @@ export interface ConstraintViolation {
 export function validateConstraints(
   nodes: Node[],
   edges: Edge[],
-  tolerance: number = 0.2
+  tolerance: number = 0.2,
 ): ConstraintViolation[] {
   const nodeMap = new Map<string, Node>();
   for (const n of nodes) nodeMap.set(n.id, n);
@@ -1612,7 +1825,7 @@ export function validateConstraints(
       if (diff > tolerance) {
         violations.push({
           edgeId: edge.id,
-          type: 'direction',
+          type: "direction",
           expected: 0,
           actual: diff,
         });
@@ -1622,7 +1835,7 @@ export function validateConstraints(
       if (diff > tolerance) {
         violations.push({
           edgeId: edge.id,
-          type: 'direction',
+          type: "direction",
           expected: 0,
           actual: diff,
         });
@@ -1658,7 +1871,7 @@ export function validateConstraints(
     if (maxDev > tolerance) {
       violations.push({
         edgeId: groupFirstEdge.get(groupId)!,
-        type: 'collinear',
+        type: "collinear",
         expected: 0,
         actual: maxDev,
       });
@@ -1679,10 +1892,13 @@ export function validateConstraints(
     // Compute lengths
     const lengths: number[] = [];
     for (const eid of edgeIds) {
-      const edge = edges.find(e => e.id === eid)!;
+      const edge = edges.find((e) => e.id === eid)!;
       const s = nodeMap.get(edge.start_node);
       const e = nodeMap.get(edge.end_node);
-      if (!s || !e) { lengths.push(0); continue; }
+      if (!s || !e) {
+        lengths.push(0);
+        continue;
+      }
       lengths.push(distance(s, e));
     }
     const avgLen = lengths.reduce((a, b) => a + b, 0) / lengths.length;
@@ -1693,7 +1909,7 @@ export function validateConstraints(
     if (maxDev > tolerance) {
       violations.push({
         edgeId: edgeIds[0],
-        type: 'link_group',
+        type: "link_group",
         expected: avgLen,
         actual: maxDev,
       });
@@ -1725,7 +1941,7 @@ export function validateConstraints(
 export function autoFixConstraints(
   nodes: Node[],
   edges: Edge[],
-  tolerance: number = 0.2
+  tolerance: number = 0.2,
 ): { fixedEdgeIds: string[]; violations: ConstraintViolation[] } {
   const initialViolations = validateConstraints(nodes, edges, tolerance);
   if (initialViolations.length === 0) {
@@ -1747,16 +1963,16 @@ export function autoFixConstraints(
     }
 
     // Remove the violating constraint
-    const edge = edges.find(e => e.id === worst.edgeId);
+    const edge = edges.find((e) => e.id === worst.edgeId);
     if (!edge) break;
 
-    if (worst.type === 'collinear') {
+    if (worst.type === "collinear") {
       edge.collinear_group = undefined;
-    } else if (worst.type === 'direction') {
+    } else if (worst.type === "direction") {
       edge.direction = "free";
-    } else if (worst.type === 'length_locked') {
+    } else if (worst.type === "length_locked") {
       edge.length_locked = false;
-    } else if (worst.type === 'angle_group') {
+    } else if (worst.type === "angle_group") {
       edge.angle_group = undefined;
     }
     fixedEdgeIds.add(edge.id);

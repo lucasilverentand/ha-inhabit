@@ -3,25 +3,25 @@
  * a selected light, switch, or mmWave placement.
  */
 
-import { LitElement, html, css, nothing } from "lit";
+import { css, html, LitElement, nothing } from "lit";
 import { property, state } from "lit/decorators.js";
+import {
+  buttonPlacements,
+  devicePanelTarget,
+  lightPlacements,
+  mmwavePlacements,
+  otherPlacements,
+  selection,
+  switchPlacements,
+} from "../../stores/signals";
 import type {
+  ButtonPlacement,
   HomeAssistant,
   LightPlacement,
-  SwitchPlacement,
-  ButtonPlacement,
-  OtherPlacement,
   MmwavePlacement,
+  OtherPlacement,
+  SwitchPlacement,
 } from "../../types";
-import {
-  lightPlacements,
-  switchPlacements,
-  buttonPlacements,
-  otherPlacements,
-  mmwavePlacements,
-  devicePanelTarget,
-  selection,
-} from "../../stores/signals";
 import "../shared/fpb-entity-picker";
 
 export class FpbDevicePanel extends LitElement {
@@ -255,17 +255,33 @@ export class FpbDevicePanel extends LitElement {
     }
   `;
 
-  private _getPlacement(): LightPlacement | SwitchPlacement | ButtonPlacement | OtherPlacement | MmwavePlacement | null {
+  private _getPlacement():
+    | LightPlacement
+    | SwitchPlacement
+    | ButtonPlacement
+    | OtherPlacement
+    | MmwavePlacement
+    | null {
     if (this.deviceType === "light") {
-      return lightPlacements.value.find(p => p.id === this.placementId) ?? null;
+      return (
+        lightPlacements.value.find((p) => p.id === this.placementId) ?? null
+      );
     } else if (this.deviceType === "switch") {
-      return switchPlacements.value.find(p => p.id === this.placementId) ?? null;
+      return (
+        switchPlacements.value.find((p) => p.id === this.placementId) ?? null
+      );
     } else if (this.deviceType === "button") {
-      return buttonPlacements.value.find(p => p.id === this.placementId) ?? null;
+      return (
+        buttonPlacements.value.find((p) => p.id === this.placementId) ?? null
+      );
     } else if (this.deviceType === "other") {
-      return otherPlacements.value.find(p => p.id === this.placementId) ?? null;
+      return (
+        otherPlacements.value.find((p) => p.id === this.placementId) ?? null
+      );
     } else {
-      return mmwavePlacements.value.find(p => p.id === this.placementId) ?? null;
+      return (
+        mmwavePlacements.value.find((p) => p.id === this.placementId) ?? null
+      );
     }
   }
 
@@ -281,13 +297,21 @@ export class FpbDevicePanel extends LitElement {
 
   private _getExcludedEntityIds(): string[] {
     if (this.deviceType === "light") {
-      return lightPlacements.value.filter(p => p.id !== this.placementId).map(p => p.entity_id);
+      return lightPlacements.value
+        .filter((p) => p.id !== this.placementId)
+        .map((p) => p.entity_id);
     } else if (this.deviceType === "switch") {
-      return switchPlacements.value.filter(p => p.id !== this.placementId).map(p => p.entity_id);
+      return switchPlacements.value
+        .filter((p) => p.id !== this.placementId)
+        .map((p) => p.entity_id);
     } else if (this.deviceType === "button") {
-      return buttonPlacements.value.filter(p => p.id !== this.placementId).map(p => p.entity_id);
+      return buttonPlacements.value
+        .filter((p) => p.id !== this.placementId)
+        .map((p) => p.entity_id);
     } else {
-      return otherPlacements.value.filter(p => p.id !== this.placementId).map(p => p.entity_id);
+      return otherPlacements.value
+        .filter((p) => p.id !== this.placementId)
+        .map((p) => p.entity_id);
     }
   }
 
@@ -300,8 +324,8 @@ export class FpbDevicePanel extends LitElement {
           light_id: this.placementId,
           entity_id: newEntityId,
         });
-        lightPlacements.value = lightPlacements.value.map(p =>
-          p.id === this.placementId ? { ...p, entity_id: newEntityId } : p
+        lightPlacements.value = lightPlacements.value.map((p) =>
+          p.id === this.placementId ? { ...p, entity_id: newEntityId } : p,
         );
       } else if (this.deviceType === "switch") {
         await this.hass.callWS({
@@ -309,8 +333,8 @@ export class FpbDevicePanel extends LitElement {
           switch_id: this.placementId,
           entity_id: newEntityId,
         });
-        switchPlacements.value = switchPlacements.value.map(p =>
-          p.id === this.placementId ? { ...p, entity_id: newEntityId } : p
+        switchPlacements.value = switchPlacements.value.map((p) =>
+          p.id === this.placementId ? { ...p, entity_id: newEntityId } : p,
         );
       } else if (this.deviceType === "button") {
         await this.hass.callWS({
@@ -318,8 +342,8 @@ export class FpbDevicePanel extends LitElement {
           button_id: this.placementId,
           entity_id: newEntityId,
         });
-        buttonPlacements.value = buttonPlacements.value.map(p =>
-          p.id === this.placementId ? { ...p, entity_id: newEntityId } : p
+        buttonPlacements.value = buttonPlacements.value.map((p) =>
+          p.id === this.placementId ? { ...p, entity_id: newEntityId } : p,
         );
       } else if (this.deviceType === "other") {
         await this.hass.callWS({
@@ -327,8 +351,8 @@ export class FpbDevicePanel extends LitElement {
           other_id: this.placementId,
           entity_id: newEntityId,
         });
-        otherPlacements.value = otherPlacements.value.map(p =>
-          p.id === this.placementId ? { ...p, entity_id: newEntityId } : p
+        otherPlacements.value = otherPlacements.value.map((p) =>
+          p.id === this.placementId ? { ...p, entity_id: newEntityId } : p,
         );
       }
       this._rebinding = false;
@@ -346,8 +370,8 @@ export class FpbDevicePanel extends LitElement {
         placement_id: this.placementId,
         ...updates,
       });
-      mmwavePlacements.value = mmwavePlacements.value.map(
-        p => p.id === result.id ? result : p
+      mmwavePlacements.value = mmwavePlacements.value.map((p) =>
+        p.id === result.id ? result : p,
       );
       this.requestUpdate();
     } catch (err) {
@@ -363,31 +387,41 @@ export class FpbDevicePanel extends LitElement {
           type: "inhabit/lights/remove",
           light_id: this.placementId,
         });
-        lightPlacements.value = lightPlacements.value.filter(p => p.id !== this.placementId);
+        lightPlacements.value = lightPlacements.value.filter(
+          (p) => p.id !== this.placementId,
+        );
       } else if (this.deviceType === "switch") {
         await this.hass.callWS({
           type: "inhabit/switches/remove",
           switch_id: this.placementId,
         });
-        switchPlacements.value = switchPlacements.value.filter(p => p.id !== this.placementId);
+        switchPlacements.value = switchPlacements.value.filter(
+          (p) => p.id !== this.placementId,
+        );
       } else if (this.deviceType === "button") {
         await this.hass.callWS({
           type: "inhabit/buttons/remove",
           button_id: this.placementId,
         });
-        buttonPlacements.value = buttonPlacements.value.filter(p => p.id !== this.placementId);
+        buttonPlacements.value = buttonPlacements.value.filter(
+          (p) => p.id !== this.placementId,
+        );
       } else if (this.deviceType === "other") {
         await this.hass.callWS({
           type: "inhabit/others/remove",
           other_id: this.placementId,
         });
-        otherPlacements.value = otherPlacements.value.filter(p => p.id !== this.placementId);
+        otherPlacements.value = otherPlacements.value.filter(
+          (p) => p.id !== this.placementId,
+        );
       } else {
         await this.hass.callWS({
           type: "inhabit/mmwave/delete",
           placement_id: this.placementId,
         });
-        mmwavePlacements.value = mmwavePlacements.value.filter(p => p.id !== this.placementId);
+        mmwavePlacements.value = mmwavePlacements.value.filter(
+          (p) => p.id !== this.placementId,
+        );
       }
       selection.value = { type: "none", ids: [] };
       devicePanelTarget.value = null;
@@ -430,12 +464,14 @@ export class FpbDevicePanel extends LitElement {
       `;
     }
 
-    const entityId = this.deviceType !== "mmwave" && "entity_id" in placement
-      ? (placement as { entity_id?: string }).entity_id
-      : undefined;
-    const friendlyName = entityId && this.hass?.states[entityId]
-      ? this.hass.states[entityId].attributes?.friendly_name ?? entityId
-      : entityId ?? "No entity";
+    const entityId =
+      this.deviceType !== "mmwave" && "entity_id" in placement
+        ? (placement as { entity_id?: string }).entity_id
+        : undefined;
+    const friendlyName =
+      entityId && this.hass?.states[entityId]
+        ? (this.hass.states[entityId].attributes?.friendly_name ?? entityId)
+        : (entityId ?? "No entity");
 
     return html`
       <div class="panel-header">
@@ -449,15 +485,21 @@ export class FpbDevicePanel extends LitElement {
       </div>
       <div class="panel-body">
         <!-- Entity binding (not shown for mmwave) -->
-        ${this.deviceType !== "mmwave" ? html`
+        ${
+          this.deviceType !== "mmwave"
+            ? html`
           <div class="section">
             <div class="section-title">Entity</div>
             <div class="entity-row">
               <ha-icon icon=${this._getIcon()} style="--mdc-icon-size: 18px;"></ha-icon>
               <span class="entity-id">${friendlyName}</span>
-              <button class="rebind-btn" @click=${() => { this._rebinding = true; }}>Change</button>
+              <button class="rebind-btn" @click=${() => {
+                this._rebinding = true;
+              }}>Change</button>
             </div>
-            ${this._rebinding ? html`
+            ${
+              this._rebinding
+                ? html`
               <fpb-entity-picker
                 .hass=${this.hass}
                 .domains=${this._getPickerDomains()}
@@ -468,11 +510,17 @@ export class FpbDevicePanel extends LitElement {
                 @entities-confirmed=${(e: CustomEvent) => {
                   this._rebindEntity(e.detail.entityIds[0]);
                 }}
-                @picker-closed=${() => { this._rebinding = false; }}
+                @picker-closed=${() => {
+                  this._rebinding = false;
+                }}
               ></fpb-entity-picker>
-            ` : nothing}
+            `
+                : nothing
+            }
           </div>
-        ` : nothing}
+        `
+            : nothing
+        }
 
         ${this.deviceType === "mmwave" ? this._renderMmwaveSettings(placement as MmwavePlacement) : null}
 
@@ -497,8 +545,8 @@ export class FpbDevicePanel extends LitElement {
             .value=${String(p.angle)}
             @input=${(e: Event) => {
               const val = Number((e.target as HTMLInputElement).value);
-              mmwavePlacements.value = mmwavePlacements.value.map(m =>
-                m.id === p.id ? { ...m, angle: val } : m
+              mmwavePlacements.value = mmwavePlacements.value.map((m) =>
+                m.id === p.id ? { ...m, angle: val } : m,
               );
               this.requestUpdate();
             }}
@@ -512,8 +560,8 @@ export class FpbDevicePanel extends LitElement {
             .value=${String(p.field_of_view)}
             @input=${(e: Event) => {
               const val = Number((e.target as HTMLInputElement).value);
-              mmwavePlacements.value = mmwavePlacements.value.map(m =>
-                m.id === p.id ? { ...m, field_of_view: val } : m
+              mmwavePlacements.value = mmwavePlacements.value.map((m) =>
+                m.id === p.id ? { ...m, field_of_view: val } : m,
               );
               this.requestUpdate();
             }}
@@ -527,8 +575,8 @@ export class FpbDevicePanel extends LitElement {
             .value=${String(p.detection_range)}
             @input=${(e: Event) => {
               const val = Number((e.target as HTMLInputElement).value);
-              mmwavePlacements.value = mmwavePlacements.value.map(m =>
-                m.id === p.id ? { ...m, detection_range: val } : m
+              mmwavePlacements.value = mmwavePlacements.value.map((m) =>
+                m.id === p.id ? { ...m, detection_range: val } : m,
               );
               this.requestUpdate();
             }}
@@ -553,7 +601,8 @@ export class FpbDevicePanel extends LitElement {
       <div class="section">
         <div class="section-title">Tracking Targets</div>
 
-        ${targets.map((t, i) => html`
+        ${targets.map(
+          (t, i) => html`
           <div class="target-card">
             <div class="target-card-header">
               <span>Target ${i + 1}</span>
@@ -579,22 +628,32 @@ export class FpbDevicePanel extends LitElement {
             </div>
           </div>
 
-          ${this._editingTargetIndex === i && this._editingTargetAxis !== null ? html`
+          ${
+            this._editingTargetIndex === i && this._editingTargetAxis !== null
+              ? html`
             <fpb-entity-picker
               .hass=${this.hass}
               .numericOnly=${true}
               title="Select ${this._editingTargetAxis.toUpperCase()} Entity for Target ${i + 1}"
               placeholder="Search numeric entities..."
               @entities-confirmed=${(e: CustomEvent) => {
-                this._updateTargetEntity(p, i, this._editingTargetAxis!, e.detail.entityIds[0]);
+                this._updateTargetEntity(
+                  p,
+                  i,
+                  this._editingTargetAxis!,
+                  e.detail.entityIds[0],
+                );
               }}
               @picker-closed=${() => {
                 this._editingTargetIndex = null;
                 this._editingTargetAxis = null;
               }}
             ></fpb-entity-picker>
-          ` : nothing}
-        `)}
+          `
+              : nothing
+          }
+        `,
+        )}
 
         <button class="add-target-btn" @click=${() => this._addTarget(p)}>
           Add target
@@ -604,11 +663,17 @@ export class FpbDevicePanel extends LitElement {
   }
 
   private async _addTarget(p: MmwavePlacement): Promise<void> {
-    const newTargets = [...(p.targets ?? []), { x_entity_id: "", y_entity_id: "" }];
+    const newTargets = [
+      ...(p.targets ?? []),
+      { x_entity_id: "", y_entity_id: "" },
+    ];
     await this._updateMmwave({ targets: newTargets });
   }
 
-  private async _removeTarget(p: MmwavePlacement, index: number): Promise<void> {
+  private async _removeTarget(
+    p: MmwavePlacement,
+    index: number,
+  ): Promise<void> {
     const newTargets = (p.targets ?? []).filter((_, i) => i !== index);
     await this._updateMmwave({ targets: newTargets });
   }

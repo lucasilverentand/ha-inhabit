@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.13.1](https://github.com/lucasilverentand/ha-inhabit/compare/v0.13.0...v0.13.1) (2026-03-15)
+
+
+### Bug Fixes
+
+* add placement validation and simplify door config sync ([82aeada](https://github.com/lucasilverentand/ha-inhabit/commit/82aeadaa13bd092c7b07e27885064fd03267e871))
+* frontend defensive guards and race conditions ([373c5cf](https://github.com/lucasilverentand/ha-inhabit/commit/373c5cf4186f1acb7d8b1c7867990ff184c43c07))
+
 ## [0.13.0](https://github.com/lucasilverentand/ha-inhabit/compare/v0.12.2...v0.13.0) (2026-03-12)
 
 

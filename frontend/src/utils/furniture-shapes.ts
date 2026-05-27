@@ -30,65 +30,241 @@ const PART_DEFS: Record<string, FurniturePart[]> = {
     { key: "headboard", label: "Headboard", type: "color", default: "#6d4c41" },
     { key: "pillow", label: "Pillow", type: "color", default: "#e8e8e8" },
     { key: "sheet", label: "Sheet", type: "color", default: "#bbdefb" },
-    { key: "headboard_height", label: "Headboard Height", type: "number", default: 0.12, min: 0.04, max: 0.3, step: 0.02 },
-    { key: "pillow_height", label: "Pillow Height", type: "number", default: 0.14, min: 0.05, max: 0.3, step: 0.02 },
-    { key: "pillow_gap", label: "Pillow Gap", type: "number", default: 0.06, min: 0, max: 0.2, step: 0.02 },
-    { key: "pillow_inset", label: "Pillow Inset", type: "number", default: 0.08, min: 0.02, max: 0.2, step: 0.02 },
+    {
+      key: "headboard_height",
+      label: "Headboard Height",
+      type: "number",
+      default: 0.12,
+      min: 0.04,
+      max: 0.3,
+      step: 0.02,
+    },
+    {
+      key: "pillow_height",
+      label: "Pillow Height",
+      type: "number",
+      default: 0.14,
+      min: 0.05,
+      max: 0.3,
+      step: 0.02,
+    },
+    {
+      key: "pillow_gap",
+      label: "Pillow Gap",
+      type: "number",
+      default: 0.06,
+      min: 0,
+      max: 0.2,
+      step: 0.02,
+    },
+    {
+      key: "pillow_inset",
+      label: "Pillow Inset",
+      type: "number",
+      default: 0.08,
+      min: 0.02,
+      max: 0.2,
+      step: 0.02,
+    },
   ],
   couch: [
     { key: "frame", label: "Frame", type: "color", default: "#8d6e63" },
     { key: "backrest", label: "Backrest", type: "color", default: "#795548" },
     { key: "seat", label: "Seat", type: "color", default: "#a1887f" },
     { key: "arm", label: "Arms", type: "color", default: "#6d4c41" },
-    { key: "backrest_depth", label: "Backrest Depth", type: "number", default: 0.22, min: 0.1, max: 0.4, step: 0.02 },
-    { key: "arm_width", label: "Arm Width", type: "number", default: 0.12, min: 0.05, max: 0.25, step: 0.02 },
-    { key: "seat_inset", label: "Seat Inset", type: "number", default: 1.5, min: 0, max: 5, step: 0.5 },
+    {
+      key: "backrest_depth",
+      label: "Backrest Depth",
+      type: "number",
+      default: 0.22,
+      min: 0.1,
+      max: 0.4,
+      step: 0.02,
+    },
+    {
+      key: "arm_width",
+      label: "Arm Width",
+      type: "number",
+      default: 0.12,
+      min: 0.05,
+      max: 0.25,
+      step: 0.02,
+    },
+    {
+      key: "seat_inset",
+      label: "Seat Inset",
+      type: "number",
+      default: 1.5,
+      min: 0,
+      max: 5,
+      step: 0.5,
+    },
   ],
   table: [
     { key: "top", label: "Top", type: "color", default: "#d7ccc8" },
     { key: "border", label: "Border", type: "color", default: "#8d6e63" },
-    { key: "border_inset", label: "Border Inset", type: "number", default: 0.08, min: 0.02, max: 0.2, step: 0.02 },
+    {
+      key: "border_inset",
+      label: "Border Inset",
+      type: "number",
+      default: 0.08,
+      min: 0.02,
+      max: 0.2,
+      step: 0.02,
+    },
   ],
   desk: [
     { key: "top", label: "Top", type: "color", default: "#d7ccc8" },
     { key: "border", label: "Border", type: "color", default: "#8d6e63" },
     { key: "legspace", label: "Legspace", type: "color", default: "#efebe9" },
-    { key: "legspace_height", label: "Legspace Height", type: "number", default: 0.3, min: 0.1, max: 0.5, step: 0.05 },
-    { key: "legspace_inset", label: "Legspace Inset", type: "number", default: 0.15, min: 0.05, max: 0.35, step: 0.05 },
+    {
+      key: "legspace_height",
+      label: "Legspace Height",
+      type: "number",
+      default: 0.3,
+      min: 0.1,
+      max: 0.5,
+      step: 0.05,
+    },
+    {
+      key: "legspace_inset",
+      label: "Legspace Inset",
+      type: "number",
+      default: 0.15,
+      min: 0.05,
+      max: 0.35,
+      step: 0.05,
+    },
   ],
   chair: [
     { key: "seat", label: "Seat", type: "color", default: "#bcaaa4" },
     { key: "backrest", label: "Backrest", type: "color", default: "#8d6e63" },
-    { key: "seat_radius", label: "Seat Radius", type: "number", default: 0.38, min: 0.2, max: 0.48, step: 0.02 },
-    { key: "backrest_width", label: "Backrest Width", type: "number", default: 0.6, min: 0.3, max: 0.9, step: 0.05 },
-    { key: "backrest_height", label: "Backrest Height", type: "number", default: 0.18, min: 0.08, max: 0.3, step: 0.02 },
+    {
+      key: "seat_radius",
+      label: "Seat Radius",
+      type: "number",
+      default: 0.38,
+      min: 0.2,
+      max: 0.48,
+      step: 0.02,
+    },
+    {
+      key: "backrest_width",
+      label: "Backrest Width",
+      type: "number",
+      default: 0.6,
+      min: 0.3,
+      max: 0.9,
+      step: 0.05,
+    },
+    {
+      key: "backrest_height",
+      label: "Backrest Height",
+      type: "number",
+      default: 0.18,
+      min: 0.08,
+      max: 0.3,
+      step: 0.02,
+    },
   ],
   wardrobe: [
     { key: "body", label: "Body", type: "color", default: "#a1887f" },
     { key: "door_line", label: "Door Line", type: "color", default: "#6d4c41" },
     { key: "handle", label: "Handle", type: "color", default: "#4e342e" },
-    { key: "handle_size", label: "Handle Size", type: "number", default: 0.04, min: 0.02, max: 0.08, step: 0.01 },
-    { key: "handle_offset", label: "Handle Offset", type: "number", default: 3, min: 1.5, max: 5, step: 0.5 },
+    {
+      key: "handle_size",
+      label: "Handle Size",
+      type: "number",
+      default: 0.04,
+      min: 0.02,
+      max: 0.08,
+      step: 0.01,
+    },
+    {
+      key: "handle_offset",
+      label: "Handle Offset",
+      type: "number",
+      default: 3,
+      min: 1.5,
+      max: 5,
+      step: 0.5,
+    },
   ],
   bookcase: [
     { key: "body", label: "Body", type: "color", default: "#a1887f" },
     { key: "shelf", label: "Shelves", type: "color", default: "#6d4c41" },
-    { key: "shelf_count", label: "Shelf Count", type: "number", default: 4, min: 1, max: 8, step: 1 },
+    {
+      key: "shelf_count",
+      label: "Shelf Count",
+      type: "number",
+      default: 4,
+      min: 1,
+      max: 8,
+      step: 1,
+    },
   ],
   kitchen: [
     { key: "counter", label: "Counter", type: "color", default: "#e0e0e0" },
     { key: "sink", label: "Sink", type: "color", default: "#90a4ae" },
     { key: "burner", label: "Burners", type: "color", default: "#424242" },
-    { key: "sink_x", label: "Sink Position", type: "number", default: 0.28, min: 0.1, max: 0.45, step: 0.02 },
-    { key: "sink_radius", label: "Sink Radius", type: "number", default: 0.15, min: 0.08, max: 0.25, step: 0.02 },
-    { key: "burner_area_x", label: "Burner Area X", type: "number", default: 0.55, min: 0.4, max: 0.75, step: 0.05 },
-    { key: "burner_radius", label: "Burner Radius", type: "number", default: 0.2, min: 0.1, max: 0.35, step: 0.02 },
-    { key: "burner_spread", label: "Burner Spread", type: "number", default: 0.28, min: 0.15, max: 0.45, step: 0.02 },
+    {
+      key: "sink_x",
+      label: "Sink Position",
+      type: "number",
+      default: 0.28,
+      min: 0.1,
+      max: 0.45,
+      step: 0.02,
+    },
+    {
+      key: "sink_radius",
+      label: "Sink Radius",
+      type: "number",
+      default: 0.15,
+      min: 0.08,
+      max: 0.25,
+      step: 0.02,
+    },
+    {
+      key: "burner_area_x",
+      label: "Burner Area X",
+      type: "number",
+      default: 0.55,
+      min: 0.4,
+      max: 0.75,
+      step: 0.05,
+    },
+    {
+      key: "burner_radius",
+      label: "Burner Radius",
+      type: "number",
+      default: 0.2,
+      min: 0.1,
+      max: 0.35,
+      step: 0.02,
+    },
+    {
+      key: "burner_spread",
+      label: "Burner Spread",
+      type: "number",
+      default: 0.28,
+      min: 0.15,
+      max: 0.45,
+      step: 0.02,
+    },
   ],
   custom: [
     { key: "fill", label: "Fill", type: "color", default: "#e0e0e0" },
     { key: "pattern", label: "Pattern", type: "color", default: "#bdbdbd" },
-    { key: "hatch_density", label: "Hatch Density", type: "number", default: 0.2, min: 0.08, max: 0.5, step: 0.02 },
+    {
+      key: "hatch_density",
+      label: "Hatch Density",
+      type: "number",
+      default: 0.2,
+      min: 0.08,
+      max: 0.5,
+      step: 0.02,
+    },
   ],
 };
 
@@ -207,7 +383,9 @@ function renderBookcase(b: BBox, s: StyleMap): TemplateResult {
   const shelves = [];
   for (let i = 1; i <= shelfCount; i++) {
     const sy = b.y + gap * i;
-    shelves.push(svg`<line x1="${b.x + 2}" y1="${sy}" x2="${b.x + b.w - 2}" y2="${sy}" stroke="${col(s, "shelf")}" stroke-width="1.2"/>`);
+    shelves.push(
+      svg`<line x1="${b.x + 2}" y1="${sy}" x2="${b.x + b.w - 2}" y2="${sy}" stroke="${col(s, "shelf")}" stroke-width="1.2"/>`,
+    );
   }
   return svg`
     <rect x="${b.x}" y="${b.y}" width="${b.w}" height="${b.h}" rx="2" fill="${col(s, "body")}" stroke="${col(s, "shelf")}" stroke-width="1.5"/>
@@ -226,7 +404,12 @@ function renderKitchen(b: BBox, s: StyleMap): TemplateResult {
   const sinkCy = b.y + b.h * 0.5;
   const sinkR = Math.min(b.w * sinkRadius, b.h * 0.28);
 
-  const burnerArea = { x: b.x + b.w * burnerAreaX, y: b.y + b.h * 0.15, w: b.w * 0.38, h: b.h * 0.7 };
+  const burnerArea = {
+    x: b.x + b.w * burnerAreaX,
+    y: b.y + b.h * 0.15,
+    w: b.w * 0.38,
+    h: b.h * 0.7,
+  };
   const br = Math.min(burnerArea.w, burnerArea.h) * burnerR;
   const bOffX = burnerArea.w * burnerSpread;
   const bOffY = burnerArea.h * burnerSpread;
@@ -254,7 +437,9 @@ function renderCustom(b: BBox, s: StyleMap): TemplateResult {
     const y1 = b.y + Math.max(0, d - b.w);
     const x2 = b.x + Math.max(0, d - b.h);
     const y2 = b.y + Math.min(d, b.h);
-    lines.push(svg`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col(s, "pattern")}" stroke-width="0.8" opacity="0.5"/>`);
+    lines.push(
+      svg`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col(s, "pattern")}" stroke-width="0.8" opacity="0.5"/>`,
+    );
   }
   return svg`
     <rect x="${b.x}" y="${b.y}" width="${b.w}" height="${b.h}" rx="2" fill="${col(s, "fill")}" stroke="${col(s, "pattern")}" stroke-width="1.5"/>

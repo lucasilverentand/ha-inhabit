@@ -6,10 +6,10 @@
  * - Import: pick a file, then select which floors to import
  */
 
-import { LitElement, html, css, nothing } from "lit";
+import { css, html, LitElement, nothing } from "lit";
 import { property, state } from "lit/decorators.js";
-import type { HomeAssistant, Floor } from "../../types";
 import { currentFloorPlan } from "../../stores/signals";
+import type { Floor, HomeAssistant } from "../../types";
 
 type DialogMode = "export" | "import";
 
@@ -19,8 +19,19 @@ interface ImportFloorEntry {
   level: number;
   roomCount: number;
   wallCount: number;
-  deviceCount: number;
+  placementCount: number;
+  sensorConfigCount: number;
   selected: boolean;
+}
+
+interface FloorExportData {
+  floor?: Record<string, unknown>;
+  lights?: unknown[];
+  switches?: unknown[];
+  buttons?: unknown[];
+  others?: unknown[];
+  mmwave_placements?: unknown[];
+  sensor_configs?: unknown[];
 }
 
 export class FpbImportExportDialog extends LitElement {
@@ -404,7 +415,13 @@ export class FpbImportExportDialog extends LitElement {
       const safeName = fp.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
       const suffix =
         floors.length === 1
-          ? (((floors[0] as Record<string, unknown>).floor as Record<string, unknown> | undefined)?.name as string || "floor")
+          ? (
+              ((
+                (floors[0] as Record<string, unknown>).floor as
+                  | Record<string, unknown>
+                  | undefined
+              )?.name as string) || "floor"
+            )
               .toLowerCase()
               .replace(/[^a-z0-9]+/g, "-")
           : "floors";
@@ -442,7 +459,8 @@ export class FpbImportExportDialog extends LitElement {
         const data = JSON.parse(text);
         this._parseImportFile(data);
       } catch {
-        this._error = "Could not read file. Make sure it's a valid Inhabit JSON export.";
+        this._error =
+          "Could not read file. Make sure it's a valid Inhabit JSON export.";
       }
     });
 
@@ -463,49 +481,60 @@ export class FpbImportExportDialog extends LitElement {
     if (obj.export_type === "floors" && Array.isArray(obj.floors)) {
       const floorExports = obj.floors as Record<string, unknown>[];
       this._importData = floorExports;
-      this._importEntries = floorExports.map((fe, i) => {
-        const floor = fe.floor as Record<string, unknown> | undefined;
-        const devices = fe.devices as unknown[] | undefined;
-        return {
-          index: i,
-          name: (floor?.name as string) || `Floor ${i + 1}`,
-          level: (floor?.level as number) ?? i,
-          roomCount: Array.isArray(floor?.rooms) ? (floor!.rooms as unknown[]).length : 0,
-          wallCount: Array.isArray(floor?.edges) ? (floor!.edges as unknown[]).length
-                   : Array.isArray(floor?.walls) ? (floor!.walls as unknown[]).length : 0,
-          deviceCount: Array.isArray(devices) ? devices.length : 0,
-          selected: true,
-        };
-      });
+      this._importEntries = floorExports.map((fe, i) =>
+        this._buildImportEntry(fe as FloorExportData, i),
+      );
       return;
     }
 
     // Single-floor export
     if (obj.export_type === "floor") {
       this._importData = [obj];
-      const floor = obj.floor as Record<string, unknown> | undefined;
-      const devices = obj.devices as unknown[] | undefined;
-      this._importEntries = [
-        {
-          index: 0,
-          name: (floor?.name as string) || "Imported Floor",
-          level: (floor?.level as number) ?? 0,
-          roomCount: Array.isArray(floor?.rooms) ? (floor!.rooms as unknown[]).length : 0,
-          wallCount: Array.isArray(floor?.edges) ? (floor!.edges as unknown[]).length
-                   : Array.isArray(floor?.walls) ? (floor!.walls as unknown[]).length : 0,
-          deviceCount: Array.isArray(devices) ? devices.length : 0,
-          selected: true,
-        },
-      ];
+      this._importEntries = [this._buildImportEntry(obj as FloorExportData, 0)];
       return;
     }
 
     this._error = "Invalid file: not an Inhabit floor export.";
   }
 
+  private _buildImportEntry(
+    floorExport: FloorExportData,
+    index: number,
+  ): ImportFloorEntry {
+    const floor = floorExport.floor;
+    const placementCount = [
+      floorExport.lights,
+      floorExport.switches,
+      floorExport.buttons,
+      floorExport.others,
+      floorExport.mmwave_placements,
+    ].reduce((count, placements) => {
+      return count + (Array.isArray(placements) ? placements.length : 0);
+    }, 0);
+
+    return {
+      index,
+      name: (floor?.name as string) || `Floor ${index + 1}`,
+      level: (floor?.level as number) ?? index,
+      roomCount: Array.isArray(floor?.rooms)
+        ? (floor!.rooms as unknown[]).length
+        : 0,
+      wallCount: Array.isArray(floor?.edges)
+        ? (floor!.edges as unknown[]).length
+        : Array.isArray(floor?.walls)
+          ? (floor!.walls as unknown[]).length
+          : 0,
+      placementCount,
+      sensorConfigCount: Array.isArray(floorExport.sensor_configs)
+        ? floorExport.sensor_configs.length
+        : 0,
+      selected: true,
+    };
+  }
+
   private _toggleImportFloor(index: number): void {
     this._importEntries = this._importEntries.map((e) =>
-      e.index === index ? { ...e, selected: !e.selected } : e
+      e.index === index ? { ...e, selected: !e.selected } : e,
     );
   }
 
@@ -550,7 +579,7 @@ export class FpbImportExportDialog extends LitElement {
           detail: { floorPlan: updatedFp, switchTo: lastFloor },
           bubbles: true,
           composed: true,
-        })
+        }),
       );
 
       this.close();
@@ -601,42 +630,51 @@ export class FpbImportExportDialog extends LitElement {
             </button>
           </div>
 
-          ${this._error
-            ? html`<div class="error-msg" style="margin: 0 16px 8px;">${this._error}</div>`
-            : nothing}
+          ${
+            this._error
+              ? html`<div class="error-msg" style="margin: 0 16px 8px;">${this._error}</div>`
+              : nothing
+          }
 
           <div class="dialog-content">
-            ${this._mode === "export"
-              ? this._renderExport(floors)
-              : this._renderImport()}
+            ${
+              this._mode === "export"
+                ? this._renderExport(floors)
+                : this._renderImport()
+            }
           </div>
 
           <div class="dialog-footer">
             <button class="btn-cancel" @click=${this.close}>Cancel</button>
-            ${this._mode === "export"
-              ? html`
+            ${
+              this._mode === "export"
+                ? html`
                   <button
                     class="btn-primary"
-                    ?disabled=${this._exportSelection.size === 0 ||
-                    this._exporting}
+                    ?disabled=${
+                      this._exportSelection.size === 0 || this._exporting
+                    }
                     @click=${this._doExport}
                   >
                     ${this._exporting ? "Exporting…" : "Export"}
                   </button>
                 `
-              : html`
+                : html`
                   <button
                     class="btn-primary"
-                    ?disabled=${this._importEntries.filter((e) => e.selected)
-                      .length === 0 || this._importing}
+                    ?disabled=${
+                      this._importEntries.filter((e) => e.selected).length ===
+                        0 || this._importing
+                    }
                     @click=${this._doImport}
-                    style=${this._importEntries.length === 0
-                      ? "display:none"
-                      : ""}
+                    style=${
+                      this._importEntries.length === 0 ? "display:none" : ""
+                    }
                   >
                     ${this._importing ? "Importing…" : "Import"}
                   </button>
-                `}
+                `
+            }
           </div>
         </div>
       </div>
@@ -678,7 +716,7 @@ export class FpbImportExportDialog extends LitElement {
                 </div>
               </div>
             </label>
-          `
+          `,
         )}
       </div>
     `;
@@ -720,11 +758,11 @@ export class FpbImportExportDialog extends LitElement {
                 <div class="floor-item-name">${entry.name}</div>
                 <div class="floor-item-meta">
                   ${entry.roomCount} room${entry.roomCount !== 1 ? "s" : ""},
-                  ${entry.wallCount} wall${entry.wallCount !== 1 ? "s" : ""}${entry.deviceCount > 0 ? `, ${entry.deviceCount} device${entry.deviceCount !== 1 ? "s" : ""}` : ""}
+                  ${entry.wallCount} wall${entry.wallCount !== 1 ? "s" : ""}${entry.placementCount > 0 ? `, ${entry.placementCount} placement${entry.placementCount !== 1 ? "s" : ""}` : ""}${entry.sensorConfigCount > 0 ? `, ${entry.sensorConfigCount} sensor config${entry.sensorConfigCount !== 1 ? "s" : ""}` : ""}
                 </div>
               </div>
             </label>
-          `
+          `,
         )}
       </div>
     `;
