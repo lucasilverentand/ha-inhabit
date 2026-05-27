@@ -1,0 +1,530 @@
+From b8d45fd553c03f21a24be58e60a2b002a281e34c Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursoragent@cursor.com>
+Date: Wed, 27 May 2026 11:52:25 +0000
+Subject: [PATCH] Define suggestion-first agent planning workflow (ST-704)
+
+Add agent-planning-workflow skill with a seven-phase contract from intake
+through human verification before Todo/Ready/In Progress. Map planning
+artifacts to project-docs templates and planner structure. Default
+create-planner-project issues to Suggestion; tighten pickup-work to
+exclude unverified suggestions. Link workflow from project-docs planner guide.
+---
+ plugin-groups.json                            |   8 +-
+ .../linear-planner/.claude-plugin/plugin.json |   1 +
+ plugins/linear-planner/README.body.txt        |   7 +
+ plugins/linear-planner/README.md              |   8 +
+ .../skills/agent-planning-workflow/SKILL.md   |  60 ++++
+ .../suggestion-first-planning-workflow.md     | 277 ++++++++++++++++++
+ .../skills/create-planner-project/SKILL.md    |   6 +-
+ .../skills/pickup-work/SKILL.md               |   2 +-
+ plugins/project-docs/README.body.txt          |   4 +-
+ plugins/project-docs/README.md                |   4 +-
+ .../project-docs/skills/project-docs/SKILL.md |   2 +
+ 11 files changed, 373 insertions(+), 6 deletions(-)
+ create mode 100644 plugins/linear-planner/README.body.txt
+ create mode 100644 plugins/linear-planner/skills/agent-planning-workflow/SKILL.md
+ create mode 100644 plugins/linear-planner/skills/agent-planning-workflow/references/suggestion-first-planning-workflow.md
+
+diff --git a/plugin-groups.json b/plugin-groups.json
+index 3e757ba..5ea3ef1 100644
+--- a/plugin-groups.json
++++ b/plugin-groups.json
+@@ -112,7 +112,13 @@
+ 			"shortDescription": "Create Linear planning projects",
+ 			"category": "Productivity",
+ 			"keywords": ["linear", "planning", "projects", "issues"],
+-			"skills": ["create-planner-project", "estimate-issue-complexity", "pickup-work"],
++			"readmeBody": "README.body.txt",
++			"skills": [
++				"agent-planning-workflow",
++				"create-planner-project",
++				"estimate-issue-complexity",
++				"pickup-work"
++			],
+ 			"commands": ["pickup-work"],
+ 			"author": {
+ 				"name": "Luca Silverentand",
+diff --git a/plugins/linear-planner/.claude-plugin/plugin.json b/plugins/linear-planner/.claude-plugin/plugin.json
+index 60d758f..e938359 100644
+--- a/plugins/linear-planner/.claude-plugin/plugin.json
++++ b/plugins/linear-planner/.claude-plugin/plugin.json
+@@ -3,6 +3,7 @@
+ 	"description": "Linear planning workflows for creating real project records from reusable planner structures without keeping template issues live.",
+ 	"version": "1.1.0",
+ 	"skills": [
++		"./skills/agent-planning-workflow",
+ 		"./skills/create-planner-project",
+ 		"./skills/estimate-issue-complexity",
+ 		"./skills/pickup-work"
+diff --git a/plugins/linear-planner/README.body.txt b/plugins/linear-planner/README.body.txt
+new file mode 100644
+index 0000000..1aece86
+--- /dev/null
++++ b/plugins/linear-planner/README.body.txt
+@@ -0,0 +1,7 @@
++## Suggestion-first planning
++
++Start new planning with `linear-planner:agent-planning-workflow` when work must stay in Linear **Suggestion** until a human verifies scope, ownership, priority, and sequencing.
++
++The contract is in [skills/agent-planning-workflow/references/suggestion-first-planning-workflow.md](skills/agent-planning-workflow/references/suggestion-first-planning-workflow.md). It covers seven phases from intake through conversion to **Todo** / **Ready** only after review.
++
++Use `create-planner-project` to materialize the reusable milestone and issue structure, but keep new issues in **Suggestion** unless the user explicitly promotes them. Use `pickup-work` only after the planning package passes human verification.
+diff --git a/plugins/linear-planner/README.md b/plugins/linear-planner/README.md
+index faf13e9..47bc4f0 100644
+--- a/plugins/linear-planner/README.md
++++ b/plugins/linear-planner/README.md
+@@ -2,6 +2,7 @@
+ Linear planning workflows for creating real project records from reusable planner structures without keeping template issues live.
+ 
+ ## Skills
++- `linear-planner:agent-planning-workflow`
+ - `linear-planner:create-planner-project`
+ - `linear-planner:estimate-issue-complexity`
+ - `linear-planner:pickup-work`
+@@ -23,3 +24,10 @@ Claude Code:
+ ```
+ 
+ This plugin owns its skill source under `plugins/linear-planner/skills/`. Edit those files directly, then run `bun run marketplace:write` to refresh generated manifests and marketplaces.
++
++## Suggestion-first planning
++Start new planning with `linear-planner:agent-planning-workflow` when work must stay in Linear **Suggestion** until a human verifies scope, ownership, priority, and sequencing.
++
++The contract is in [skills/agent-planning-workflow/references/suggestion-first-planning-workflow.md](skills/agent-planning-workflow/references/suggestion-first-planning-workflow.md). It covers seven phases from intake through conversion to **Todo** / **Ready** only after review.
++
++Use `create-planner-project` to materialize the reusable milestone and issue structure, but keep new issues in **Suggestion** unless the user explicitly promotes them. Use `pickup-work` only after the planning package passes human verification.
+diff --git a/plugins/linear-planner/skills/agent-planning-workflow/SKILL.md b/plugins/linear-planner/skills/agent-planning-workflow/SKILL.md
+new file mode 100644
+index 0000000..d7bcb0c
+--- /dev/null
++++ b/plugins/linear-planner/skills/agent-planning-workflow/SKILL.md
+@@ -0,0 +1,60 @@
++---
++name: agent-planning-workflow
++description: Runs the suggestion-first planning workflow from a rough project idea to a reviewable planning package in Linear. Use when the user asks to "plan a project", "turn this idea into a planning package", "draft planning without committing todos", "suggestion-first planning", or before implementation starts on a new initiative. Use when planner agents must not silently promote assumptions to Todo, Ready, or In Progress. Do not use for picking up verified execution work (use pickup-work) or writing a single filled document without the full workflow (use project-docs).
++---
++
++# Agent Planning Workflow
++Use this skill to take a rough idea from zero to a **human-reviewable planning package** without creating committed execution work.
++
++The full contract lives in `references/suggestion-first-planning-workflow.md`. Read it before changing Linear or drafting canonical docs.
++
++## When to use
++- New product, feature line, or repo needs planning before coding.
++- User wants Linear issues and docs drafted as **Suggestion** first.
++- Multiple project-docs templates and planner structure issues must be sequenced.
++- Replacing ad-hoc "create todos and start" agent behavior.
++
++## When not to use
++- User already verified the planning package and only wants execution → `pickup-work` or `task-spec`.
++- User wants one document only → `project-docs`.
++- User explicitly asked to create **Todo** issues immediately → confirm once, then skip to their requested state for those items only.
++
++## Workflow
++1. Read `references/suggestion-first-planning-workflow.md`.
++2. **Phase 1 — Intake:** Gather sources, assumptions, and constraints. Post an intake summary on the driving **Suggestion** issue or create one.
++3. **Phase 2 — Project placement:** Link or propose initiative/project in **Planning** with **Suggestion** issues. Do not create committed projects without user confirmation.
++4. **Phase 3 — Document plan:** Use `project-docs` placement rules and README planner guide. Output a document plan table (template, surface, phase).
++5. **Phase 4 — Route uncertainty:** Send decisions, risks, and questions to the right templates/logs. Draft decision records and seeds only as **Suggestion** / draft.
++6. **Phase 5 — Suggestion issues:** Create the planning issue set (optionally from `create-planner-project` structure) entirely in **Suggestion**. Add a planning package index issue linking brief, milestone outline, risks, and open questions.
++7. **Phase 6 — Human verification:** Stop. Present the review checklist from the reference. Update drafts from feedback only.
++8. **Phase 7 — Conversion:** Only after explicit human approval, promote issues to **Todo**/**Ready**, add implementation briefs via `task-spec`, and set first execution backlog order.
++
++## Field rules
++- Default all new planner-created issues to **Suggestion**.
++- Never assign a cycle unless the user asks.
++- Never move the project to **In Progress** during phases 1–6.
++- Link canonical docs; do not paste full duplicates into issues.
++- For document drafting, call `project-docs` with the document plan from phase 3.
++- For Linear skeletons, call `create-planner-project` but enforce **Suggestion** defaults from this workflow.
++- Record assumptions and open questions visibly; do not fold them into acceptance criteria as if settled.
++
++## Outputs checklist
++Before asking for human review, confirm the package includes:
++
++- [ ] Initiative and project links (or clear proposal)
++- [ ] Document plan aligned with placement rules
++- [ ] Project brief draft or explicit deferral with reason
++- [ ] Milestone outline (milestones or milestone plan doc)
++- [ ] Open questions log seed with blocking vs non-blocking tags
++- [ ] Risk register seed
++- [ ] Linked decision record drafts where choices were made
++- [ ] **Suggestion** issue set with planning package index
++- [ ] No **Todo** / **In Progress** issues unless user explicitly excepted them
++
++## References
++|Reference|Purpose|
++|---|---|
++|`references/suggestion-first-planning-workflow.md`|Full phase contract, artifact map, prohibitions, ST-695 validation|
++|`../create-planner-project/references/planner-project-structure.md`|Reusable milestone and issue titles|
++|`../../../project-docs/README.md`|Template chain and planner guide|
++|`../../../project-docs/skills/project-docs/references/documentation-placement-rules-template.md`|Surface placement defaults|
+diff --git a/plugins/linear-planner/skills/agent-planning-workflow/references/suggestion-first-planning-workflow.md b/plugins/linear-planner/skills/agent-planning-workflow/references/suggestion-first-planning-workflow.md
+new file mode 100644
+index 0000000..7d81364
+--- /dev/null
++++ b/plugins/linear-planner/skills/agent-planning-workflow/references/suggestion-first-planning-workflow.md
+@@ -0,0 +1,277 @@
++# Suggestion-first agent planning workflow
++Contract for planner agents, planner skills, and planner entrypoints. Takes a rough project idea from zero to a **reviewable planning package** without silently turning assumptions into committed work.
++
++## Purpose
++The doc-template library (`project-docs` templates and skills) can produce strong individual documents, but agents still need one workflow that sequences intake, Linear placement, document selection, routing, and human verification before execution issues exist.
++
++This workflow is that contract. Every new planner skill and agent entrypoint should follow it unless a human explicitly opts into a faster path.
++
++## Core invariants
++1. **Suggestion before commitment.** New initiatives, projects, issues, and scope changes start in Linear **Suggestion** (or equivalent draft-only surfaces) until a human verifies them.
++2. **Documents before todos.** Planning artifacts are drafted and linked before implementation issues move to **Todo**, **Ready**, or **In Progress**.
++3. **One canonical owner per fact.** Use `documentation-placement-rules` and the project-docs chain; do not duplicate briefs, risks, or decisions across surfaces.
++4. **Visible uncertainty.** Assumptions, open questions, and unresolved risks stay labeled until a human accepts or routes them.
++5. **No silent promotion.** Agents do not move work to committed states, assign cycles, or create implementation todos without an explicit human review gate.
++
++## Linear state model
++|State|Meaning|Who may set it|
++|---|---|---|
++|**Suggestion**|Proposed scope, doc draft, or work item awaiting human triage.|Planner agents during phases 1–5.|
++|**Todo** / **Ready**|Human-verified work queued for execution.|Humans after phase 6; agents only when the user explicitly confirms promotion in the same session.|
++|**In Progress**|Active implementation or committed planning execution.|Humans or execution agents after verification.|
++|**Done** / **Canceled**|Closed outcomes.|Humans or assignees with normal Linear permissions.|
++
++**Suggestion projects:** When no real project exists yet, create or propose a Linear project in **Planning** with status and issues defaulting to **Suggestion**. Name it so it is obvious it is pre-commitment (for example `<Product> Planning (suggested)`).
++
++## Phases
++
++### Phase 1 — Intake and source/context gathering
++**Goal:** Understand the rough idea and what evidence already exists.
++
++**Inputs:** User prompt, linked Linear issues or documents, repo README, existing `documents/` or Linear docs, prior art links, constraints named by the user.
++
++**Actions:**
++
++- Capture the problem statement, audience hint, surfaces (web, native, API, automation, AI, etc.), and known constraints.
++- Inventory sources: initiative docs, project docs, repo `documents/`, research links, ADRs, related issues.
++- List assumptions separately from verified facts.
++
++**Produces:**
++
++|Output|Surface|Notes|
++|---|---|---|
++|Intake summary|Linear comment on the driving issue or new **Suggestion** issue|Short; links to sources.|
++|Source inventory|Same issue or project description|URLs and doc paths only; no full copies.|
++|Assumption log|Intake summary or open-questions seed|Each assumption tagged `unverified`.|
++
++**Gate:** Do not create committed projects or **Todo** issues. Proceed when the agent can name what is known vs assumed.
++
++---
++
++### Phase 2 — Initiative/project selection or suggestion
++**Goal:** Place the work under the right initiative and project—or propose creating them.
++
++**Actions:**
++
++- Match an existing initiative/project using product name, repo remote, or user direction.
++- If none fits, propose a **Suggestion** initiative and/or **Suggestion** project with owner, lead, and Planning status.
++- Do not archive or replace live template projects; follow `create-planner-project` rules for real vs template projects.
++
++**Produces:**
++
++|Output|Surface|
++|---|---|
++|Initiative link (existing or proposed)|Linear initiative|
++|Project link (existing or proposed)|Linear project in **Planning**, issues in **Suggestion**|
++|Placement note|Project description or status update explaining why this project was chosen or suggested|
++
++**Gate:** Human confirms initiative and project before phase 5 creates a full issue set from `planner-project-structure.md`.
++
++---
++
++### Phase 3 — Planning document selection and placement
++**Goal:** Decide which planning documents are needed and where each canonical copy lives.
++
++**Actions:**
++
++- Read filled or template **documentation placement rules** when they exist; otherwise use `documentation-placement-rules-template.md` defaults.
++- Read the **Planner guide** in `plugins/project-docs/README.md` for document chain order.
++- Build a document plan: which templates apply, primary home (Linear document vs repo `documents/`), and `related:` links.
++
++**Produces:**
++
++|Output|Surface|
++|---|---|
++|Document plan table|Linear project document or **Suggestion** issue|
++|Per-doc placement decisions|Document plan; references placement rules section 3|
++
++**Gate:** No drafting of versioned repo docs until placement is agreed when the repo already exists.
++
++---
++
++### Phase 4 — Decision, risk, and open-question routing
++**Goal:** Route unresolved product and technical uncertainty to the right artifact—not into hidden issue descriptions.
++
++**Actions:**
++
++|If the item is...|Route to...|Skill / template|
++|---|---|---|
++|A choice that changes scope, behavior, cost, or future options|**Decision record** (draft)|`project-docs` → `decision-record-template.md`|
++|A threat to delivery, quality, cost, or operations|**Risk register** entry|Planner issue “Create risk register” or project Linear doc|
++|An unanswered question blocking or shaping work|**Open questions log**|Planner issue “Create open questions log”; project brief § Open questions for brief-level items|
++|Evidence needing a source trail|**Research brief**|`research-brief-template.md`|
++|External system the product depends on|**Platform dependency**|`platform-dependency-template.md`|
++
++**Produces:**
++
++|Output|Surface|Linear state|
++|---|---|---|
++|Draft decision records|Linear document or repo `documents/` per placement rules|**Suggestion** until approved|
++|Risk register (seed)|Linear project doc or linked **Suggestion** issue|**Suggestion**|
++|Open questions log (seed)|Linear project doc or linked **Suggestion** issue|**Suggestion**|
++|Routing summary|Planning package index issue|Lists blockers vs non-blockers|
++
++**Gate:** Blocking open questions and unmitigated high-severity risks must be visible before phase 6. Do not mark planning “ready for execution” while blockers are hidden in prose.
++
++---
++
++### Phase 5 — Suggestion issue creation
++**Goal:** Break the planning package into reviewable Linear issues without committing execution work.
++
++**Actions:**
++
++- Create issues in **Suggestion** with clear titles, acceptance criteria, labels (`Planning`, `Documentation`, product label), and links to draft docs.
++- When using `planner-project-structure.md`, create the milestone and issue **titles** as suggestions; do not default them to **Todo**.
++- For doc-template skill work (for example “add skill for milestone plan template”), file **Suggestion** issues with `Agent Skill` and `Documentation` labels—not implementation todos.
++- Split large packages: one index **Suggestion** issue plus linked child suggestions.
++
++**Produces:**
++
++|Output|Surface|
++|---|---|
++|Suggestion issue set|Linear project, all **Suggestion**|
++|Planning package index|One **Suggestion** issue linking brief, milestone plan, docs plan, risks, open questions|
++|Milestone outline|Linear milestones (optional) or milestone plan doc draft|
++
++**Gate:** Zero issues in **Todo**, **Ready**, or **In Progress** unless the user explicitly asked to promote specific items in this session.
++
++---
++
++### Phase 6 — Human verification
++**Goal:** A human confirms scope, ownership, priority, and sequencing before any committed work exists.
++
++**Human reviewer checks:**
++
++- [ ] Initiative and project are correct (or consciously created).
++- [ ] Document placement matches `documentation-placement-rules`.
++- [ ] Project brief (or equivalent) reflects agreed scope, non-goals, and success criteria.
++- [ ] Milestone plan matches intended sequencing.
++- [ ] Open questions: blockers resolved or explicitly accepted.
++- [ ] Risk register: owners and mitigations acceptable.
++- [ ] Decision records: approved or explicitly deferred with triggers.
++- [ ] Suggestion issues: priority, estimates, and labels make sense.
++- [ ] Nothing in the package assumes unverified facts as settled.
++
++**Agent actions during verification:**
++
++- Respond to review comments; update drafts; add missing links.
++- Do **not** promote issues or change project to **In Progress** without explicit human instruction.
++
++**Produces:**
++
++|Output|Surface|
++|---|---|
++|Review notes|Linear comments on index issue or project|
++|Approved planning package|Status update: “Planning package verified by \<name\> on \<date\>”|
++
++---
++
++### Phase 7 — Conversion to committed work (post-review only)
++**Goal:** Turn verified planning into execution-ready Linear and repo artifacts.
++
++**Actions:**
++
++- Promote verified **Suggestion** issues to **Todo** or **Ready** in agreed priority order.
++- Move project from **Planning** to **In Progress** when the human signs off execution (aligns with Phase 4 gate in `planner-project-structure.md`).
++- Create **implementation brief** and **first execution backlog** only for items approved in phase 6:
++  - **Implementation brief:** use `project` → `task-spec` templates for a single bounded task; link feature spec / technical design.
++  - **First execution backlog:** ordered **Todo** issues derived from milestone plan and foundation phase; no new scope without a new suggestion cycle.
++
++**Produces:**
++
++|Output|Surface|State|
++|---|---|---|
++|Committed issues|Linear|**Todo** / **Ready**|
++|Implementation briefs|Issue bodies or repo docs per placement rules|**Todo**-linked|
++|First execution backlog|Linear issues under project|**Todo**|
++|Updated project brief / milestone plan|Canonical doc surface|**Approved** / Active|
++
++**Gate:** `pickup-work` and coding agents should only pick issues that passed phase 6–7.
++
++---
++
++## Planning artifact map
++Maps acceptance-criteria artifacts to templates, phases, and surfaces.
++
++|Artifact|Primary template / skill|Created in phase|Canonical surface (default)|Before human gate|
++|---|---|---|---|---|
++|**Project brief**|`project-brief-template.md` / `project-docs`|3–4|Linear project document; repo `documents/project-brief.md` when versioned|Draft; linked from **Suggestion** issues|
++|**Milestone plan**|`planner-project-structure.md` milestones + project doc|3–5|Linear project milestones + narrative doc|Outline only; issues stay **Suggestion**|
++|**Implementation brief**|`task-spec` → implementation brief section|7 only|Linear issue body or repo doc|Not created in phases 1–6|
++|**First execution backlog**|Derived from milestone plan + Phase 3 foundation issues|7|Linear **Todo** issues|Does not exist until phase 7|
++|**Open questions**|Brief §9 + open questions log issue|4|Linear project doc + index issue|**Suggestion** / draft|
++|**Risk register**|Planner “Create risk register” + project doc|4|Linear project doc|**Suggestion** / draft|
++|**Decision records**|`decision-record-template.md`|4|Repo or Linear per placement rules|**Suggestion** / In review|
++
++Supporting documents (customer profile, feature spec, technical design, testing strategy, release readiness) follow the same pattern: draft during phases 3–5, link from the planning package index, promote to **Approved** only after phase 6.
++
++---
++
++## Skill and entrypoint routing
++|Task|Use skill|Must follow suggestion-first?|
++|---|---|---|
++|Zero-to-planning package from rough idea|**agent-planning-workflow**|Yes|
++|Write or edit one planning document|**project-docs**|Yes for new docs; edits to approved docs need human intent|
++|Create Linear project skeleton from structure|**create-planner-project**|Yes — override default **Todo** with **Suggestion**|
++|Pick up coding work|**pickup-work**|No — only after phase 7|
++|Bounded task implementation brief|**task-spec**|After phase 7 for new execution|
++|Add or change templates in this repo|**create-doc-template**|Separate maintenance path; output is still reviewed via PR|
++
++---
++
++## Agent prohibitions
++- Do not move issues to **Todo**, **Ready**, or **In Progress** during phases 1–5.
++- Do not assign issues to a cycle by default.
++- Do not create implementation or “build feature X” issues during planning intake.
++- Do not duplicate canonical docs; link them.
++- Do not treat template example product names or issue IDs as real work.
++- Do not close the planning package with blocking open questions unlisted.
++
++---
++
++## Validation: ST-695 without scope duplication
++**ST-704** defines *how* planning agents work (this document).
++
++**ST-695** (and similar issues) define *what* to build next—for example a specific doc-template skill, template file, or agent entrypoint.
++
++Applying this workflow to ST-695:
++
++1. **Phases 1–2:** Intake names the template or skill ST-695 targets; suggest or attach the correct initiative/project under **Suggestion**.
++2. **Phase 3:** Document plan names only the templates ST-695 touches; other templates stay out of scope.
++3. **Phase 4:** Open questions and risks for ST-695 stay in the log—not buried in implementation notes.
++4. **Phase 5:** File ST-695 (and any split children) as **Suggestion** issues with acceptance criteria; do not create parallel **Todo** implementation issues for the same scope.
++5. **Phase 6:** Human verifies skill boundaries, labels, and placement rules alignment.
++6. **Phase 7:** After approval, promote ST-695 to **Todo** and optionally add an implementation brief; execution is ST-695’s job, not ST-704’s.
++
++ST-704 does not implement ST-695; it ensures ST-695 is not started as committed work before review.
++
++---
++
++## Files to create or change after this workflow is approved
++|File|Action|
++|---|---|
++|`plugins/linear-planner/skills/agent-planning-workflow/SKILL.md`|Created — primary agent entrypoint|
++|`plugins/linear-planner/skills/agent-planning-workflow/references/suggestion-first-planning-workflow.md`|Created — this contract|
++|`plugins/linear-planner/skills/create-planner-project/SKILL.md`|Updated — default **Suggestion** for setup issues|
++|`plugins/linear-planner/skills/pickup-work/SKILL.md`|Updated — exclude pre-verification **Suggestion** planning|
++|`plugins/linear-planner/README.md`|Updated — document new skill|
++|`plugins/project-docs/README.md`|Updated — link planner workflow in Planner guide|
++|`plugins/project-docs/skills/project-docs/SKILL.md`|Updated — cross-link planning workflow|
++|`plugin-groups.json`|Updated — register `agent-planning-workflow` skill|
++|Generated manifests via `bun run marketplace:write`|Regenerated|
++
++Optional follow-ups (separate **Suggestion** issues, not part of ST-704):
++
++- `milestone-plan-template.md` and `implementation-brief-template.md` under `project-docs` if those artifacts should leave the planner structure and task-spec-only homes.
++- `.codex/skills/.../agents/openai.yaml` (or equivalent) pointing at `agent-planning-workflow` for Codex/Cursor cloud agents.
++- Per-template planner skills under `plugins/project-docs/skills/` that invoke `project-docs` with phase gates enforced.
++
++---
++
++## Review triggers
++Update this workflow when:
++
++- Linear changes status names or adds a dedicated draft state.
++- `documentation-placement-rules-template.md` gains or removes surfaces.
++- `planner-project-structure.md` milestone or issue set changes materially.
++- A planner agent promotes work without human gate (treat as a workflow bug).
+diff --git a/plugins/linear-planner/skills/create-planner-project/SKILL.md b/plugins/linear-planner/skills/create-planner-project/SKILL.md
+index 35eefe0..568e82d 100644
+--- a/plugins/linear-planner/skills/create-planner-project/SKILL.md
++++ b/plugins/linear-planner/skills/create-planner-project/SKILL.md
+@@ -1,11 +1,13 @@
+ ---
+ name: create-planner-project
+-description: Creates fresh Linear planning projects from Luca's five-phase planner structure. Use when the user asks to "create a planner project", "set up planning in Linear", "turn this app idea into a Linear planning project", or replace a live Linear template project with a reusable skill-backed workflow. Use when a real web, native, backend, automation, data, AI, or mixed-surface project needs initiative, project, milestone, and issue records in Linear without keeping reusable template issues live.
++description: Creates fresh Linear planning projects from Luca's five-phase planner structure. Use when the user asks to "create a planner project", "set up planning in Linear", "turn this app idea into a Linear planning project", or replace a live Linear template project with a reusable skill-backed workflow. Use when a real web, native, backend, automation, data, AI, or mixed-surface project needs initiative, project, milestone, and issue records in Linear without keeping reusable template issues live. For zero-to-reviewable planning from a rough idea with suggestion-first gates, use agent-planning-workflow first or together with this skill.
+ ---
+ 
+ # Create Planner Project
+ Use this skill to create a real Linear planning project from a reusable structure. The structure lives in `references/planner-project-structure.md`.
+ 
++For full intake, document placement, and human verification before committed work exists, follow `../agent-planning-workflow/references/suggestion-first-planning-workflow.md`.
++
+ ## Core rule
+ Never keep a reusable "Project Planning Template" project alive in Linear. Linear should contain real initiatives, real projects, and real work only. This skill creates fresh project records for a specific app or product area.
+ 
+@@ -17,7 +19,7 @@ Never keep a reusable "Project Planning Template" project alive in Linear. Linea
+ 5. Set the project to Planning, add the initiative, set a lead if known, and avoid adding a cycle unless the user explicitly asks for this planning work to be in the current cycle.
+ 6. Create the five milestones exactly as listed in the reference.
+ 7. Create the 23 issues from the reference. Replace the example product label with the actual product label, keep the functional labels, and adapt the issue text with the chosen project type profile.
+-8. Leave issues in Todo for committed planning work. Use Suggestion only when the user asked for a speculative draft.
++8. Leave all new issues in **Suggestion** unless the user explicitly asked to promote specific items to **Todo** or **Ready** in this session. Planning work is not execution work.
+ 9. Add a short project status update explaining that the planner project was created and naming the first unblocked issue.
+ 
+ ## Field rules
+diff --git a/plugins/linear-planner/skills/pickup-work/SKILL.md b/plugins/linear-planner/skills/pickup-work/SKILL.md
+index 70cde99..7d8a897 100644
+--- a/plugins/linear-planner/skills/pickup-work/SKILL.md
++++ b/plugins/linear-planner/skills/pickup-work/SKILL.md
+@@ -11,7 +11,7 @@ Use this skill to choose and reserve the next Linear issue for the product repre
+ 2. Read the JSON evidence: git root, repo name, remote names, detected Linear URLs, issue IDs, project hints, and initiative/product terms.
+ 3. Search Linear using the strongest product candidates first. Prefer initiative and project matches over loose issue-title matches.
+ 4. Fetch the most likely project or initiative, then list candidate issues for that project. If only an initiative is found, search/list issues across its product terms and linked projects.
+-5. Prefer issues that are unassigned or assigned to `me`, not blocked, not archived, not completed, and in Todo/Backlog/Suggestion-ready states. Exclude planning-template work unless the repo itself is the planner plugin.
++5. Prefer issues that are unassigned or assigned to `me`, not blocked, not archived, not completed, and in **Todo**, **Ready**, or **Backlog**. Do not pick issues still in **Suggestion** unless the user explicitly confirmed human verification for that planning package. Exclude planning-template work unless the repo itself is the planner plugin.
+ 6. Rank candidates by priority first, then whether the issue is already in the current cycle, then clarity of acceptance criteria, then recency.
+ 7. Before mutating Linear, confirm the candidate is not blocked by open issues. If the tool output is ambiguous, fetch the issue and its blockers.
+ 8. Assign the selected issue to `me` and move it to the team's best in-progress state. Use `Started`, `In Progress`, or the closest available in-progress status from the team status list.
+diff --git a/plugins/project-docs/README.body.txt b/plugins/project-docs/README.body.txt
+index 542654e..a254ff4 100644
+--- a/plugins/project-docs/README.body.txt
++++ b/plugins/project-docs/README.body.txt
+@@ -40,7 +40,9 @@ The relationship appears in two places:
+ Do not add a rendered `## Related documents` section by default. Real docs should link to related docs where the reference helps the reader. The validator checks that these references resolve; it does not enforce relationship types or a minimum set of required related docs.
+ 
+ ## Planner guide
+-Use the templates as a chain, not as independent forms:
++Use the templates as a chain, not as independent forms.
++
++**Suggestion-first workflow:** Before creating committed Linear todos, run the `linear-planner:agent-planning-workflow` skill (see `plugins/linear-planner/skills/agent-planning-workflow/references/suggestion-first-planning-workflow.md`). Planning agents draft the package in **Suggestion**, route risks and open questions explicitly, and promote work to **Todo** / **Ready** / **In Progress** only after human verification.
+ 
+ 1. Start with **documentation placement rules** when a repo or app has more than one possible documentation surface. It prevents early drafts from becoming accidental sources of truth.
+ 2. Add a **testing strategy** when the project needs a shared testing contract before individual features invent their own layers or tools.
+diff --git a/plugins/project-docs/README.md b/plugins/project-docs/README.md
+index 0808814..1888417 100644
+--- a/plugins/project-docs/README.md
++++ b/plugins/project-docs/README.md
+@@ -63,7 +63,9 @@ The relationship appears in two places:
+ Do not add a rendered `## Related documents` section by default. Real docs should link to related docs where the reference helps the reader. The validator checks that these references resolve; it does not enforce relationship types or a minimum set of required related docs.
+ 
+ ## Planner guide
+-Use the templates as a chain, not as independent forms:
++Use the templates as a chain, not as independent forms.
++
++**Suggestion-first workflow:** Before creating committed Linear todos, run the `linear-planner:agent-planning-workflow` skill (see `plugins/linear-planner/skills/agent-planning-workflow/references/suggestion-first-planning-workflow.md`). Planning agents draft the package in **Suggestion**, route risks and open questions explicitly, and promote work to **Todo** / **Ready** / **In Progress** only after human verification.
+ 
+ 1. Start with **documentation placement rules** when a repo or app has more than one possible documentation surface. It prevents early drafts from becoming accidental sources of truth.
+ 2. Add a **testing strategy** when the project needs a shared testing contract before individual features invent their own layers or tools.
+diff --git a/plugins/project-docs/skills/project-docs/SKILL.md b/plugins/project-docs/skills/project-docs/SKILL.md
+index ca3f66d..b36a6f2 100644
+--- a/plugins/project-docs/skills/project-docs/SKILL.md
++++ b/plugins/project-docs/skills/project-docs/SKILL.md
+@@ -8,6 +8,8 @@ Use this skill to select the right project document template, write the document
+ 
+ Do not use this skill to add or change the template library itself. For template maintenance in this repo, use `create-doc-template`.
+ 
++When drafting documents as part of zero-to-planning intake, follow `linear-planner:agent-planning-workflow` so drafts stay in **Suggestion** until a human verifies the planning package.
++
+ ## Decision tree
+ - What is the user asking for?
+   - **Where planning, repo, and code docs should live** -> use documentation placement rules and read `references/documentation-placement-rules-template.md`.
+-- 
+2.43.0
+
