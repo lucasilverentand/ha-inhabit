@@ -51,7 +51,7 @@ if "homeassistant" not in sys.modules:
     # data_entry_flow needs real AbortFlow / FlowResultType for config flow tests
     import enum as _enum
 
-    class _FlowResultType(str, _enum.Enum):
+    class _FlowResultType(_enum.StrEnum):
         FORM = "form"
         CREATE_ENTRY = "create_entry"
         ABORT = "abort"

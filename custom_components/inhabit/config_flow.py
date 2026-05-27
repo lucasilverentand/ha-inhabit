@@ -6,7 +6,7 @@ import logging
 from typing import Any
 
 import voluptuous as vol
-from homeassistant.config_entries import ConfigFlow
+from homeassistant.config_entries import ConfigFlow, OptionsFlow
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 
@@ -54,12 +54,12 @@ class InhabitConfigFlow(ConfigFlow, domain=DOMAIN):
         return InhabitOptionsFlow(config_entry)
 
 
-class InhabitOptionsFlow:
+class InhabitOptionsFlow(OptionsFlow):
     """Handle options flow for Inhabit."""
 
     def __init__(self, config_entry) -> None:
         """Initialize options flow."""
-        self.config_entry = config_entry
+        self._options = dict(config_entry.options)
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -74,19 +74,15 @@ class InhabitOptionsFlow:
                 {
                     vol.Optional(
                         "default_motion_timeout",
-                        default=self.config_entry.options.get(
-                            "default_motion_timeout", 120
-                        ),
+                        default=self._options.get("default_motion_timeout", 120),
                     ): vol.All(vol.Coerce(int), vol.Range(min=10, max=600)),
                     vol.Optional(
                         "default_checking_timeout",
-                        default=self.config_entry.options.get(
-                            "default_checking_timeout", 30
-                        ),
+                        default=self._options.get("default_checking_timeout", 30),
                     ): vol.All(vol.Coerce(int), vol.Range(min=5, max=120)),
                     vol.Optional(
                         "default_grid_size",
-                        default=self.config_entry.options.get("default_grid_size", 10),
+                        default=self._options.get("default_grid_size", 10),
                     ): vol.All(vol.Coerce(int), vol.Range(min=1, max=100)),
                 }
             ),
