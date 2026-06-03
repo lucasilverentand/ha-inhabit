@@ -487,6 +487,8 @@ export class FpbOccupancyPanel extends LitElement {
   }
 
   override render() {
+    const hasDoorSensors = (this._config?.door_sensors ?? []).length > 0;
+
     return html`
       <div class="panel-header">
         <h3>${this.targetName} Occupancy</h3>
@@ -563,7 +565,9 @@ export class FpbOccupancyPanel extends LitElement {
             ${this._renderSensorSection("Door Sensors", "door", this._config.door_sensors)}
 
             <!-- Door Logic -->
-            <div class="section">
+            ${
+              hasDoorSensors
+                ? html`<div class="section">
               <div class="section-title">Door Logic</div>
 
               <div class="toggle-row">
@@ -587,7 +591,9 @@ export class FpbOccupancyPanel extends LitElement {
                   @change=${(e: Event) => this._updateConfig({ door_open_resets_checking: (e.target as HTMLInputElement).checked })}
                 ></ha-switch>
               </div>
-            </div>
+            </div>`
+                : nothing
+            }
 
             <!-- Override Trigger -->
             <div class="section">

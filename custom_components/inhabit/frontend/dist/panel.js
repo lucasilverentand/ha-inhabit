@@ -3636,7 +3636,7 @@ function ut(t,e){return(e,i,o)=>((t,e,i)=>(i.configurable=!0,i.enumerable=!0,Ref
           `:Z}
         </div>
       </div>
-    `}render(){return H`
+    `}render(){const t=(this._config?.door_sensors??[]).length>0;return H`
       <div class="panel-header">
         <h3>${this.targetName} Occupancy</h3>
         <button class="close-btn" @click=${()=>this.dispatchEvent(new CustomEvent("close-panel"))}>
@@ -3706,7 +3706,7 @@ function ut(t,e){return(e,i,o)=>((t,e,i)=>(i.configurable=!0,i.enumerable=!0,Ref
             ${this._renderSensorSection("Door Sensors","door",this._config.door_sensors)}
 
             <!-- Door Logic -->
-            <div class="section">
+            ${t?H`<div class="section">
               <div class="section-title">Door Logic</div>
 
               <div class="toggle-row">
@@ -3730,7 +3730,7 @@ function ut(t,e){return(e,i,o)=>((t,e,i)=>(i.configurable=!0,i.enumerable=!0,Ref
                   @change=${t=>this._updateConfig({door_open_resets_checking:t.target.checked})}
                 ></ha-switch>
               </div>
-            </div>
+            </div>`:Z}
 
             <!-- Override Trigger -->
             <div class="section">
