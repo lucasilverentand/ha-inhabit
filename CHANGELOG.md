@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.13.2](https://github.com/lucasilverentand/ha-inhabit/compare/v0.13.1...v0.13.2) (2026-06-03)
+
+
+### Bug Fixes
+
+* exclude Inhabit entities from editor pickers ([#46](https://github.com/lucasilverentand/ha-inhabit/issues/46)) ([206ccce](https://github.com/lucasilverentand/ha-inhabit/commit/206ccce747b76bc3e26945041a733638ceadfcea))
+* harden map line rendering ([#42](https://github.com/lucasilverentand/ha-inhabit/issues/42)) ([3d2723c](https://github.com/lucasilverentand/ha-inhabit/commit/3d2723ccce8386485931b2bcccec0ccaf8dfb2ad))
+* hide door logic without sensors ([#45](https://github.com/lucasilverentand/ha-inhabit/issues/45)) ([da359c1](https://github.com/lucasilverentand/ha-inhabit/commit/da359c11b07ebbeb5638c95812b2bfbfee1fcb27))
+* inherit options flow from Home Assistant base ([#35](https://github.com/lucasilverentand/ha-inhabit/issues/35)) ([3c8df8c](https://github.com/lucasilverentand/ha-inhabit/commit/3c8df8cd110a372d7fc6daff381e1a42664b3f5c))
+* make frontend build exit cleanly ([#34](https://github.com/lucasilverentand/ha-inhabit/issues/34)) ([5288527](https://github.com/lucasilverentand/ha-inhabit/commit/5288527ede10f35d583d2d4922603572e3d182e2))
+* modernize test flow result enum ([#39](https://github.com/lucasilverentand/ha-inhabit/issues/39)) ([3d99e0d](https://github.com/lucasilverentand/ha-inhabit/commit/3d99e0dd68de9ff684a2cba4267cd40f334bc7e5)), closes [#33](https://github.com/lucasilverentand/ha-inhabit/issues/33)
+* remove area occupancy sensor bindings ([#44](https://github.com/lucasilverentand/ha-inhabit/issues/44)) ([3919f4e](https://github.com/lucasilverentand/ha-inhabit/commit/3919f4ef29eb6a4bff3ee9ce11e738bbe0e54614))
+* sync release metadata ([#40](https://github.com/lucasilverentand/ha-inhabit/issues/40)) ([487d867](https://github.com/lucasilverentand/ha-inhabit/commit/487d8672208a46e1e1c14d93c1691b9b0401bc9b))
+
 ## [0.13.1](https://github.com/lucasilverentand/ha-inhabit/compare/v0.13.0...v0.13.1) (2026-03-15)
 
 
