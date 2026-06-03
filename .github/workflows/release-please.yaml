@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: write
+  issues: write
   pull-requests: write
 
 jobs:
@@ -22,6 +23,24 @@ jobs:
         with:
           release-type: simple
           package-name: inhabit
+
+      - name: Assign release pull request
+        if: ${{ steps.release.outputs.prs_created == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_PR: ${{ steps.release.outputs.pr }}
+          RELEASE_PRS: ${{ steps.release.outputs.prs }}
+        run: |
+          release_prs="${RELEASE_PRS:-}"
+          if [ -z "$release_prs" ] || [ "$release_prs" = "null" ]; then
+            release_prs="${RELEASE_PR:-null}"
+          fi
+
+          jq -r 'if type == "array" then .[]?.number else .number? end' <<< "$release_prs" |
+            while read -r pr_number; do
+              [ -n "$pr_number" ] || continue
+              gh pr edit "$pr_number" --add-assignee lucasilverentand
+            done
 
   build-release:
     needs: release-please
@@ -66,7 +85,7 @@ jobs:
           cd dist && zip -r inhabit.zip inhabit
 
       - name: Upload Release Asset
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.release-please.outputs.tag_name }}
           files: dist/inhabit.zip
