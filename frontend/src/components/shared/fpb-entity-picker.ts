@@ -12,6 +12,11 @@
 import { css, html, LitElement, nothing } from "lit";
 import { property, query, state } from "lit/decorators.js";
 import type { HomeAssistant } from "../../types";
+import {
+  type EntityRegistryEntry,
+  isInhabitGeneratedEntity,
+  isInhabitRegistryEntry,
+} from "./entity-filter";
 
 interface EntityEntry {
   entity_id: string;
@@ -55,6 +60,14 @@ export class FpbEntityPicker extends LitElement {
   /** Entity IDs staged for multi-add. */
   @state()
   private _staged: Set<string> = new Set();
+
+  @state()
+  private _integrationEntityIds: Set<string> = new Set();
+
+  @state()
+  private _registryLoadComplete = false;
+
+  private _registryLoadStarted = false;
 
   @query(".search-input")
   private _input?: HTMLInputElement;
@@ -262,6 +275,36 @@ export class FpbEntityPicker extends LitElement {
 
   override firstUpdated(): void {
     requestAnimationFrame(() => this._input?.focus());
+    this._loadIntegrationEntities();
+  }
+
+  override updated(changedProps: Map<string, unknown>): void {
+    if (changedProps.has("hass")) {
+      this._registryLoadStarted = false;
+      this._registryLoadComplete = false;
+      this._integrationEntityIds = new Set();
+      this._loadIntegrationEntities();
+    }
+  }
+
+  private async _loadIntegrationEntities(): Promise<void> {
+    if (!this.hass || this._registryLoadStarted) return;
+    this._registryLoadStarted = true;
+
+    try {
+      const entries = await this.hass.callWS<EntityRegistryEntry[]>({
+        type: "config/entity_registry/list",
+      });
+      this._integrationEntityIds = new Set(
+        entries
+          .filter((entry) => isInhabitRegistryEntry(entry))
+          .map((entry) => entry.entity_id),
+      );
+    } catch (err) {
+      console.warn("Failed to load entity registry for Inhabit filter:", err);
+    } finally {
+      this._registryLoadComplete = true;
+    }
   }
 
   private _getIcon(entityId: string): string {
@@ -310,6 +353,7 @@ export class FpbEntityPicker extends LitElement {
 
   private _getFilteredEntities(): EntityEntry[] {
     if (!this.hass) return [];
+    if (!this._registryLoadComplete) return [];
     const excludeSet = new Set(this.exclude);
     const domainSet = new Set(this.domains);
     const excludeDomainSet = new Set(this.excludeDomains);
@@ -320,6 +364,8 @@ export class FpbEntityPicker extends LitElement {
     for (const eid of Object.keys(this.hass.states)) {
       const stateObj = this.hass.states[eid];
       if (!stateObj) continue;
+      if (isInhabitGeneratedEntity(eid, stateObj, this._integrationEntityIds))
+        continue;
       if (excludeSet.has(eid)) continue;
       const domain = eid.split(".")[0];
       if (domainSet.size > 0 && !domainSet.has(domain)) continue;
