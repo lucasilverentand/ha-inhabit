@@ -13,6 +13,8 @@ import type {
 } from "../../types";
 import "../shared/fpb-entity-picker";
 
+type AreaSensorBindingType = "motion" | "door";
+
 export class FpbOccupancyPanel extends LitElement {
   @property({ attribute: false })
   hass?: HomeAssistant;
@@ -36,8 +38,7 @@ export class FpbOccupancyPanel extends LitElement {
   private _loading = true;
 
   @state()
-  private _activePicker: "motion" | "occupancy" | "door" | "override" | null =
-    null;
+  private _activePicker: AreaSensorBindingType | "override" | null = null;
 
   private _pollTimer?: number;
 
@@ -350,7 +351,7 @@ export class FpbOccupancyPanel extends LitElement {
   }
 
   private async _addSensors(
-    type: "motion" | "occupancy" | "door",
+    type: AreaSensorBindingType,
     entityIds: string[],
   ): Promise<void> {
     if (!this._config || entityIds.length === 0) return;
@@ -370,7 +371,7 @@ export class FpbOccupancyPanel extends LitElement {
   }
 
   private async _removeSensor(
-    type: "motion" | "occupancy" | "door",
+    type: AreaSensorBindingType,
     entityId: string,
   ): Promise<void> {
     if (!this._config) return;
@@ -401,15 +402,10 @@ export class FpbOccupancyPanel extends LitElement {
 
   private _renderSensorSection(
     title: string,
-    type: "motion" | "occupancy" | "door",
+    type: AreaSensorBindingType,
     sensors: SensorBinding[],
   ) {
-    const icon =
-      type === "motion"
-        ? "mdi:motion-sensor"
-        : type === "occupancy"
-          ? "mdi:account-check"
-          : "mdi:door";
+    const icon = type === "motion" ? "mdi:motion-sensor" : "mdi:door";
     return html`
       <div class="section">
         <div class="section-title">${title}</div>
@@ -564,7 +560,6 @@ export class FpbOccupancyPanel extends LitElement {
 
             <!-- Sensor Bindings -->
             ${this._renderSensorSection("Motion Sensors", "motion", this._config.motion_sensors)}
-            ${this._renderSensorSection("Occupancy Sensors", "occupancy", this._config.occupancy_sensors ?? [])}
             ${this._renderSensorSection("Door Sensors", "door", this._config.door_sensors)}
 
             <!-- Door Logic -->
