@@ -11,6 +11,7 @@
 
 import { css, html, LitElement, nothing } from "lit";
 import { property, query, state } from "lit/decorators.js";
+import { repeat } from "lit/directives/repeat.js";
 import type { HomeAssistant } from "../../types";
 import {
   type EntityRegistryEntry,
@@ -279,10 +280,12 @@ export class FpbEntityPicker extends LitElement {
   }
 
   override updated(changedProps: Map<string, unknown>): void {
-    if (changedProps.has("hass")) {
-      this._registryLoadStarted = false;
-      this._registryLoadComplete = false;
-      this._integrationEntityIds = new Set();
+    if (
+      changedProps.has("hass") &&
+      this.hass &&
+      !this._registryLoadStarted &&
+      !this._registryLoadComplete
+    ) {
       this._loadIntegrationEntities();
     }
   }
@@ -395,7 +398,9 @@ export class FpbEntityPicker extends LitElement {
         if (aStaged !== bStaged) return bStaged - aStaged;
       }
       return (
-        b.score - a.score || a.friendly_name.localeCompare(b.friendly_name)
+        b.score - a.score ||
+        a.friendly_name.localeCompare(b.friendly_name) ||
+        a.entity_id.localeCompare(b.entity_id)
       );
     });
     return entries.slice(0, 50);
@@ -477,9 +482,12 @@ export class FpbEntityPicker extends LitElement {
           <div class="result-list">
             ${
               results.length > 0
-                ? results.map((ent) => {
-                    const isStaged = this._staged.has(ent.entity_id);
-                    return html`
+                ? repeat(
+                    results,
+                    (ent) => ent.entity_id,
+                    (ent) => {
+                      const isStaged = this._staged.has(ent.entity_id);
+                      return html`
                 <button
                   class="result-item ${isStaged ? "selected" : ""}"
                   @click=${() => this._onItemClick(ent.entity_id)}
@@ -501,7 +509,8 @@ export class FpbEntityPicker extends LitElement {
                   </div>
                 </button>
               `;
-                  })
+                    },
+                  )
                 : html`
               <div class="empty-state">
                 ${this._search ? "No matching entities" : "No entities available"}
