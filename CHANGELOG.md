@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.3](https://github.com/lucasilverentand/ha-inhabit/compare/v0.13.2...v0.13.3) (2026-06-04)
+
+
+### Bug Fixes
+
+* stabilize entity picker results ([#49](https://github.com/lucasilverentand/ha-inhabit/issues/49)) ([bd215e6](https://github.com/lucasilverentand/ha-inhabit/commit/bd215e643474ce57ae34d3c5a9a3346868ab4d3d))
+
 ## [0.13.2](https://github.com/lucasilverentand/ha-inhabit/compare/v0.13.1...v0.13.2) (2026-06-03)
 
 
