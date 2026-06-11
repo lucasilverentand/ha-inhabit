@@ -40,6 +40,7 @@ class MmwaveTargetProcessor:
         self._placements: dict[str, MmwavePlacement] = {}
         # target positions: {placement_id: {target_index: Coordinates}}
         self._target_positions: dict[str, dict[int, Coordinates]] = {}
+        self._filtered_target_positions: dict[str, dict[int, Coordinates]] = {}
         # region hits: {placement_id: {target_index: list of region_ids}}
         self._region_hits: dict[str, dict[int, list[str]]] = {}
         self._unsub_listeners: dict[str, list[Callable[[], None]]] = {}
@@ -73,6 +74,7 @@ class MmwaveTargetProcessor:
         self._unsub_listeners.clear()
         self._placements.clear()
         self._target_positions.clear()
+        self._filtered_target_positions.clear()
         self._region_hits.clear()
         _LOGGER.info("mmWave target processor stopped")
 
@@ -91,6 +93,7 @@ class MmwaveTargetProcessor:
         """Remove a placement from the processor."""
         self._placements.pop(placement_id, None)
         self._target_positions.pop(placement_id, None)
+        self._filtered_target_positions.pop(placement_id, None)
         self._region_hits.pop(placement_id, None)
         for unsub in self._unsub_listeners.pop(placement_id, []):
             unsub()
@@ -126,6 +129,7 @@ class MmwaveTargetProcessor:
         """Set up listeners for a single placement."""
         self._placements[placement.id] = placement
         self._target_positions[placement.id] = {}
+        self._filtered_target_positions[placement.id] = {}
         self._region_hits[placement.id] = {}
         unsubs = []
 
@@ -187,6 +191,9 @@ class MmwaveTargetProcessor:
         # Zero readings mean the sensor has no target detected — clear this target
         if local_x == 0.0 and local_y == 0.0:
             self._target_positions.get(placement_id, {}).pop(target_index, None)
+            self._filtered_target_positions.get(placement_id, {}).pop(
+                target_index, None
+            )
             old_regions = self._region_hits.get(placement_id, {}).pop(target_index, [])
             if old_regions:
                 async_dispatcher_send(
@@ -199,6 +206,8 @@ class MmwaveTargetProcessor:
                 )
             return
 
+        local_x, local_y = self._apply_calibration(placement, local_x, local_y)
+
         # Convert mm (sensor unit) to floor plan units
         scale = self._get_mm_to_unit_scale(placement.floor_plan_id)
         local_x *= scale
@@ -206,6 +215,7 @@ class MmwaveTargetProcessor:
 
         # Transform from sensor-local to world coordinates
         world_pos = self._transform_to_world(placement, local_x, local_y)
+        world_pos = self._filter_world_position(placement, target_index, world_pos)
         self._target_positions[placement_id][target_index] = world_pos
 
         # Test against all rooms/zones
@@ -232,6 +242,47 @@ class MmwaveTargetProcessor:
             "in": 1 / 25.4,
             "ft": 1 / 304.8,
         }.get(unit, 0.1)
+
+    def _apply_calibration(
+        self, placement: MmwavePlacement, raw_x: float, raw_y: float
+    ) -> tuple[float, float]:
+        """Apply persisted raw x/y calibration bias."""
+        calibration = placement.calibration
+        if not calibration or not calibration.enabled:
+            return raw_x, raw_y
+
+        return (
+            raw_x - calibration.raw_bias.x,
+            raw_y - calibration.raw_bias.y,
+        )
+
+    def _filter_world_position(
+        self, placement: MmwavePlacement, target_index: int, point: Coordinates
+    ) -> Coordinates:
+        """Smooth jitter inside the calibrated jitter radius."""
+        calibration = placement.calibration
+        if not calibration or not calibration.enabled or calibration.jitter_radius <= 0:
+            return point
+
+        previous = self._filtered_target_positions.setdefault(placement.id, {}).get(
+            target_index
+        )
+        if previous is None:
+            self._filtered_target_positions[placement.id][target_index] = point
+            return point
+
+        distance = math.hypot(point.x - previous.x, point.y - previous.y)
+        if distance > calibration.jitter_radius:
+            self._filtered_target_positions[placement.id][target_index] = point
+            return point
+
+        alpha = 0.25
+        filtered = Coordinates(
+            x=previous.x + (point.x - previous.x) * alpha,
+            y=previous.y + (point.y - previous.y) * alpha,
+        )
+        self._filtered_target_positions[placement.id][target_index] = filtered
+        return filtered
 
     def _transform_to_world(
         self, placement: MmwavePlacement, local_x: float, local_y: float

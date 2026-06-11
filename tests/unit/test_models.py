@@ -23,7 +23,10 @@ from custom_components.inhabit.models.floor_plan import (
     Wall,
     Window,
 )
-from custom_components.inhabit.models.mmwave_sensor import MmwavePlacement
+from custom_components.inhabit.models.mmwave_sensor import (
+    MmwaveCalibration,
+    MmwavePlacement,
+)
 from custom_components.inhabit.models.virtual_sensor import (
     OccupancyStateData,
     SensorBinding,
@@ -1203,6 +1206,7 @@ class TestMmwavePlacement:
         assert mmwave.detection_range == 500.0
         assert mmwave.label is None
         assert mmwave.targets == []
+        assert mmwave.calibration is None
 
     def test_to_dict(self):
         """Test serialization."""
@@ -1229,6 +1233,32 @@ class TestMmwavePlacement:
         assert data["detection_range"] == 400.0
         assert data["label"] == "Living Room Sensor"
         assert len(data["targets"]) == 1
+        assert "calibration" not in data
+
+    def test_calibration_to_dict(self):
+        """Test calibration serialization."""
+        mmwave = MmwavePlacement(
+            id="mmw_cal",
+            calibration=MmwaveCalibration(
+                target_index=1,
+                map_point=Coordinates(100, 200),
+                raw_mean=Coordinates(520, 1030),
+                raw_stddev=Coordinates(4, 6),
+                raw_bias=Coordinates(20, 30),
+                jitter_radius=1.44,
+                sample_count=25,
+                calibrated_at="2026-06-12T10:00:00+00:00",
+            ),
+        )
+
+        data = mmwave.to_dict()
+
+        assert data["calibration"]["enabled"] is True
+        assert data["calibration"]["target_index"] == 1
+        assert data["calibration"]["map_point"] == {"x": 100, "y": 200}
+        assert data["calibration"]["raw_bias"] == {"x": 20, "y": 30}
+        assert data["calibration"]["jitter_radius"] == 1.44
+        assert data["calibration"]["sample_count"] == 25
 
     def test_from_dict(self):
         """Test deserialization."""
@@ -1254,6 +1284,34 @@ class TestMmwavePlacement:
         assert mmwave.label == "Corner Sensor"
         assert len(mmwave.targets) == 1
 
+    def test_calibration_from_dict(self):
+        """Test calibration deserialization."""
+        data = {
+            "id": "mmw_cal",
+            "calibration": {
+                "enabled": True,
+                "target_index": 0,
+                "map_point": {"x": 350, "y": 300},
+                "raw_mean": {"x": 520, "y": 1030},
+                "raw_stddev": {"x": 4, "y": 6},
+                "raw_bias": {"x": 20, "y": 30},
+                "jitter_radius": 1.44,
+                "sample_count": 25,
+                "calibrated_at": "2026-06-12T10:00:00+00:00",
+            },
+        }
+
+        mmwave = MmwavePlacement.from_dict(data)
+
+        assert mmwave.calibration is not None
+        assert mmwave.calibration.target_index == 0
+        assert mmwave.calibration.map_point.x == 350
+        assert mmwave.calibration.raw_mean.y == 1030
+        assert mmwave.calibration.raw_stddev.x == 4
+        assert mmwave.calibration.raw_bias.y == 30
+        assert mmwave.calibration.jitter_radius == 1.44
+        assert mmwave.calibration.sample_count == 25
+
     def test_from_dict_defaults(self):
         """Test deserialization falls back to defaults for missing fields."""
         data = {"id": "mmw_3"}
@@ -1268,6 +1326,7 @@ class TestMmwavePlacement:
         assert mmwave.detection_range == 500.0
         assert mmwave.label is None
         assert mmwave.targets == []
+        assert mmwave.calibration is None
 
     def test_legacy_mount_x_mount_y_migration(self):
         """Test from_dict migrates legacy mount_x/mount_y to position."""
@@ -1346,3 +1405,24 @@ class TestMmwavePlacement:
         assert restored.detection_range == original.detection_range
         assert restored.label == original.label
         assert restored.targets == original.targets
+
+    def test_calibration_serialization_round_trip(self):
+        """Test calibration survives placement round trip."""
+        original = MmwavePlacement(
+            id="mmw_cal_rt",
+            calibration=MmwaveCalibration(
+                target_index=0,
+                map_point=Coordinates(350, 300),
+                raw_mean=Coordinates(520, 1030),
+                raw_stddev=Coordinates(4, 6),
+                raw_bias=Coordinates(20, 30),
+                jitter_radius=1.44,
+                sample_count=25,
+                calibrated_at="2026-06-12T10:00:00+00:00",
+            ),
+        )
+
+        restored = MmwavePlacement.from_dict(original.to_dict())
+
+        assert restored.calibration is not None
+        assert restored.calibration.to_dict() == original.calibration.to_dict()

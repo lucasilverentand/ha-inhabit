@@ -92,6 +92,10 @@ interface InhabitSignals {
     id: string;
     type: "light" | "switch" | "mmwave" | "button" | "other";
   } | null>;
+  mmwaveCalibrationTarget: Signal<{
+    placementId: string;
+    targetIndex: number;
+  } | null>;
   mmwavePlacements: Signal<MmwavePlacement[]>;
   simulatedTargets: Signal<SimulatedTarget[]>;
   simHitboxEnabled: Signal<boolean>;
@@ -131,6 +135,10 @@ function createSignals(): InhabitSignals {
       id: string;
       type: "light" | "switch" | "mmwave" | "button" | "other";
     } | null>(null),
+    mmwaveCalibrationTarget: signal<{
+      placementId: string;
+      targetIndex: number;
+    } | null>(null),
     mmwavePlacements: signal<MmwavePlacement[]>([]),
     simulatedTargets: signal<SimulatedTarget[]>([]),
     simHitboxEnabled: signal<boolean>(false),
@@ -164,6 +172,7 @@ export const constraintConflicts = s.constraintConflicts;
 export const focusedRoomId = s.focusedRoomId;
 export const occupancyPanelTarget = s.occupancyPanelTarget;
 export const devicePanelTarget = s.devicePanelTarget;
+export const mmwaveCalibrationTarget = s.mmwaveCalibrationTarget;
 export const mmwavePlacements = s.mmwavePlacements;
 export const simulatedTargets = s.simulatedTargets;
 export const simHitboxEnabled = s.simHitboxEnabled;
@@ -179,6 +188,7 @@ export function setCanvasMode(mode: CanvasMode): void {
   }
   if (mode !== "placement") {
     devicePanelTarget.value = null;
+    mmwaveCalibrationTarget.value = null;
   }
 }
 
@@ -215,6 +225,7 @@ export function resetSignals(): void {
   focusedRoomId.value = null;
   occupancyPanelTarget.value = null;
   devicePanelTarget.value = null;
+  mmwaveCalibrationTarget.value = null;
   mmwavePlacements.value = [];
   simulatedTargets.value = [];
   simHitboxEnabled.value = false;

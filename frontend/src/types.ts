@@ -215,6 +215,18 @@ export interface OccupancyStateData {
 }
 
 // mmWave sensor types
+export interface MmwaveCalibration {
+  enabled: boolean;
+  target_index: number;
+  map_point: Coordinates;
+  raw_mean: Coordinates;
+  raw_stddev: Coordinates;
+  raw_bias: Coordinates;
+  jitter_radius: number;
+  sample_count: number;
+  calibrated_at?: string;
+}
+
 export interface MmwavePlacement {
   id: string;
   floor_plan_id: string;
@@ -226,6 +238,7 @@ export interface MmwavePlacement {
   detection_range: number;
   label?: string;
   targets: Array<{ x_entity_id: string; y_entity_id: string }>;
+  calibration?: MmwaveCalibration;
 }
 
 // Visual rule types

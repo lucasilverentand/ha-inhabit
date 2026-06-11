@@ -18,6 +18,7 @@ import {
   gridSize,
   layers,
   lightPlacements,
+  mmwaveCalibrationTarget,
   mmwavePlacements,
   occupancyPanelTarget,
   otherPlacements,
@@ -53,6 +54,7 @@ import {
   arePointsCollinear,
   snapToGrid as snapPoint,
 } from "../../utils/geometry";
+import { filterJitter, rawTargetToWorld } from "../../utils/mmwave-calibration";
 import {
   buildNodeMap,
   edgesAtNode,
@@ -1682,6 +1684,23 @@ export class FpbCanvas extends LitElement {
     }
 
     const point = this._screenToSvg({ x: e.clientX, y: e.clientY });
+    const calibrationTarget = mmwaveCalibrationTarget.value;
+    if (calibrationTarget) {
+      e.preventDefault();
+      e.stopPropagation();
+      mmwaveCalibrationTarget.value = null;
+      window.dispatchEvent(
+        new CustomEvent("inhabit-mmwave-calibration-point", {
+          detail: {
+            placementId: calibrationTarget.placementId,
+            targetIndex: calibrationTarget.targetIndex,
+            point,
+          },
+        }),
+      );
+      return;
+    }
+
     const tool = activeTool.value;
     const snappedPoint = this._getSnappedPoint(
       point,
@@ -6290,9 +6309,7 @@ export class FpbCanvas extends LitElement {
 
           // Update target goal positions from entity state
           const activeKeys = new Set<string>();
-          const rad = (p.angle * Math.PI) / 180;
-          const cosA = Math.cos(rad);
-          const sinA = Math.sin(rad);
+          const floorPlanUnit = currentFloorPlan.value?.unit ?? "cm";
 
           for (let idx = 0; idx < (p.targets ?? []).length; idx++) {
             const t = p.targets[idx];
@@ -6308,28 +6325,29 @@ export class FpbCanvas extends LitElement {
               (rawX === 0 && rawY === 0)
             )
               continue;
-            // Convert mm (sensor unit) to cm (floor plan unit)
-            const localX = rawX / 10;
-            const localY = rawY / 10;
-            // Transform from sensor-local coords to world coords
-            // localY = forward (along facing direction), localX = lateral (perpendicular)
-            const wx = px + localY * cosA - localX * sinA;
-            const wy = py + localY * sinA + localX * cosA;
 
             const key = `${p.id}-${idx}`;
             activeKeys.add(key);
             const existing = this._mmwaveTargetPositions.get(key);
+            const world = rawTargetToWorld(p, rawX, rawY, floorPlanUnit);
+            const filtered = filterJitter(
+              p,
+              existing
+                ? { x: existing.targetX, y: existing.targetY }
+                : undefined,
+              world,
+            );
             if (existing) {
-              existing.targetX = wx;
-              existing.targetY = wy;
+              existing.targetX = filtered.x;
+              existing.targetY = filtered.y;
               existing.arrived = false;
             } else {
               // New target — start at goal position
               this._mmwaveTargetPositions.set(key, {
-                displayX: wx,
-                displayY: wy,
-                targetX: wx,
-                targetY: wy,
+                displayX: filtered.x,
+                displayY: filtered.y,
+                targetX: filtered.x,
+                targetY: filtered.y,
                 arrived: true,
                 isNew: true,
               });

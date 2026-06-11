@@ -599,6 +599,117 @@ class TestMmwaveTargetProcessor:
         assert abs(pos.x - 350) < 0.01
         assert abs(pos.y - 300) < 0.01
 
+    def test_calibration_bias_applied_before_transform(self, mock_hass, mock_store):
+        """Persisted raw calibration bias is subtracted before mapping."""
+        from custom_components.inhabit.engine.mmwave_target_processor import (
+            MmwaveTargetProcessor,
+        )
+        from custom_components.inhabit.models.floor_plan import Coordinates
+        from custom_components.inhabit.models.mmwave_sensor import (
+            MmwaveCalibration,
+            MmwavePlacement,
+        )
+
+        processor = MmwaveTargetProcessor(mock_hass, mock_store)
+
+        placement = MmwavePlacement(
+            id="p1",
+            floor_plan_id="fp1",
+            floor_id="floor1",
+            position=Coordinates(x=250, y=250),
+            angle=0.0,
+            targets=[{"x_entity_id": "sensor.x", "y_entity_id": "sensor.y"}],
+            calibration=MmwaveCalibration(
+                raw_bias=Coordinates(x=20, y=30),
+                jitter_radius=0,
+            ),
+        )
+        processor._placements["p1"] = placement
+        processor._target_positions["p1"] = {}
+        processor._filtered_target_positions["p1"] = {}
+        processor._region_hits["p1"] = {}
+
+        def mock_state(entity_id):
+            states = {
+                "sensor.x": MagicMock(state="520"),
+                "sensor.y": MagicMock(state="1030"),
+            }
+            return states.get(entity_id)
+
+        mock_hass.states.get.side_effect = mock_state
+
+        with patch(
+            "custom_components.inhabit.engine.mmwave_target_processor.async_dispatcher_send"
+        ):
+            processor._process_target("p1", 0)
+
+        pos = processor._target_positions["p1"][0]
+        assert abs(pos.x - 350) < 0.01
+        assert abs(pos.y - 300) < 0.01
+
+    def test_calibration_jitter_filter_smooths_small_moves(self, mock_hass, mock_store):
+        """Small movements inside jitter radius are smoothed."""
+        from custom_components.inhabit.engine.mmwave_target_processor import (
+            MmwaveTargetProcessor,
+        )
+        from custom_components.inhabit.models.floor_plan import Coordinates
+        from custom_components.inhabit.models.mmwave_sensor import (
+            MmwaveCalibration,
+            MmwavePlacement,
+        )
+
+        processor = MmwaveTargetProcessor(mock_hass, mock_store)
+        placement = MmwavePlacement(
+            id="p1",
+            floor_plan_id="fp1",
+            floor_id="floor1",
+            position=Coordinates(x=250, y=250),
+            angle=0.0,
+            targets=[{"x_entity_id": "sensor.x", "y_entity_id": "sensor.y"}],
+            calibration=MmwaveCalibration(jitter_radius=5),
+        )
+
+        first = processor._filter_world_position(
+            placement, 0, Coordinates(x=350, y=300)
+        )
+        second = processor._filter_world_position(
+            placement, 0, Coordinates(x=354, y=300)
+        )
+
+        assert first.x == 350
+        assert abs(second.x - 351) < 0.01
+        assert second.y == 300
+
+    def test_calibration_jitter_filter_allows_large_moves(self, mock_hass, mock_store):
+        """Movements outside jitter radius are applied immediately."""
+        from custom_components.inhabit.engine.mmwave_target_processor import (
+            MmwaveTargetProcessor,
+        )
+        from custom_components.inhabit.models.floor_plan import Coordinates
+        from custom_components.inhabit.models.mmwave_sensor import (
+            MmwaveCalibration,
+            MmwavePlacement,
+        )
+
+        processor = MmwaveTargetProcessor(mock_hass, mock_store)
+        placement = MmwavePlacement(
+            id="p1",
+            floor_plan_id="fp1",
+            floor_id="floor1",
+            position=Coordinates(x=250, y=250),
+            angle=0.0,
+            targets=[{"x_entity_id": "sensor.x", "y_entity_id": "sensor.y"}],
+            calibration=MmwaveCalibration(jitter_radius=5),
+        )
+
+        processor._filter_world_position(placement, 0, Coordinates(x=350, y=300))
+        moved = processor._filter_world_position(
+            placement, 0, Coordinates(x=370, y=300)
+        )
+
+        assert moved.x == 370
+        assert moved.y == 300
+
     def test_zero_reading_clears_target(self, mock_hass, mock_store):
         """A (0,0) sensor reading should clear the target from regions."""
         from custom_components.inhabit.engine.mmwave_target_processor import (
@@ -619,6 +730,7 @@ class TestMmwaveTargetProcessor:
         )
         processor._placements["p1"] = placement
         processor._target_positions["p1"] = {0: Coordinates(x=300, y=300)}
+        processor._filtered_target_positions["p1"] = {0: Coordinates(x=300, y=300)}
         processor._region_hits["p1"] = {0: ["room1"]}
 
         # Sensor reads (0, 0) — target disappeared
@@ -631,6 +743,7 @@ class TestMmwaveTargetProcessor:
 
         # Target position should be cleared
         assert 0 not in processor._target_positions.get("p1", {})
+        assert 0 not in processor._filtered_target_positions.get("p1", {})
         assert 0 not in processor._region_hits.get("p1", {})
 
         # Signal should be dispatched with empty region list
