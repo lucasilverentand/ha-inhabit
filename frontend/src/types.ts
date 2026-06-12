@@ -225,6 +225,28 @@ export interface MmwaveCalibration {
   jitter_radius: number;
   sample_count: number;
   calibrated_at?: string;
+  points?: MmwaveCalibrationPoint[];
+  world_transform?: MmwaveCalibrationTransform;
+}
+
+export interface MmwaveCalibrationPoint {
+  target_index: number;
+  map_point: Coordinates;
+  raw_mean: Coordinates;
+  raw_stddev: Coordinates;
+  raw_bias: Coordinates;
+  sample_count: number;
+}
+
+export interface MmwaveCalibrationTransform {
+  type: "affine" | "similarity";
+  a: number;
+  b: number;
+  c: number;
+  d: number;
+  e: number;
+  f: number;
+  residual_error: number;
 }
 
 export interface MmwavePlacement {

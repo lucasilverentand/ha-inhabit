@@ -17,6 +17,7 @@ import {
 } from "../../stores/signals";
 import type {
   ButtonPlacement,
+  Coordinates,
   HomeAssistant,
   LightPlacement,
   MmwavePlacement,
@@ -24,6 +25,15 @@ import type {
   SwitchPlacement,
 } from "../../types";
 import "../shared/fpb-entity-picker";
+
+interface CalibrationDraftPoint {
+  target_index: number;
+  map_point: Coordinates;
+  raw_mean: Coordinates;
+  raw_stddev: Coordinates;
+  raw_bias?: Coordinates;
+  sample_count: number;
+}
 
 export class FpbDevicePanel extends LitElement {
   @property({ attribute: false })
@@ -55,6 +65,12 @@ export class FpbDevicePanel extends LitElement {
 
   @state()
   private _calibrationSampleCount = 0;
+
+  @state()
+  private _calibrationDraftPlacementId: string | null = null;
+
+  @state()
+  private _calibrationDraftPoints: CalibrationDraftPoint[] = [];
 
   private _calibrationPointHandler = (event: Event) => {
     this._handleCalibrationPoint(event as CustomEvent);
@@ -329,6 +345,58 @@ export class FpbDevicePanel extends LitElement {
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 6px;
+    }
+
+    .calibration-points {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .calibration-point {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px;
+      border-radius: 8px;
+      background: var(--primary-background-color, #fafafa);
+      font-size: 12px;
+    }
+
+    .calibration-point-main {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .calibration-point-title {
+      font-weight: 600;
+      color: var(--primary-text-color);
+    }
+
+    .calibration-point-meta {
+      color: var(--secondary-text-color);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .calibration-point-remove {
+      width: 28px;
+      height: 28px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: none;
+      border-radius: 7px;
+      background: transparent;
+      color: var(--secondary-text-color);
+      cursor: pointer;
+      --mdc-icon-size: 16px;
+    }
+
+    .calibration-point-remove:hover {
+      color: var(--error-color, #f44336);
+      background: var(--card-background-color, #fff);
     }
 
     .metric {
@@ -817,6 +885,10 @@ export class FpbDevicePanel extends LitElement {
       selectedTarget?.x_entity_id && selectedTarget?.y_entity_id,
     );
     const calibration = p.calibration;
+    const draftPoints = this._getCalibrationDraftPoints(p);
+    const pointCount =
+      calibration?.points?.length ?? (calibration?.enabled ? 1 : 0);
+    const transform = calibration?.world_transform;
 
     return html`
       <div class="section">
@@ -842,9 +914,53 @@ export class FpbDevicePanel extends LitElement {
             ?disabled=${!canCalibrate || this._calibrating}
             @click=${() => this._armCalibration(p, selectedIndex)}
           >
-            Calibrate
+            Capture point
           </button>
         </div>
+
+        ${
+          draftPoints.length > 0
+            ? html`
+              <div class="calibration-points">
+                ${draftPoints.map(
+                  (point, index) => html`
+                    <div class="calibration-point">
+                      <div class="calibration-point-main">
+                        <div class="calibration-point-title">
+                          Point ${index + 1} · Target ${point.target_index + 1}
+                        </div>
+                        <div class="calibration-point-meta">
+                          Map ${point.map_point.x.toFixed(1)}, ${point.map_point.y.toFixed(1)}
+                          · Raw ${point.raw_mean.x.toFixed(1)}, ${point.raw_mean.y.toFixed(1)}
+                          · ${point.sample_count} samples
+                        </div>
+                      </div>
+                      <button
+                        class="calibration-point-remove"
+                        title="Remove point"
+                        ?disabled=${this._calibrating}
+                        @click=${() => this._removeCalibrationPoint(index)}
+                      >
+                        <ha-icon icon="mdi:close"></ha-icon>
+                      </button>
+                    </div>
+                  `,
+                )}
+              </div>
+              <button
+                class="primary-btn"
+                ?disabled=${this._calibrating}
+                @click=${() => this._saveCalibration(p)}
+              >
+                Save calibration
+              </button>
+            `
+            : html`
+              <div class="calibration-status">
+                Capture one or more known target points.
+              </div>
+            `
+        }
 
         ${
           this._calibrationStatus
@@ -866,6 +982,10 @@ export class FpbDevicePanel extends LitElement {
             ? html`
               <div class="calibration-metrics">
                 <div class="metric">
+                  <strong>${pointCount}</strong>
+                  Points
+                </div>
+                <div class="metric">
                   <strong>${calibration.sample_count}</strong>
                   Samples
                 </div>
@@ -881,6 +1001,16 @@ export class FpbDevicePanel extends LitElement {
                   <strong>${calibration.raw_bias.y.toFixed(1)}</strong>
                   Y offset
                 </div>
+                ${
+                  transform
+                    ? html`
+                      <div class="metric">
+                        <strong>${transform.residual_error.toFixed(2)}</strong>
+                        Fit error
+                      </div>
+                    `
+                    : nothing
+                }
               </div>
               <div class="calibration-status">
                 ${
@@ -898,9 +1028,15 @@ export class FpbDevicePanel extends LitElement {
               </button>
             `
             : html`
-              <div class="calibration-status">
-                No calibration saved.
-              </div>
+              ${
+                draftPoints.length > 0
+                  ? nothing
+                  : html`
+                <div class="calibration-status">
+                  No calibration saved.
+                </div>
+              `
+              }
             `
         }
       </div>
@@ -917,6 +1053,9 @@ export class FpbDevicePanel extends LitElement {
     mmwaveCalibrationTarget.value = {
       placementId: p.id,
       targetIndex,
+      points: this._getCalibrationDraftPoints(p).map(
+        (point) => point.map_point,
+      ),
     };
   }
 
@@ -938,14 +1077,22 @@ export class FpbDevicePanel extends LitElement {
     const placement = this._getPlacement() as MmwavePlacement | null;
     if (!placement) return;
 
-    await this._sampleAndSaveCalibration(
+    mmwaveCalibrationTarget.value = {
+      placementId: placement.id,
+      targetIndex: detail.targetIndex,
+      points: this._getCalibrationDraftPoints(placement).map(
+        (point) => point.map_point,
+      ),
+      sampling: true,
+    };
+    await this._sampleAndAddCalibrationPoint(
       placement,
       detail.targetIndex,
       detail.point,
     );
   }
 
-  private async _sampleAndSaveCalibration(
+  private async _sampleAndAddCalibrationPoint(
     placement: MmwavePlacement,
     targetIndex: number,
     mapPoint: { x: number; y: number },
@@ -956,6 +1103,7 @@ export class FpbDevicePanel extends LitElement {
     if (!target?.x_entity_id || !target.y_entity_id) {
       this._calibrating = false;
       this._calibrationStatus = "Target needs both X and Y entities";
+      mmwaveCalibrationTarget.value = null;
       return;
     }
 
@@ -978,29 +1126,28 @@ export class FpbDevicePanel extends LitElement {
     if (samples.length < 10) {
       this._calibrating = false;
       this._calibrationStatus = "Calibration needs at least 10 valid samples";
+      mmwaveCalibrationTarget.value = null;
       return;
     }
 
-    try {
-      this._calibrationStatus = "Saving calibration";
-      const result = await this.hass.callWS<MmwavePlacement>({
-        type: "inhabit/mmwave/calibrate",
-        placement_id: placement.id,
+    const rawMean = this._meanSamples(samples);
+    const rawStddev = this._stddevSamples(samples, rawMean);
+    const nextPoints = [
+      ...this._getCalibrationDraftPoints(placement),
+      {
         target_index: targetIndex,
         map_point: mapPoint,
-        samples,
-      });
-      mmwavePlacements.value = mmwavePlacements.value.map((p) =>
-        p.id === result.id ? result : p,
-      );
-      this._calibrationStatus = "Calibration saved";
-    } catch (err) {
-      console.error("Failed to calibrate mmWave placement:", err);
-      this._calibrationStatus = "Calibration failed";
-    } finally {
-      this._calibrating = false;
-      this.requestUpdate();
-    }
+        raw_mean: rawMean,
+        raw_stddev: rawStddev,
+        sample_count: samples.length,
+      },
+    ];
+    this._calibrationDraftPlacementId = placement.id;
+    this._calibrationDraftPoints = nextPoints;
+    this._calibrating = false;
+    this._calibrationStatus = `Point ${nextPoints.length} captured`;
+    mmwaveCalibrationTarget.value = null;
+    this.requestUpdate();
   }
 
   private _readTargetSample(
@@ -1029,11 +1176,111 @@ export class FpbDevicePanel extends LitElement {
       mmwavePlacements.value = mmwavePlacements.value.map((p) =>
         p.id === result.id ? result : p,
       );
+      this._calibrationDraftPlacementId = this.placementId;
+      this._calibrationDraftPoints = [];
       this._calibrationStatus = "Calibration cleared";
     } catch (err) {
       console.error("Failed to clear mmWave calibration:", err);
       this._calibrationStatus = "Clear calibration failed";
     }
+  }
+
+  private _getCalibrationDraftPoints(
+    placement: MmwavePlacement,
+  ): CalibrationDraftPoint[] {
+    if (this._calibrationDraftPlacementId === placement.id) {
+      return this._calibrationDraftPoints;
+    }
+
+    const points = this._pointsFromCalibration(placement);
+    this._calibrationDraftPlacementId = placement.id;
+    this._calibrationDraftPoints = points;
+    return points;
+  }
+
+  private _pointsFromCalibration(
+    placement: MmwavePlacement,
+  ): CalibrationDraftPoint[] {
+    const calibration = placement.calibration;
+    if (!calibration?.enabled) return [];
+    if (calibration.points?.length) {
+      return calibration.points.map((point) => ({ ...point }));
+    }
+    return [
+      {
+        target_index: calibration.target_index,
+        map_point: calibration.map_point,
+        raw_mean: calibration.raw_mean,
+        raw_stddev: calibration.raw_stddev,
+        raw_bias: calibration.raw_bias,
+        sample_count: calibration.sample_count,
+      },
+    ];
+  }
+
+  private _removeCalibrationPoint(index: number): void {
+    if (!this._calibrationDraftPlacementId) return;
+    this._calibrationDraftPoints = this._calibrationDraftPoints.filter(
+      (_point, pointIndex) => pointIndex !== index,
+    );
+    this._calibrationStatus =
+      this._calibrationDraftPoints.length > 0
+        ? "Point removed. Save calibration to apply."
+        : "No calibration points in draft";
+  }
+
+  private async _saveCalibration(placement: MmwavePlacement): Promise<void> {
+    if (!this.hass || this.deviceType !== "mmwave") return;
+    const points = this._getCalibrationDraftPoints(placement);
+    if (points.length === 0) {
+      this._calibrationStatus = "Capture at least one point";
+      return;
+    }
+
+    this._calibrating = true;
+    this._calibrationStatus = "Saving calibration";
+    try {
+      const result = await this.hass.callWS<MmwavePlacement>({
+        type: "inhabit/mmwave/calibrate",
+        placement_id: placement.id,
+        points,
+      });
+      mmwavePlacements.value = mmwavePlacements.value.map((p) =>
+        p.id === result.id ? result : p,
+      );
+      this._calibrationDraftPlacementId = result.id;
+      this._calibrationDraftPoints = this._pointsFromCalibration(result);
+      this._calibrationStatus = "Calibration saved";
+    } catch (err) {
+      console.error("Failed to calibrate mmWave placement:", err);
+      this._calibrationStatus = "Calibration failed";
+    } finally {
+      this._calibrating = false;
+      this.requestUpdate();
+    }
+  }
+
+  private _meanSamples(samples: Array<{ x: number; y: number }>): Coordinates {
+    return {
+      x: samples.reduce((sum, sample) => sum + sample.x, 0) / samples.length,
+      y: samples.reduce((sum, sample) => sum + sample.y, 0) / samples.length,
+    };
+  }
+
+  private _stddevSamples(
+    samples: Array<{ x: number; y: number }>,
+    mean: Coordinates,
+  ): Coordinates {
+    return {
+      x: Math.sqrt(
+        samples.reduce((sum, sample) => sum + (sample.x - mean.x) ** 2, 0) /
+          samples.length,
+      ),
+      y: Math.sqrt(
+        samples.reduce((sum, sample) => sum + (sample.y - mean.y) ** 2, 0) /
+          samples.length,
+      ),
+    };
   }
 }
 

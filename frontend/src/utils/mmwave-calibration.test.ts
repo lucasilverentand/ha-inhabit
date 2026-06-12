@@ -61,6 +61,36 @@ describe("mmWave calibration helpers", () => {
     expect(world.y).to.be.closeTo(300, 0.001);
   });
 
+  it("uses a fitted calibration transform when present", () => {
+    const p = placement({
+      calibration: {
+        enabled: true,
+        target_index: 0,
+        map_point: { x: 0, y: 0 },
+        raw_mean: { x: 0, y: 0 },
+        raw_stddev: { x: 0, y: 0 },
+        raw_bias: { x: 999, y: 999 },
+        jitter_radius: 0,
+        sample_count: 30,
+        world_transform: {
+          type: "affine",
+          a: 0.1,
+          b: 0,
+          c: 10,
+          d: 0,
+          e: 0.1,
+          f: 20,
+          residual_error: 0,
+        },
+      },
+    });
+
+    const world = rawTargetToWorld(p, 110, 210, "cm");
+
+    expect(world.x).to.be.closeTo(21, 0.001);
+    expect(world.y).to.be.closeTo(41, 0.001);
+  });
+
   it("smooths movement inside the jitter radius", () => {
     const p = placement({
       calibration: {

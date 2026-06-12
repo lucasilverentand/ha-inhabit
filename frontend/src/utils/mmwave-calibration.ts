@@ -37,6 +37,16 @@ export function rawTargetToWorld(
   rawY: number,
   unit: FloorPlanUnit = "cm",
 ): Coordinates {
+  const transform = placement.calibration?.enabled
+    ? placement.calibration.world_transform
+    : undefined;
+  if (transform) {
+    return {
+      x: transform.a * rawX + transform.b * rawY + transform.c,
+      y: transform.d * rawX + transform.e * rawY + transform.f,
+    };
+  }
+
   const corrected = correctedRawTarget(placement, rawX, rawY);
   const scale = mmToUnitScale(unit);
   const localX = corrected.x * scale;

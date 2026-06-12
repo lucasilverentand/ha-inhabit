@@ -41,6 +41,7 @@ export {
   gridSize,
   layers,
   lightPlacements,
+  mmwaveCalibrationTarget,
   mmwavePlacements,
   occupancyPanelTarget,
   otherPlacements,
@@ -67,6 +68,7 @@ import {
   focusedRoomId,
   gridSize,
   lightPlacements,
+  mmwaveCalibrationTarget,
   mmwavePlacements,
   occupancyPanelTarget,
   otherPlacements,
@@ -121,6 +123,9 @@ export class HaFloorplanPanel extends LitElement {
 
   @state()
   private _editorMode = false;
+
+  @state()
+  private _calibrationCaptureActive = false;
 
   private _cleanupEffects: (() => void)[] = [];
 
@@ -352,6 +357,10 @@ export class HaFloorplanPanel extends LitElement {
       border-color: var(--primary-color, #03a9f4);
     }
 
+    .calibration-hidden-panel {
+      display: none;
+    }
+
     @media (hover: none) and (pointer: coarse) {
       .edit-toggle {
         display: none;
@@ -377,6 +386,9 @@ export class HaFloorplanPanel extends LitElement {
       }),
       effect(() => {
         this._devicePanelTarget = devicePanelTarget.value;
+      }),
+      effect(() => {
+        this._calibrationCaptureActive = mmwaveCalibrationTarget.value !== null;
       }),
       effect(() => {
         void currentFloor.value;
@@ -914,23 +926,29 @@ export class HaFloorplanPanel extends LitElement {
 
     if (this._editorMode) {
       return html`
-        <div class="container">
+        <div class="container ${this._calibrationCaptureActive ? "calibration-capture" : ""}">
           <div class="main-area">
-            <fpb-toolbar
-              .hass=${this.hass}
-              .floorPlans=${this._floorPlans}
-              @floor-select=${(e: CustomEvent) =>
-                this._handleFloorSelect(e.detail.id)}
-              @add-floor=${this._addFloor}
-              @delete-floor=${(e: CustomEvent) =>
-                this._deleteFloor(e.detail.id)}
-              @rename-floor=${(e: CustomEvent) =>
-                this._renameFloor(e.detail.id, e.detail.name)}
-              @open-import-export=${this._openImportExport}
-              @exit-editor=${this._toggleEditorMode}
-            ></fpb-toolbar>
+            ${
+              this._calibrationCaptureActive
+                ? null
+                : html`
+              <fpb-toolbar
+                .hass=${this.hass}
+                .floorPlans=${this._floorPlans}
+                @floor-select=${(e: CustomEvent) =>
+                  this._handleFloorSelect(e.detail.id)}
+                @add-floor=${this._addFloor}
+                @delete-floor=${(e: CustomEvent) =>
+                  this._deleteFloor(e.detail.id)}
+                @rename-floor=${(e: CustomEvent) =>
+                  this._renameFloor(e.detail.id, e.detail.name)}
+                @open-import-export=${this._openImportExport}
+                @exit-editor=${this._toggleEditorMode}
+              ></fpb-toolbar>
+            `
+            }
 
-            ${this._renderRoomChips()}
+            ${this._calibrationCaptureActive ? null : this._renderRoomChips()}
 
             <div class="canvas-container">
               <fpb-canvas .hass=${this.hass}></fpb-canvas>
@@ -955,7 +973,11 @@ export class HaFloorplanPanel extends LitElement {
                 this._devicePanelTarget
                   ? html`
                 <fpb-device-panel
-                  class="floating-panel"
+                  class=${
+                    this._calibrationCaptureActive
+                      ? "calibration-hidden-panel"
+                      : "floating-panel"
+                  }
                   .hass=${this.hass}
                   .placementId=${this._devicePanelTarget.id}
                   .deviceType=${this._devicePanelTarget.type}

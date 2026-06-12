@@ -25,6 +25,8 @@ from custom_components.inhabit.models.floor_plan import (
 )
 from custom_components.inhabit.models.mmwave_sensor import (
     MmwaveCalibration,
+    MmwaveCalibrationPoint,
+    MmwaveCalibrationTransform,
     MmwavePlacement,
 )
 from custom_components.inhabit.models.virtual_sensor import (
@@ -1248,6 +1250,26 @@ class TestMmwavePlacement:
                 jitter_radius=1.44,
                 sample_count=25,
                 calibrated_at="2026-06-12T10:00:00+00:00",
+                points=[
+                    MmwaveCalibrationPoint(
+                        target_index=1,
+                        map_point=Coordinates(100, 200),
+                        raw_mean=Coordinates(520, 1030),
+                        raw_stddev=Coordinates(4, 6),
+                        raw_bias=Coordinates(20, 30),
+                        sample_count=25,
+                    )
+                ],
+                world_transform=MmwaveCalibrationTransform(
+                    type="similarity",
+                    a=0.1,
+                    b=0,
+                    c=10,
+                    d=0,
+                    e=0.1,
+                    f=20,
+                    residual_error=0.5,
+                ),
             ),
         )
 
@@ -1259,6 +1281,9 @@ class TestMmwavePlacement:
         assert data["calibration"]["raw_bias"] == {"x": 20, "y": 30}
         assert data["calibration"]["jitter_radius"] == 1.44
         assert data["calibration"]["sample_count"] == 25
+        assert data["calibration"]["points"][0]["sample_count"] == 25
+        assert data["calibration"]["world_transform"]["type"] == "similarity"
+        assert data["calibration"]["world_transform"]["residual_error"] == 0.5
 
     def test_from_dict(self):
         """Test deserialization."""
@@ -1298,6 +1323,26 @@ class TestMmwavePlacement:
                 "jitter_radius": 1.44,
                 "sample_count": 25,
                 "calibrated_at": "2026-06-12T10:00:00+00:00",
+                "points": [
+                    {
+                        "target_index": 0,
+                        "map_point": {"x": 350, "y": 300},
+                        "raw_mean": {"x": 520, "y": 1030},
+                        "raw_stddev": {"x": 4, "y": 6},
+                        "raw_bias": {"x": 20, "y": 30},
+                        "sample_count": 25,
+                    }
+                ],
+                "world_transform": {
+                    "type": "affine",
+                    "a": 0.1,
+                    "b": 0,
+                    "c": 250,
+                    "d": 0,
+                    "e": 0.1,
+                    "f": 250,
+                    "residual_error": 0,
+                },
             },
         }
 
@@ -1311,6 +1356,10 @@ class TestMmwavePlacement:
         assert mmwave.calibration.raw_bias.y == 30
         assert mmwave.calibration.jitter_radius == 1.44
         assert mmwave.calibration.sample_count == 25
+        assert len(mmwave.calibration.points) == 1
+        assert mmwave.calibration.points[0].raw_mean.x == 520
+        assert mmwave.calibration.world_transform is not None
+        assert mmwave.calibration.world_transform.a == 0.1
 
     def test_from_dict_defaults(self):
         """Test deserialization falls back to defaults for missing fields."""

@@ -1544,6 +1544,10 @@ export class FpbCanvas extends LitElement {
         }
       }),
       effect(() => {
+        void mmwaveCalibrationTarget.value;
+        this.requestUpdate();
+      }),
+      effect(() => {
         const roomId = focusedRoomId.value;
         const prev = this._focusedRoomId;
         this._focusedRoomId = roomId;
@@ -1688,7 +1692,7 @@ export class FpbCanvas extends LitElement {
     if (calibrationTarget) {
       e.preventDefault();
       e.stopPropagation();
-      mmwaveCalibrationTarget.value = null;
+      if (calibrationTarget.sampling) return;
       window.dispatchEvent(
         new CustomEvent("inhabit-mmwave-calibration-point", {
           detail: {
@@ -6031,6 +6035,7 @@ export class FpbCanvas extends LitElement {
   private _renderDeviceLayer(floor: Floor) {
     const layerConfig = layers.value;
     const frid = this._focusedRoomId;
+    const calibrationTarget = mmwaveCalibrationTarget.value;
 
     if (!layerConfig.find((l) => l.id === "devices")?.visible) {
       return null;
@@ -6038,42 +6043,58 @@ export class FpbCanvas extends LitElement {
 
     return svg`
       <g class="devices-layer" opacity="${layerConfig.find((l) => l.id === "devices")?.opacity ?? 1}">
-        ${lightPlacements.value
-          .filter((d) => d.floor_id === floor.id)
-          .map(
-            (light) => svg`
+        ${
+          calibrationTarget
+            ? null
+            : lightPlacements.value
+                .filter((d) => d.floor_id === floor.id)
+                .map(
+                  (light) => svg`
             <g class="${frid ? (this._isDeviceInFocusedRegion(light.room_id, light.position, frid, floor) ? "device-focused" : "device-dimmed") : ""}">
               ${this._renderLight(light)}
             </g>
           `,
-          )}
-        ${switchPlacements.value
-          .filter((d) => d.floor_id === floor.id)
-          .map(
-            (sw) => svg`
+                )
+        }
+        ${
+          calibrationTarget
+            ? null
+            : switchPlacements.value
+                .filter((d) => d.floor_id === floor.id)
+                .map(
+                  (sw) => svg`
             <g class="${frid ? (this._isDeviceInFocusedRegion(sw.room_id, sw.position, frid, floor) ? "device-focused" : "device-dimmed") : ""}">
               ${this._renderSwitch(sw)}
             </g>
           `,
-          )}
-        ${buttonPlacements.value
-          .filter((d) => d.floor_id === floor.id)
-          .map(
-            (btn) => svg`
+                )
+        }
+        ${
+          calibrationTarget
+            ? null
+            : buttonPlacements.value
+                .filter((d) => d.floor_id === floor.id)
+                .map(
+                  (btn) => svg`
             <g class="${frid ? (this._isDeviceInFocusedRegion(btn.room_id, btn.position, frid, floor) ? "device-focused" : "device-dimmed") : ""}">
               ${this._renderButton(btn)}
             </g>
           `,
-          )}
-        ${otherPlacements.value
-          .filter((d) => d.floor_id === floor.id)
-          .map(
-            (other) => svg`
+                )
+        }
+        ${
+          calibrationTarget
+            ? null
+            : otherPlacements.value
+                .filter((d) => d.floor_id === floor.id)
+                .map(
+                  (other) => svg`
             <g class="${frid ? (this._isDeviceInFocusedRegion(other.room_id, other.position, frid, floor) ? "device-focused" : "device-dimmed") : ""}">
               ${this._renderOther(other)}
             </g>
           `,
-          )}
+                )
+        }
         ${this._renderMmwaveLayer(floor)}
       </g>
     `;
@@ -6204,14 +6225,17 @@ export class FpbCanvas extends LitElement {
   }
 
   private _renderMmwaveLayer(floor: Floor) {
+    const calibrationTarget = mmwaveCalibrationTarget.value;
     const placements = mmwavePlacements.value.filter(
-      (p) => p.floor_id === floor.id,
+      (p) =>
+        p.floor_id === floor.id &&
+        (!calibrationTarget || p.id === calibrationTarget.placementId),
     );
     if (placements.length === 0) return null;
 
     const isViewing = this._canvasMode === "viewing";
     const sel = selection.value;
-    const showCoverage = !isViewing;
+    const showCoverage = !isViewing && !calibrationTarget;
 
     // Scale-independent sizes for target dots
     const vb = this._viewBox;
@@ -6246,17 +6270,22 @@ export class FpbCanvas extends LitElement {
     return svg`
       <g class="mmwave-layer">
         <!-- Occupied room overlays -->
-        ${floor.rooms
-          .filter(
-            (r) => occupiedRoomIds.has(r.id) && r.polygon?.vertices?.length,
-          )
-          .map(
-            (r) => svg`
+        ${
+          calibrationTarget
+            ? null
+            : floor.rooms
+                .filter(
+                  (r) =>
+                    occupiedRoomIds.has(r.id) && r.polygon?.vertices?.length,
+                )
+                .map(
+                  (r) => svg`
             <path d="${polygonToPath(r.polygon)}"
                   fill="rgba(255, 255, 255, 0.05)" stroke="none"
                   class="mmwave-occupied-room"/>
           `,
-          )}
+                )
+        }
         ${placements.map((p) => {
           const isSelected = sel.type === "mmwave" && sel.ids.includes(p.id);
           const halfFov = p.field_of_view / 2;
@@ -6408,6 +6437,20 @@ export class FpbCanvas extends LitElement {
             `;
           });
 
+          const calibrationPointDots =
+            calibrationTarget?.placementId === p.id
+              ? (calibrationTarget.points ?? []).map(
+                  (point, idx) => svg`
+                <g class="mmwave-calibration-point" transform="translate(${point.x}, ${point.y})">
+                  <circle cx="0" cy="0" r="${targetR * 1.15}"
+                    fill="#00bcd4" stroke="#fff" stroke-width="${scale * 0.1}" opacity="0.95"/>
+                  <text x="0" y="${-targetR - scale * 0.35}" text-anchor="middle"
+                    font-size="${targetFontSize}" fill="#00acc1" font-weight="700">P${idx + 1}</text>
+                </g>
+              `,
+                )
+              : null;
+
           // Render fading-out targets for this placement
           const fadingDots = this._mmwaveFadingTargets
             .filter((f) => f.key.startsWith(`${p.id}-`))
@@ -6476,7 +6519,18 @@ export class FpbCanvas extends LitElement {
               `
                   : null
               }
+              ${
+                calibrationTarget
+                  ? svg`
+                <circle cx="${px}" cy="${py}" r="10"
+                  fill="#2196f3" stroke="#fff" stroke-width="2.5"/>
+                <text x="${px}" y="${py + 3}" text-anchor="middle"
+                  font-size="8" fill="#fff" font-weight="bold">R</text>
+              `
+                  : null
+              }
               ${targetDots}
+              ${calibrationPointDots}
               ${fadingDots}
               ${
                 showCoverage && isSelected

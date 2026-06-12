@@ -647,6 +647,64 @@ class TestMmwaveTargetProcessor:
         assert abs(pos.x - 350) < 0.01
         assert abs(pos.y - 300) < 0.01
 
+    def test_calibration_world_transform_maps_live_target(self, mock_hass, mock_store):
+        """Persisted multi-point transform maps raw coordinates directly."""
+        from custom_components.inhabit.engine.mmwave_target_processor import (
+            MmwaveTargetProcessor,
+        )
+        from custom_components.inhabit.models.floor_plan import Coordinates
+        from custom_components.inhabit.models.mmwave_sensor import (
+            MmwaveCalibration,
+            MmwaveCalibrationTransform,
+            MmwavePlacement,
+        )
+
+        processor = MmwaveTargetProcessor(mock_hass, mock_store)
+
+        placement = MmwavePlacement(
+            id="p1",
+            floor_plan_id="fp1",
+            floor_id="floor1",
+            position=Coordinates(x=250, y=250),
+            angle=0.0,
+            targets=[{"x_entity_id": "sensor.x", "y_entity_id": "sensor.y"}],
+            calibration=MmwaveCalibration(
+                world_transform=MmwaveCalibrationTransform(
+                    type="affine",
+                    a=0.1,
+                    b=0,
+                    c=10,
+                    d=0,
+                    e=0.1,
+                    f=20,
+                    residual_error=0,
+                ),
+                jitter_radius=0,
+            ),
+        )
+        processor._placements["p1"] = placement
+        processor._target_positions["p1"] = {}
+        processor._filtered_target_positions["p1"] = {}
+        processor._region_hits["p1"] = {}
+
+        def mock_state(entity_id):
+            states = {
+                "sensor.x": MagicMock(state="110"),
+                "sensor.y": MagicMock(state="210"),
+            }
+            return states.get(entity_id)
+
+        mock_hass.states.get.side_effect = mock_state
+
+        with patch(
+            "custom_components.inhabit.engine.mmwave_target_processor.async_dispatcher_send"
+        ):
+            processor._process_target("p1", 0)
+
+        pos = processor._target_positions["p1"][0]
+        assert abs(pos.x - 21) < 0.01
+        assert abs(pos.y - 41) < 0.01
+
     def test_calibration_jitter_filter_smooths_small_moves(self, mock_hass, mock_store):
         """Small movements inside jitter radius are smoothed."""
         from custom_components.inhabit.engine.mmwave_target_processor import (

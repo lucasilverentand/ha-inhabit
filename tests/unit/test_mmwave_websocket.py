@@ -116,6 +116,66 @@ def test_calibrate_command_computes_and_saves_bias():
     hass.async_create_task.assert_called_once()
 
 
+def test_calibrate_command_fits_multi_point_transform():
+    """Calibration command fits a raw-to-world transform from multiple points."""
+    placement = MmwavePlacement(
+        id="p1",
+        floor_plan_id="fp1",
+        floor_id="floor1",
+        position=Coordinates(x=0, y=0),
+        angle=0,
+        targets=[{"x_entity_id": "sensor.x", "y_entity_id": "sensor.y"}],
+    )
+    store = MagicMock()
+    store.get_mmwave_placement.return_value = placement
+    store.get_floor_plan.return_value = FloorPlan(id="fp1", unit="cm")
+    store.update_mmwave_placement.side_effect = lambda p: p
+    hass = _hass_with_store(store)
+    connection = _connection()
+
+    mmwave_ws.ws_mmwave_calibrate(
+        hass,
+        connection,
+        {
+            "id": 1,
+            "type": "inhabit/mmwave/calibrate",
+            "placement_id": "p1",
+            "points": [
+                {
+                    "target_index": 0,
+                    "map_point": {"x": 11, "y": 21},
+                    "samples": [{"x": 10, "y": 10} for _ in range(10)],
+                },
+                {
+                    "target_index": 0,
+                    "map_point": {"x": 21, "y": 21},
+                    "samples": [{"x": 110, "y": 10} for _ in range(10)],
+                },
+                {
+                    "target_index": 0,
+                    "map_point": {"x": 11, "y": 31},
+                    "samples": [{"x": 10, "y": 110} for _ in range(10)],
+                },
+            ],
+        },
+    )
+
+    saved = store.update_mmwave_placement.call_args[0][0]
+    assert saved.calibration is not None
+    assert len(saved.calibration.points) == 3
+    assert saved.calibration.sample_count == 30
+    transform = saved.calibration.world_transform
+    assert transform is not None
+    assert transform.type == "affine"
+    assert abs(transform.a - 0.1) < 0.001
+    assert abs(transform.e - 0.1) < 0.001
+    assert abs(transform.c - 10) < 0.001
+    assert abs(transform.f - 20) < 0.001
+    assert transform.residual_error < 0.001
+    connection.send_result.assert_called_once()
+    connection.send_error.assert_not_called()
+
+
 def test_calibrate_command_rejects_invalid_target():
     """Calibration rejects target indexes not present on the placement."""
     placement = MmwavePlacement(id="p1", targets=[])
@@ -139,6 +199,34 @@ def test_calibrate_command_rejects_invalid_target():
 
     connection.send_error.assert_called_once_with(
         1, "invalid_target", "Target index is invalid"
+    )
+    store.update_mmwave_placement.assert_not_called()
+
+
+def test_calibrate_command_rejects_empty_points():
+    """Calibration rejects an empty multi-point payload."""
+    placement = MmwavePlacement(
+        id="p1",
+        targets=[{"x_entity_id": "sensor.x", "y_entity_id": "sensor.y"}],
+    )
+    store = MagicMock()
+    store.get_mmwave_placement.return_value = placement
+    hass = _hass_with_store(store)
+    connection = _connection()
+
+    mmwave_ws.ws_mmwave_calibrate(
+        hass,
+        connection,
+        {
+            "id": 1,
+            "type": "inhabit/mmwave/calibrate",
+            "placement_id": "p1",
+            "points": [],
+        },
+    )
+
+    connection.send_error.assert_called_once_with(
+        1, "invalid_points", "Calibration requires at least one point"
     )
     store.update_mmwave_placement.assert_not_called()
 

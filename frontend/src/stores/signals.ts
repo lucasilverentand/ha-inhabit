@@ -12,6 +12,7 @@ import { type Signal, signal } from "@preact/signals-core";
 import type {
   ButtonPlacement,
   CanvasMode,
+  Coordinates,
   Floor,
   FloorPlan,
   LayerConfig,
@@ -95,6 +96,8 @@ interface InhabitSignals {
   mmwaveCalibrationTarget: Signal<{
     placementId: string;
     targetIndex: number;
+    points?: Coordinates[];
+    sampling?: boolean;
   } | null>;
   mmwavePlacements: Signal<MmwavePlacement[]>;
   simulatedTargets: Signal<SimulatedTarget[]>;
@@ -138,6 +141,8 @@ function createSignals(): InhabitSignals {
     mmwaveCalibrationTarget: signal<{
       placementId: string;
       targetIndex: number;
+      points?: Coordinates[];
+      sampling?: boolean;
     } | null>(null),
     mmwavePlacements: signal<MmwavePlacement[]>([]),
     simulatedTargets: signal<SimulatedTarget[]>([]),

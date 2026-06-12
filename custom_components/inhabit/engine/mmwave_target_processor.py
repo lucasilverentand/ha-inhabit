@@ -206,15 +206,7 @@ class MmwaveTargetProcessor:
                 )
             return
 
-        local_x, local_y = self._apply_calibration(placement, local_x, local_y)
-
-        # Convert mm (sensor unit) to floor plan units
-        scale = self._get_mm_to_unit_scale(placement.floor_plan_id)
-        local_x *= scale
-        local_y *= scale
-
-        # Transform from sensor-local to world coordinates
-        world_pos = self._transform_to_world(placement, local_x, local_y)
+        world_pos = self._calibrated_world_position(placement, local_x, local_y)
         world_pos = self._filter_world_position(placement, target_index, world_pos)
         self._target_positions[placement_id][target_index] = world_pos
 
@@ -255,6 +247,28 @@ class MmwaveTargetProcessor:
             raw_x - calibration.raw_bias.x,
             raw_y - calibration.raw_bias.y,
         )
+
+    def _calibrated_world_position(
+        self, placement: MmwavePlacement, raw_x: float, raw_y: float
+    ) -> Coordinates:
+        """Apply calibration and map raw sensor coordinates to world coordinates."""
+        calibration = placement.calibration
+        if calibration and calibration.enabled and calibration.world_transform:
+            transform = calibration.world_transform
+            return Coordinates(
+                x=transform.a * raw_x + transform.b * raw_y + transform.c,
+                y=transform.d * raw_x + transform.e * raw_y + transform.f,
+            )
+
+        local_x, local_y = self._apply_calibration(placement, raw_x, raw_y)
+
+        # Convert mm (sensor unit) to floor plan units
+        scale = self._get_mm_to_unit_scale(placement.floor_plan_id)
+        local_x *= scale
+        local_y *= scale
+
+        # Transform from sensor-local to world coordinates
+        return self._transform_to_world(placement, local_x, local_y)
 
     def _filter_world_position(
         self, placement: MmwavePlacement, target_index: int, point: Coordinates
