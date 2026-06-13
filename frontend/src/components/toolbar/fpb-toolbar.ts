@@ -26,11 +26,22 @@ import {
   getMapModeDefinitions,
   getModeTools,
 } from "../../utils/map-modes";
+import { getDirectToolbarActionLimit } from "../../utils/toolbar-overflow";
 
 interface AddMenuItem {
   id: ToolType;
   icon: string;
   label: string;
+}
+
+interface ToolbarAction {
+  id: string;
+  icon: string;
+  label: string;
+  active?: boolean;
+  disabled?: boolean;
+  accent?: string;
+  run: () => void;
 }
 
 const TOOL_ITEMS: Record<ToolType, AddMenuItem> = {
@@ -57,6 +68,12 @@ export class FpbToolbar extends LitElement {
   private _floorMenuOpen = false;
 
   @state()
+  private _actionsMenuOpen = false;
+
+  @state()
+  private _toolbarWidth = 0;
+
+  @state()
   private _canvasMode: CanvasMode = "walls";
 
   @state()
@@ -68,6 +85,7 @@ export class FpbToolbar extends LitElement {
   private _cleanupEffects: (() => void)[] = [];
   private _renameCommitted = false;
   private _documentListenerAttached = false;
+  private _resizeObserver?: ResizeObserver;
 
   static override styles = css`
     :host {
@@ -261,6 +279,14 @@ export class FpbToolbar extends LitElement {
       gap: 2px;
     }
 
+    .context-actions {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      min-width: 0;
+      position: relative;
+    }
+
     .tool-button {
       display: flex;
       align-items: center;
@@ -296,6 +322,70 @@ export class FpbToolbar extends LitElement {
 
     .tool-button ha-icon {
       --mdc-icon-size: 20px;
+    }
+
+    .overflow-wrapper {
+      position: relative;
+    }
+
+    .overflow-menu {
+      position: absolute;
+      right: 0;
+      bottom: calc(100% + 8px);
+      min-width: 180px;
+      padding: 6px;
+      border-radius: 14px;
+      background: var(--card-background-color, #fff);
+      border: 1px solid var(--divider-color, rgba(0, 0, 0, 0.12));
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.22);
+      z-index: 260;
+    }
+
+    .overflow-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+      min-height: 42px;
+      padding: 8px 10px;
+      border: none;
+      border-radius: 10px;
+      background: transparent;
+      color: var(--primary-text-color);
+      font-size: 13px;
+      font-weight: 500;
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .overflow-item:hover {
+      background: var(--secondary-background-color, #f5f5f5);
+    }
+
+    .overflow-item.active {
+      background: color-mix(
+        in srgb,
+        var(--mode-accent, var(--primary-color)) 16%,
+        transparent
+      );
+      color: var(--mode-accent, var(--primary-color));
+    }
+
+    .overflow-item:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+
+    .overflow-item ha-icon {
+      --mdc-icon-size: 19px;
+      flex: 0 0 auto;
+    }
+
+    .overflow-label {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
     /* --- Done button --- */
@@ -394,10 +484,10 @@ export class FpbToolbar extends LitElement {
 
       .mode-group {
         width: 100%;
-        overflow-x: auto;
-        scrollbar-width: none;
+        min-width: 0;
         background: transparent;
         padding: 0;
+        gap: 5px;
       }
 
       .mode-group::-webkit-scrollbar {
@@ -422,9 +512,9 @@ export class FpbToolbar extends LitElement {
       .toolbar-right {
         width: 100%;
         justify-self: stretch;
-        justify-content: flex-start;
+        justify-content: space-between;
         gap: 6px;
-        overflow-x: auto;
+        overflow: visible;
         scrollbar-width: none;
       }
 
@@ -434,6 +524,14 @@ export class FpbToolbar extends LitElement {
 
       .tool-group {
         gap: 6px;
+        flex: 0 0 auto;
+      }
+
+      .context-actions {
+        flex: 1 1 auto;
+        justify-content: flex-start;
+        gap: 6px;
+        min-width: 0;
       }
 
       .tool-button {
@@ -455,6 +553,69 @@ export class FpbToolbar extends LitElement {
         right: 0;
         flex: 0 0 auto;
         box-shadow: -8px 0 12px var(--card-background-color, #fff);
+      }
+    }
+
+    @media (max-width: 390px) {
+      :host {
+        left: 8px;
+        right: 8px;
+        padding: 7px;
+        border-radius: 16px;
+        gap: 7px;
+      }
+
+      .mode-button {
+        min-width: 44px;
+        height: 44px;
+        padding: 4px;
+      }
+
+      .mode-label {
+        display: none;
+      }
+
+      .toolbar-right {
+        gap: 5px;
+      }
+
+      .tool-group,
+      .context-actions {
+        gap: 5px;
+      }
+
+      .tool-button {
+        width: 42px;
+        height: 42px;
+        border-radius: 12px;
+      }
+
+      .done-button {
+        width: 42px;
+        min-width: 42px;
+        padding: 0;
+        justify-content: center;
+      }
+
+      .done-button span {
+        display: none;
+      }
+    }
+
+    @media (max-width: 300px) {
+      :host {
+        left: 6px;
+        right: 6px;
+      }
+
+      .mode-button {
+        min-width: 40px;
+      }
+
+      .tool-button,
+      .done-button {
+        width: 40px;
+        min-width: 40px;
       }
     }
 
@@ -581,10 +742,142 @@ export class FpbToolbar extends LitElement {
 
   private _toggleFloorMenu(): void {
     this._floorMenuOpen = !this._floorMenuOpen;
+    if (this._floorMenuOpen) {
+      this._actionsMenuOpen = false;
+    }
+  }
+
+  private _toggleActionsMenu(e?: Event): void {
+    e?.stopPropagation();
+    this._actionsMenuOpen = !this._actionsMenuOpen;
+    if (this._actionsMenuOpen) {
+      this._floorMenuOpen = false;
+    }
   }
 
   private _closeMenus(): void {
     this._floorMenuOpen = false;
+    this._actionsMenuOpen = false;
+  }
+
+  private _runAction(action: ToolbarAction): void {
+    if (action.disabled) return;
+    action.run();
+    this._actionsMenuOpen = false;
+  }
+
+  private _directActionLimit(actionCount: number): number {
+    return getDirectToolbarActionLimit(this._toolbarWidth, actionCount);
+  }
+
+  private _splitActions(actions: ToolbarAction[]): {
+    direct: ToolbarAction[];
+    overflow: ToolbarAction[];
+  } {
+    const limit = this._directActionLimit(actions.length);
+    if (limit >= actions.length) {
+      return { direct: actions, overflow: [] };
+    }
+    return {
+      direct: actions.slice(0, limit),
+      overflow: actions.slice(limit),
+    };
+  }
+
+  private _toolAction(
+    item: AddMenuItem,
+    modeDef: { accent: string },
+  ): ToolbarAction {
+    return {
+      id: `tool-${item.id}`,
+      icon: item.icon,
+      label: item.label,
+      active: activeTool.value === item.id,
+      accent: modeDef.accent,
+      run: () => this._handleToolSelect(item.id),
+    };
+  }
+
+  private _toolbarActions(
+    menuItems: AddMenuItem[],
+    mode: CanvasMode,
+    modeDef: { accent: string },
+  ): ToolbarAction[] {
+    const actions: ToolbarAction[] = [
+      {
+        id: "undo",
+        icon: "mdi:undo",
+        label: "Undo",
+        disabled: !canUndo.value,
+        run: () => this._handleUndo(),
+      },
+      {
+        id: "redo",
+        icon: "mdi:redo",
+        label: "Redo",
+        disabled: !canRedo.value,
+        run: () => this._handleRedo(),
+      },
+    ];
+
+    if (mode === "occupancy") {
+      actions.push({
+        id: "simulate",
+        icon: "mdi:target-account",
+        label: simHitboxEnabled.value
+          ? "Stop simulating"
+          : "Simulate positions",
+        active: simHitboxEnabled.value,
+        accent: modeDef.accent,
+        run: () => {
+          const next = !simHitboxEnabled.value;
+          simHitboxEnabled.value = next;
+          if (!next) {
+            simulatedTargets.value = [];
+          }
+        },
+      });
+    }
+
+    const activeItem = menuItems.find((item) => item.id === activeTool.value);
+    if (activeItem) {
+      actions.push(this._toolAction(activeItem, modeDef));
+    }
+    for (const item of menuItems) {
+      if (item.id !== activeItem?.id) {
+        actions.push(this._toolAction(item, modeDef));
+      }
+    }
+
+    return actions;
+  }
+
+  private _renderActionButton(action: ToolbarAction) {
+    return html`
+      <button
+        class="tool-button ${action.active ? "active" : ""}"
+        style=${action.accent ? `--mode-accent: ${action.accent}` : ""}
+        @click=${() => this._runAction(action)}
+        ?disabled=${action.disabled}
+        title=${action.label}
+      >
+        <ha-icon icon=${action.icon}></ha-icon>
+      </button>
+    `;
+  }
+
+  private _renderOverflowItem(action: ToolbarAction) {
+    return html`
+      <button
+        class="overflow-item ${action.active ? "active" : ""}"
+        style=${action.accent ? `--mode-accent: ${action.accent}` : ""}
+        @click=${() => this._runAction(action)}
+        ?disabled=${action.disabled}
+      >
+        <ha-icon icon=${action.icon}></ha-icon>
+        <span class="overflow-label">${action.label}</span>
+      </button>
+    `;
   }
 
   override connectedCallback(): void {
@@ -603,9 +896,22 @@ export class FpbToolbar extends LitElement {
   override disconnectedCallback(): void {
     super.disconnectedCallback();
     document.removeEventListener("click", this._handleDocumentClick);
+    this._resizeObserver?.disconnect();
+    this._resizeObserver = undefined;
     this._documentListenerAttached = false;
     for (const cleanup of this._cleanupEffects) cleanup();
     this._cleanupEffects = [];
+  }
+
+  override firstUpdated(): void {
+    this._resizeObserver = new ResizeObserver(([entry]) => {
+      const width = Math.round(entry.contentRect.width);
+      if (width !== this._toolbarWidth) {
+        this._toolbarWidth = width;
+      }
+    });
+    this._resizeObserver.observe(this);
+    this._toolbarWidth = Math.round(this.getBoundingClientRect().width);
   }
 
   private _handleDocumentClick = (e: MouseEvent): void => {
@@ -618,11 +924,12 @@ export class FpbToolbar extends LitElement {
   override render() {
     const fp = currentFloorPlan.value;
     const floor = currentFloor.value;
-    const tool = activeTool.value;
     const mode = this._canvasMode;
     const floors = fp?.floors || [];
     const modeDef = getMapModeDefinition(mode);
     const menuItems = getModeTools(mode).map((toolId) => TOOL_ITEMS[toolId]);
+    const actions = this._toolbarActions(menuItems, mode, modeDef);
+    const { direct, overflow } = this._splitActions(actions);
 
     return html`
       <!-- Left: Floor Selector -->
@@ -724,72 +1031,36 @@ export class FpbToolbar extends LitElement {
 
       <!-- Right: Undo/Redo + contextual tools -->
       <div class="toolbar-right">
-        <div class="tool-group">
-          <button
-            class="tool-button"
-            @click=${this._handleUndo}
-            ?disabled=${!canUndo.value}
-            title="Undo"
-          >
-            <ha-icon icon="mdi:undo"></ha-icon>
-          </button>
-          <button
-            class="tool-button"
-            @click=${this._handleRedo}
-            ?disabled=${!canRedo.value}
-            title="Redo"
-          >
-            <ha-icon icon="mdi:redo"></ha-icon>
-          </button>
+        <div class="context-actions">
+          ${direct.map((action) => this._renderActionButton(action))}
+          ${
+            overflow.length > 0
+              ? html`
+                <div class="overflow-wrapper">
+                  <button
+                    class="tool-button ${this._actionsMenuOpen ? "active" : ""}"
+                    style="--mode-accent: ${modeDef.accent}"
+                    @click=${this._toggleActionsMenu}
+                    title="More tools"
+                  >
+                    <ha-icon icon="mdi:dots-horizontal"></ha-icon>
+                  </button>
+                  ${
+                    this._actionsMenuOpen
+                      ? html`
+                        <div class="overflow-menu">
+                          ${overflow.map((action) =>
+                            this._renderOverflowItem(action),
+                          )}
+                        </div>
+                      `
+                      : null
+                  }
+                </div>
+              `
+              : null
+          }
         </div>
-
-        <!-- Occupancy mode: simulation toggle -->
-        ${
-          mode === "occupancy"
-            ? html`
-          <div class="divider"></div>
-          <div class="tool-group">
-            <button
-              class="tool-button ${simHitboxEnabled.value ? "active" : ""}"
-              style="--mode-accent: ${modeDef.accent}"
-              @click=${() => {
-                const next = !simHitboxEnabled.value;
-                simHitboxEnabled.value = next;
-                if (!next) {
-                  simulatedTargets.value = [];
-                }
-              }}
-              title="${simHitboxEnabled.value ? "Stop simulating" : "Simulate positions"}"
-            >
-              <ha-icon icon="mdi:target-account"></ha-icon>
-            </button>
-          </div>
-        `
-            : null
-        }
-
-        <!-- Tool buttons (contextual) -->
-        ${
-          menuItems.length > 0
-            ? html`
-          <div class="divider"></div>
-          <div class="tool-group">
-            ${menuItems.map(
-              (item) => html`
-              <button
-                class="tool-button ${tool === item.id ? "active" : ""}"
-                style="--mode-accent: ${modeDef.accent}"
-                @click=${() => this._handleToolSelect(item.id)}
-                title=${item.label}
-              >
-                <ha-icon icon=${item.icon}></ha-icon>
-              </button>
-            `,
-            )}
-          </div>
-        `
-            : null
-        }
 
         <div class="divider"></div>
         <button
