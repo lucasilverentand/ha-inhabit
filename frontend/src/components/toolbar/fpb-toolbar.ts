@@ -21,6 +21,11 @@ import type {
   HomeAssistant,
   ToolType,
 } from "../../types";
+import {
+  getMapModeDefinition,
+  getMapModeDefinitions,
+  getModeTools,
+} from "../../utils/map-modes";
 
 interface AddMenuItem {
   id: ToolType;
@@ -28,23 +33,18 @@ interface AddMenuItem {
   label: string;
 }
 
-const WALLS_MENU_ITEMS: AddMenuItem[] = [
-  { id: "wall", icon: "mdi:wall", label: "Wall" },
-  { id: "door", icon: "mdi:door", label: "Door" },
-  { id: "window", icon: "mdi:window-closed-variant", label: "Window" },
-];
-
-const ZONES_MENU_ITEMS: AddMenuItem[] = [
-  { id: "zone", icon: "mdi:vector-polygon", label: "Zone" },
-];
-
-const PLACEMENT_MENU_ITEMS: AddMenuItem[] = [
-  { id: "light", icon: "mdi:lightbulb", label: "Light" },
-  { id: "switch", icon: "mdi:toggle-switch", label: "Switch" },
-  { id: "button", icon: "mdi:gesture-tap-button", label: "Button" },
-  { id: "mmwave", icon: "mdi:access-point", label: "mmWave" },
-  { id: "other", icon: "mdi:devices", label: "Other" },
-];
+const TOOL_ITEMS: Record<ToolType, AddMenuItem> = {
+  select: { id: "select", icon: "mdi:cursor-default-outline", label: "Select" },
+  wall: { id: "wall", icon: "mdi:wall", label: "Wall" },
+  door: { id: "door", icon: "mdi:door", label: "Door" },
+  window: { id: "window", icon: "mdi:window-closed-variant", label: "Window" },
+  zone: { id: "zone", icon: "mdi:vector-polygon", label: "Zone" },
+  light: { id: "light", icon: "mdi:lightbulb", label: "Light" },
+  switch: { id: "switch", icon: "mdi:toggle-switch", label: "Switch" },
+  button: { id: "button", icon: "mdi:gesture-tap-button", label: "Button" },
+  mmwave: { id: "mmwave", icon: "mdi:access-point", label: "mmWave" },
+  other: { id: "other", icon: "mdi:devices", label: "Other" },
+};
 
 export class FpbToolbar extends LitElement {
   @property({ attribute: false })
@@ -81,10 +81,12 @@ export class FpbToolbar extends LitElement {
       border-bottom: 1px solid var(--divider-color, rgba(0, 0, 0, 0.12));
       box-sizing: border-box;
       overflow: visible;
+      gap: 10px;
     }
 
     .toolbar-left {
       justify-self: start;
+      min-width: 0;
     }
 
     .toolbar-right {
@@ -92,6 +94,7 @@ export class FpbToolbar extends LitElement {
       display: flex;
       align-items: center;
       gap: 4px;
+      min-width: 0;
     }
 
     /* --- Floor selector dropdown --- */
@@ -278,7 +281,7 @@ export class FpbToolbar extends LitElement {
     }
 
     .tool-button.active {
-      background: var(--primary-color);
+      background: var(--mode-accent, var(--primary-color));
       color: #fff;
     }
 
@@ -324,24 +327,29 @@ export class FpbToolbar extends LitElement {
     /* --- Mode switcher --- */
     .mode-group {
       display: flex;
-      gap: 2px;
+      gap: 4px;
       background: rgba(0, 0, 0, 0.06);
-      border-radius: 10px;
-      padding: 2px;
+      border-radius: 12px;
+      padding: 3px;
     }
 
     .mode-button {
       display: flex;
       align-items: center;
       justify-content: center;
-      width: 36px;
-      height: 32px;
+      gap: 6px;
+      min-width: 78px;
+      height: 36px;
+      padding: 0 10px;
       border: none;
-      border-radius: 8px;
+      border-radius: 10px;
       background: transparent;
       color: var(--secondary-text-color);
       cursor: pointer;
       transition: background 0.15s, color 0.15s;
+      font-size: 12px;
+      font-weight: 600;
+      white-space: nowrap;
     }
 
     .mode-button:hover {
@@ -350,12 +358,104 @@ export class FpbToolbar extends LitElement {
     }
 
     .mode-button.active {
-      background: var(--primary-color);
+      background: var(--mode-accent, var(--primary-color));
       color: #fff;
     }
 
     .mode-button ha-icon {
       --mdc-icon-size: 18px;
+    }
+
+    .mode-label {
+      line-height: 1;
+    }
+
+    @media (max-width: 900px), (hover: none) and (pointer: coarse) {
+      :host {
+        position: fixed;
+        left: 10px;
+        right: 10px;
+        bottom: max(10px, env(safe-area-inset-bottom));
+        top: auto;
+        z-index: 250;
+        height: auto;
+        min-height: 64px;
+        grid-template-columns: 1fr;
+        grid-template-rows: auto auto;
+        padding: 8px;
+        border: 1px solid var(--divider-color, rgba(0, 0, 0, 0.12));
+        border-radius: 18px;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.22);
+      }
+
+      .toolbar-left {
+        display: none;
+      }
+
+      .mode-group {
+        width: 100%;
+        overflow-x: auto;
+        scrollbar-width: none;
+        background: transparent;
+        padding: 0;
+      }
+
+      .mode-group::-webkit-scrollbar {
+        display: none;
+      }
+
+      .mode-button {
+        min-width: 64px;
+        height: 48px;
+        flex: 1 0 auto;
+        flex-direction: column;
+        gap: 3px;
+        padding: 4px 8px;
+        border-radius: 14px;
+        font-size: 11px;
+      }
+
+      .mode-button ha-icon {
+        --mdc-icon-size: 20px;
+      }
+
+      .toolbar-right {
+        width: 100%;
+        justify-self: stretch;
+        justify-content: flex-start;
+        gap: 6px;
+        overflow-x: auto;
+        scrollbar-width: none;
+      }
+
+      .toolbar-right::-webkit-scrollbar {
+        display: none;
+      }
+
+      .tool-group {
+        gap: 6px;
+      }
+
+      .tool-button {
+        width: 44px;
+        height: 44px;
+        border-radius: 13px;
+        background: var(--primary-background-color, #fafafa);
+      }
+
+      .divider {
+        display: none;
+      }
+
+      .done-button {
+        min-height: 44px;
+        border-radius: 13px;
+        margin-left: auto;
+        position: sticky;
+        right: 0;
+        flex: 0 0 auto;
+        box-shadow: -8px 0 12px var(--card-background-color, #fff);
+      }
     }
 
   `;
@@ -521,15 +621,8 @@ export class FpbToolbar extends LitElement {
     const tool = activeTool.value;
     const mode = this._canvasMode;
     const floors = fp?.floors || [];
-
-    const menuItems =
-      mode === "walls"
-        ? WALLS_MENU_ITEMS
-        : mode === "furniture"
-          ? ZONES_MENU_ITEMS
-          : mode === "placement"
-            ? PLACEMENT_MENU_ITEMS
-            : [];
+    const modeDef = getMapModeDefinition(mode);
+    const menuItems = getModeTools(mode).map((toolId) => TOOL_ITEMS[toolId]);
 
     return html`
       <!-- Left: Floor Selector -->
@@ -614,34 +707,19 @@ export class FpbToolbar extends LitElement {
 
       <!-- Center: Mode Switcher -->
       <div class="mode-group">
-        <button
-          class="mode-button ${mode === "walls" ? "active" : ""}"
-          @click=${() => setCanvasMode("walls")}
-          title="Walls mode"
-        >
-          <ha-icon icon="mdi:wall"></ha-icon>
-        </button>
-        <button
-          class="mode-button ${mode === "furniture" ? "active" : ""}"
-          @click=${() => setCanvasMode("furniture")}
-          title="Zones mode"
-        >
-          <ha-icon icon="mdi:vector-square"></ha-icon>
-        </button>
-        <button
-          class="mode-button ${mode === "placement" ? "active" : ""}"
-          @click=${() => setCanvasMode("placement")}
-          title="Placement mode"
-        >
-          <ha-icon icon="mdi:devices"></ha-icon>
-        </button>
-        <button
-          class="mode-button ${mode === "occupancy" ? "active" : ""}"
-          @click=${() => setCanvasMode("occupancy")}
-          title="Occupancy mode"
-        >
-          <ha-icon icon="mdi:motion-sensor"></ha-icon>
-        </button>
+        ${getMapModeDefinitions().map(
+          (definition) => html`
+            <button
+              class="mode-button ${mode === definition.mode ? "active" : ""}"
+              style="--mode-accent: ${definition.accent}"
+              @click=${() => setCanvasMode(definition.mode)}
+              title="${definition.label} mode"
+            >
+              <ha-icon icon=${definition.icon}></ha-icon>
+              <span class="mode-label">${definition.label}</span>
+            </button>
+          `,
+        )}
       </div>
 
       <!-- Right: Undo/Redo + contextual tools -->
@@ -673,6 +751,7 @@ export class FpbToolbar extends LitElement {
           <div class="tool-group">
             <button
               class="tool-button ${simHitboxEnabled.value ? "active" : ""}"
+              style="--mode-accent: ${modeDef.accent}"
               @click=${() => {
                 const next = !simHitboxEnabled.value;
                 simHitboxEnabled.value = next;
@@ -699,6 +778,7 @@ export class FpbToolbar extends LitElement {
               (item) => html`
               <button
                 class="tool-button ${tool === item.id ? "active" : ""}"
+                style="--mode-accent: ${modeDef.accent}"
                 @click=${() => this._handleToolSelect(item.id)}
                 title=${item.label}
               >

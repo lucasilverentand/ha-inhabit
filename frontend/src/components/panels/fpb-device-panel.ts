@@ -24,6 +24,11 @@ import type {
   OtherPlacement,
   SwitchPlacement,
 } from "../../types";
+import {
+  type DeviceIssue,
+  getMmwavePlacementIssues,
+  getNormalDeviceIssues,
+} from "../../utils/device-issues";
 import "../shared/fpb-entity-picker";
 
 interface CalibrationDraftPoint {
@@ -108,6 +113,8 @@ export class FpbDevicePanel extends LitElement {
       background: none;
       border: none;
       cursor: pointer;
+      min-width: 32px;
+      min-height: 32px;
       padding: 4px;
       border-radius: 8px;
       color: var(--secondary-text-color, #999);
@@ -142,6 +149,31 @@ export class FpbDevicePanel extends LitElement {
       color: var(--secondary-text-color);
     }
 
+    .issue-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      background: rgba(255, 179, 0, 0.12);
+      border: 1px solid rgba(255, 179, 0, 0.45);
+    }
+
+    .issue-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      color: var(--primary-text-color);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    .issue-item ha-icon {
+      color: #f9a825;
+      flex: 0 0 auto;
+      --mdc-icon-size: 16px;
+    }
+
     .entity-row {
       display: flex;
       align-items: center;
@@ -160,6 +192,7 @@ export class FpbDevicePanel extends LitElement {
     }
 
     .rebind-btn {
+      min-height: 32px;
       padding: 4px 10px;
       border: 1px solid var(--divider-color, #e0e0e0);
       border-radius: 6px;
@@ -196,6 +229,7 @@ export class FpbDevicePanel extends LitElement {
     }
 
     .delete-btn {
+      min-height: 36px;
       padding: 8px 16px;
       background: var(--error-color, #f44336);
       color: #fff;
@@ -231,6 +265,8 @@ export class FpbDevicePanel extends LitElement {
       background: none;
       border: none;
       cursor: pointer;
+      min-width: 32px;
+      min-height: 32px;
       padding: 4px;
       border-radius: 6px;
       color: var(--secondary-text-color, #999);
@@ -272,6 +308,7 @@ export class FpbDevicePanel extends LitElement {
     }
 
     .add-target-btn {
+      min-height: 36px;
       padding: 6px 12px;
       background: var(--primary-color);
       color: var(--text-primary-color);
@@ -305,6 +342,7 @@ export class FpbDevicePanel extends LitElement {
     }
 
     .secondary-btn {
+      min-height: 36px;
       padding: 8px 12px;
       border: 1px solid var(--divider-color, #e0e0e0);
       border-radius: 8px;
@@ -316,6 +354,7 @@ export class FpbDevicePanel extends LitElement {
     }
 
     .primary-btn {
+      min-height: 36px;
       padding: 8px 12px;
       border: none;
       border-radius: 8px;
@@ -413,6 +452,53 @@ export class FpbDevicePanel extends LitElement {
       font-size: 13px;
       font-weight: 600;
     }
+
+    @media (max-width: 900px), (hover: none) and (pointer: coarse) {
+      :host {
+        border-radius: 20px 20px 0 0;
+      }
+
+      .panel-header {
+        padding: 14px 16px 10px;
+      }
+
+      .panel-body {
+        max-height: calc(76vh - 56px);
+        overflow-y: auto;
+        padding: 14px 16px calc(18px + env(safe-area-inset-bottom));
+      }
+
+      .close-btn,
+      .rebind-btn,
+      .delete-btn,
+      .add-target-btn,
+      .primary-btn,
+      .secondary-btn,
+      .calibration-point-remove,
+      .target-card-header .remove-btn {
+        min-height: 44px;
+      }
+
+      .close-btn,
+      .calibration-point-remove,
+      .target-card-header .remove-btn {
+        min-width: 44px;
+      }
+
+      .entity-row,
+      .target-axis-row,
+      .calibration-point {
+        min-height: 44px;
+      }
+
+      .calibration-row {
+        align-items: stretch;
+      }
+
+      .calibration-row select {
+        min-height: 44px;
+      }
+    }
   `;
 
   override connectedCallback(): void {
@@ -472,6 +558,44 @@ export class FpbDevicePanel extends LitElement {
   private _getPickerExcludeDomains(): string[] {
     if (this.deviceType === "other") return ["light", "switch", "button"];
     return [];
+  }
+
+  private _getPlacementIssues(
+    placement:
+      | LightPlacement
+      | SwitchPlacement
+      | ButtonPlacement
+      | OtherPlacement
+      | MmwavePlacement,
+  ): DeviceIssue[] {
+    const states = this.hass?.states ?? {};
+    if (this.deviceType === "mmwave") {
+      return getMmwavePlacementIssues(placement as MmwavePlacement, states);
+    }
+    return getNormalDeviceIssues(
+      placement as
+        | LightPlacement
+        | SwitchPlacement
+        | ButtonPlacement
+        | OtherPlacement,
+      states,
+    );
+  }
+
+  private _renderIssues(issues: DeviceIssue[]) {
+    if (issues.length === 0) return nothing;
+    return html`
+      <div class="issue-list" role="status">
+        ${issues.map(
+          (issue) => html`
+            <div class="issue-item">
+              <ha-icon icon="mdi:alert-circle"></ha-icon>
+              <span>${issue.message}</span>
+            </div>
+          `,
+        )}
+      </div>
+    `;
   }
 
   private _getExcludedEntityIds(): string[] {
@@ -651,6 +775,7 @@ export class FpbDevicePanel extends LitElement {
       entityId && this.hass?.states[entityId]
         ? (this.hass.states[entityId].attributes?.friendly_name ?? entityId)
         : (entityId ?? "No entity");
+    const issues = this._getPlacementIssues(placement);
 
     return html`
       <div class="panel-header">
@@ -663,6 +788,7 @@ export class FpbDevicePanel extends LitElement {
         </button>
       </div>
       <div class="panel-body">
+        ${this._renderIssues(issues)}
         <!-- Entity binding (not shown for mmwave) -->
         ${
           this.deviceType !== "mmwave"

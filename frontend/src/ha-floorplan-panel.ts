@@ -164,6 +164,7 @@ export class HaFloorplanPanel extends LitElement {
       flex: 1;
       position: relative;
       overflow: hidden;
+      min-height: 0;
     }
 
     .loading,
@@ -273,6 +274,7 @@ export class HaFloorplanPanel extends LitElement {
       display: flex;
       align-items: center;
       gap: 4px;
+      min-height: 32px;
       padding: 4px 12px;
       border: 1px solid var(--divider-color, #e0e0e0);
       border-radius: 18px;
@@ -337,6 +339,7 @@ export class HaFloorplanPanel extends LitElement {
       display: flex;
       align-items: center;
       gap: 4px;
+      min-height: 36px;
       padding: 4px 12px;
       border: 1px solid var(--divider-color, #e0e0e0);
       border-radius: 8px;
@@ -361,9 +364,59 @@ export class HaFloorplanPanel extends LitElement {
       display: none;
     }
 
-    @media (hover: none) and (pointer: coarse) {
+    @media (max-width: 900px), (hover: none) and (pointer: coarse) {
+      :host {
+        --toolbar-height: 52px;
+      }
+
+      .main-area {
+        position: relative;
+      }
+
+      .container:not(.calibration-capture) .canvas-container {
+        padding-bottom: calc(148px + env(safe-area-inset-bottom));
+        box-sizing: border-box;
+      }
+
+      .viewer-toolbar {
+        height: auto;
+        min-height: 52px;
+        padding: 8px 12px;
+        gap: 8px;
+      }
+
       .edit-toggle {
-        display: none;
+        min-width: 44px;
+        min-height: 44px;
+        justify-content: center;
+        border-radius: 13px;
+      }
+
+      .floor-select {
+        min-height: 40px;
+      }
+
+      .room-chips-bar {
+        padding: 8px 10px;
+      }
+
+      .room-chip {
+        min-height: 40px;
+        border-radius: 20px;
+        padding: 6px 14px;
+      }
+
+      .floating-panel {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        width: auto;
+        max-height: min(76vh, 620px);
+        border-radius: 20px 20px 0 0;
+        box-shadow: 0 -10px 30px rgba(0,0,0,0.22);
+        padding-bottom: env(safe-area-inset-bottom);
+        z-index: 300;
       }
     }
 

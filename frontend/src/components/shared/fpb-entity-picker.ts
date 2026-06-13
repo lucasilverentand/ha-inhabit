@@ -13,11 +13,11 @@ import { css, html, LitElement, nothing } from "lit";
 import { property, query, state } from "lit/decorators.js";
 import { repeat } from "lit/directives/repeat.js";
 import type { HomeAssistant } from "../../types";
+import { isInhabitGeneratedEntity } from "./entity-filter";
 import {
-  type EntityRegistryEntry,
-  isInhabitGeneratedEntity,
-  isInhabitRegistryEntry,
-} from "./entity-filter";
+  getCachedIntegrationEntityIds,
+  loadIntegrationEntityIds,
+} from "./entity-picker-registry-cache";
 
 interface EntityEntry {
   entity_id: string;
@@ -63,10 +63,11 @@ export class FpbEntityPicker extends LitElement {
   private _staged: Set<string> = new Set();
 
   @state()
-  private _integrationEntityIds: Set<string> = new Set();
+  private _integrationEntityIds: Set<string> =
+    getCachedIntegrationEntityIds() ?? new Set();
 
   @state()
-  private _registryLoadComplete = false;
+  private _registryLoadComplete = getCachedIntegrationEntityIds() !== null;
 
   private _registryLoadStarted = false;
 
@@ -272,6 +273,57 @@ export class FpbEntityPicker extends LitElement {
       opacity: 0.4;
       cursor: default;
     }
+
+    @media (max-width: 900px), (hover: none) and (pointer: coarse) {
+      .overlay {
+        align-items: flex-end;
+      }
+
+      .dialog {
+        width: 100vw;
+        max-width: 100vw;
+        max-height: min(82vh, 680px);
+        border-radius: 20px 20px 0 0;
+        padding-bottom: env(safe-area-inset-bottom);
+      }
+
+      .dialog-header {
+        padding: 14px 16px 10px;
+      }
+
+      .close-btn {
+        min-width: 44px;
+        min-height: 44px;
+      }
+
+      .search-container {
+        padding: 10px 16px;
+      }
+
+      .search-input {
+        min-height: 44px;
+        font-size: 16px;
+      }
+
+      .result-list {
+        max-height: min(56vh, 420px);
+        padding: 6px 10px;
+      }
+
+      .result-item {
+        min-height: 54px;
+        padding: 10px 12px;
+        border-radius: 12px;
+      }
+
+      .dialog-footer {
+        padding: 12px 16px;
+      }
+
+      .footer-btn {
+        min-height: 44px;
+      }
+    }
   `;
 
   override firstUpdated(): void {
@@ -291,18 +343,19 @@ export class FpbEntityPicker extends LitElement {
   }
 
   private async _loadIntegrationEntities(): Promise<void> {
-    if (!this.hass || this._registryLoadStarted) return;
+    if (!this.hass || this._registryLoadStarted || this._registryLoadComplete)
+      return;
     this._registryLoadStarted = true;
 
+    const cached = getCachedIntegrationEntityIds();
+    if (cached) {
+      this._integrationEntityIds = cached;
+      this._registryLoadComplete = true;
+      return;
+    }
+
     try {
-      const entries = await this.hass.callWS<EntityRegistryEntry[]>({
-        type: "config/entity_registry/list",
-      });
-      this._integrationEntityIds = new Set(
-        entries
-          .filter((entry) => isInhabitRegistryEntry(entry))
-          .map((entry) => entry.entity_id),
-      );
+      this._integrationEntityIds = await loadIntegrationEntityIds(this.hass);
     } catch (err) {
       console.warn("Failed to load entity registry for Inhabit filter:", err);
     } finally {
@@ -356,7 +409,6 @@ export class FpbEntityPicker extends LitElement {
 
   private _getFilteredEntities(): EntityEntry[] {
     if (!this.hass) return [];
-    if (!this._registryLoadComplete) return [];
     const excludeSet = new Set(this.exclude);
     const domainSet = new Set(this.domains);
     const excludeDomainSet = new Set(this.excludeDomains);
