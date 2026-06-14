@@ -1182,6 +1182,10 @@ export class FpbDevicePanel extends LitElement {
       points: this._getCalibrationDraftPoints(p).map(
         (point) => point.map_point,
       ),
+      sampleCount: 0,
+      sampleGoal: 25,
+      sampleProgress: 0,
+      status: "Tap target point",
     };
   }
 
@@ -1209,6 +1213,11 @@ export class FpbDevicePanel extends LitElement {
       points: this._getCalibrationDraftPoints(placement).map(
         (point) => point.map_point,
       ),
+      activePoint: detail.point,
+      sampleCount: 0,
+      sampleGoal: 25,
+      sampleProgress: 0,
+      status: "Sampling",
       sampling: true,
     };
     await this._sampleAndAddCalibrationPoint(
@@ -1236,8 +1245,9 @@ export class FpbDevicePanel extends LitElement {
     const samples: Array<{ x: number; y: number }> = [];
     this._calibrationStatus = "Sampling target";
     this._calibrationSampleCount = 0;
+    const sampleGoal = 25;
 
-    for (let i = 0; i < 25; i++) {
+    for (let i = 0; i < sampleGoal; i++) {
       const sample = this._readTargetSample(
         target.x_entity_id,
         target.y_entity_id,
@@ -1246,13 +1256,37 @@ export class FpbDevicePanel extends LitElement {
         samples.push(sample);
         this._calibrationSampleCount = samples.length;
       }
+      mmwaveCalibrationTarget.value = {
+        placementId: placement.id,
+        targetIndex,
+        points: this._getCalibrationDraftPoints(placement).map(
+          (point) => point.map_point,
+        ),
+        activePoint: mapPoint,
+        sampleCount: samples.length,
+        sampleGoal,
+        sampleProgress: (i + 1) / sampleGoal,
+        status: "Sampling",
+        sampling: true,
+      };
       await new Promise((resolve) => window.setTimeout(resolve, 200));
     }
 
     if (samples.length < 10) {
       this._calibrating = false;
       this._calibrationStatus = "Calibration needs at least 10 valid samples";
-      mmwaveCalibrationTarget.value = null;
+      mmwaveCalibrationTarget.value = {
+        placementId: placement.id,
+        targetIndex,
+        points: this._getCalibrationDraftPoints(placement).map(
+          (point) => point.map_point,
+        ),
+        activePoint: mapPoint,
+        sampleCount: samples.length,
+        sampleGoal,
+        sampleProgress: 1,
+        status: "Needs 10 samples",
+      };
       return;
     }
 
@@ -1272,7 +1306,26 @@ export class FpbDevicePanel extends LitElement {
     this._calibrationDraftPoints = nextPoints;
     this._calibrating = false;
     this._calibrationStatus = `Point ${nextPoints.length} captured`;
-    mmwaveCalibrationTarget.value = null;
+    mmwaveCalibrationTarget.value = {
+      placementId: placement.id,
+      targetIndex,
+      points: nextPoints.map((point) => point.map_point),
+      activePoint: mapPoint,
+      sampleCount: samples.length,
+      sampleGoal,
+      sampleProgress: 1,
+      status: "Captured",
+    };
+    window.setTimeout(() => {
+      const current = mmwaveCalibrationTarget.value;
+      if (
+        current?.placementId === placement.id &&
+        current.targetIndex === targetIndex &&
+        current.status === "Captured"
+      ) {
+        mmwaveCalibrationTarget.value = null;
+      }
+    }, 900);
     this.requestUpdate();
   }
 

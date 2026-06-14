@@ -6608,16 +6608,74 @@ export class FpbCanvas extends LitElement {
 
           const calibrationPointDots =
             calibrationTarget?.placementId === p.id
-              ? (calibrationTarget.points ?? []).map(
-                  (point, idx) => svg`
-                <g class="mmwave-calibration-point" transform="translate(${point.x}, ${point.y})">
-                  <circle cx="0" cy="0" r="${targetR * 1.15}"
-                    fill="#00bcd4" stroke="#fff" stroke-width="${scale * 0.1}" opacity="0.95"/>
-                  <text x="0" y="${-targetR - scale * 0.35}" text-anchor="middle"
-                    font-size="${targetFontSize}" fill="#00acc1" font-weight="700">P${idx + 1}</text>
-                </g>
-              `,
-                )
+              ? (() => {
+                  const activePoint = calibrationTarget.activePoint;
+                  const savedPoints = (calibrationTarget.points ?? []).filter(
+                    (point) =>
+                      !activePoint ||
+                      Math.abs(point.x - activePoint.x) > 0.001 ||
+                      Math.abs(point.y - activePoint.y) > 0.001,
+                  );
+                  const savedMarkers = savedPoints.map(
+                    (point, idx) => svg`
+                      <g class="mmwave-calibration-point" transform="translate(${point.x}, ${point.y})">
+                        <circle cx="0" cy="0" r="${targetR * 1.15}"
+                          fill="#00bcd4" stroke="#fff" stroke-width="${scale * 0.1}" opacity="0.95"/>
+                        <rect x="${-scale * 0.52}" y="${-targetR - scale * 0.92}"
+                          width="${scale * 1.04}" height="${scale * 0.44}" rx="${scale * 0.18}"
+                          fill="var(--card-background-color, #fff)" stroke="#00acc1"
+                          stroke-width="${scale * 0.04}" opacity="0.94"/>
+                        <text x="0" y="${-targetR - scale * 0.6}" text-anchor="middle"
+                          font-size="${targetFontSize * 0.78}" fill="#00acc1" font-weight="700">P${idx + 1}</text>
+                      </g>
+                    `,
+                  );
+                  if (!activePoint) return savedMarkers;
+
+                  const progress = Math.max(
+                    0,
+                    Math.min(1, calibrationTarget.sampleProgress ?? 0),
+                  );
+                  const sampleCount = calibrationTarget.sampleCount ?? 0;
+                  const sampleGoal = calibrationTarget.sampleGoal ?? 25;
+                  const activeR = targetR * 1.55;
+                  const circumference = 2 * Math.PI * activeR;
+                  const dash = circumference * progress;
+                  const status = calibrationTarget.status ?? "Sampling";
+                  const statusLabel =
+                    status === "Captured"
+                      ? "Captured"
+                      : status === "Needs 10 samples"
+                        ? `${sampleCount}/${sampleGoal}`
+                        : `${sampleCount}/${sampleGoal}`;
+                  const statusFill =
+                    status === "Needs 10 samples" ? "#f44336" : "#00acc1";
+
+                  return [
+                    ...savedMarkers,
+                    svg`
+                      <g class="mmwave-calibration-point active" transform="translate(${activePoint.x}, ${activePoint.y})">
+                        <circle cx="0" cy="0" r="${activeR}"
+                          fill="rgba(0, 188, 212, 0.14)" stroke="rgba(255,255,255,0.9)"
+                          stroke-width="${scale * 0.08}"/>
+                        <circle cx="0" cy="0" r="${activeR}"
+                          fill="none" stroke="#00bcd4" stroke-width="${scale * 0.16}"
+                          stroke-linecap="round" stroke-dasharray="${dash} ${circumference}"
+                          transform="rotate(-90)"/>
+                        <circle cx="0" cy="0" r="${targetR * 1.05}"
+                          fill="${statusFill}" stroke="#fff" stroke-width="${scale * 0.1}" opacity="0.98"/>
+                        <rect x="${-scale * 0.95}" y="${-activeR - scale * 0.82}"
+                          width="${scale * 1.9}" height="${scale * 0.5}" rx="${scale * 0.2}"
+                          fill="var(--card-background-color, #fff)" stroke="${statusFill}"
+                          stroke-width="${scale * 0.04}" opacity="0.96"/>
+                        <text x="0" y="${-activeR - scale * 0.46}" text-anchor="middle"
+                          font-size="${targetFontSize * 0.76}" fill="${statusFill}" font-weight="800">${statusLabel}</text>
+                        <text x="0" y="${activeR + scale * 0.55}" text-anchor="middle"
+                          font-size="${targetFontSize * 0.72}" fill="${statusFill}" font-weight="700">${status}</text>
+                      </g>
+                    `,
+                  ];
+                })()
               : null;
 
           // Render fading-out targets for this placement

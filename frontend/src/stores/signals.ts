@@ -97,6 +97,11 @@ interface InhabitSignals {
     placementId: string;
     targetIndex: number;
     points?: Coordinates[];
+    activePoint?: Coordinates;
+    sampleCount?: number;
+    sampleGoal?: number;
+    sampleProgress?: number;
+    status?: string;
     sampling?: boolean;
   } | null>;
   mmwavePlacements: Signal<MmwavePlacement[]>;
@@ -142,6 +147,11 @@ function createSignals(): InhabitSignals {
       placementId: string;
       targetIndex: number;
       points?: Coordinates[];
+      activePoint?: Coordinates;
+      sampleCount?: number;
+      sampleGoal?: number;
+      sampleProgress?: number;
+      status?: string;
       sampling?: boolean;
     } | null>(null),
     mmwavePlacements: signal<MmwavePlacement[]>([]),
