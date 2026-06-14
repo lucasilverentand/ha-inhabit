@@ -1075,6 +1075,90 @@ export class FpbCanvas extends LitElement {
       flex-wrap: wrap;
     }
 
+    @media (max-width: 900px), (hover: none) and (pointer: coarse) {
+      .wall-editor {
+        position: fixed;
+        left: 10px;
+        right: 10px;
+        bottom: calc(88px + env(safe-area-inset-bottom));
+        width: auto;
+        max-height: min(34vh, 300px);
+        padding: 14px;
+        border-radius: 18px;
+        gap: 10px;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.22);
+        z-index: 260;
+      }
+
+      .wall-editor::before {
+        content: "";
+        width: 38px;
+        height: 4px;
+        flex: 0 0 auto;
+        align-self: center;
+        border-radius: 999px;
+        background: var(--divider-color, rgba(0, 0, 0, 0.18));
+        margin-top: -4px;
+      }
+
+      .wall-editor-header {
+        position: sticky;
+        top: -14px;
+        z-index: 2;
+        margin: -14px -14px 0;
+        padding: 14px 14px 10px;
+        background: var(--card-background-color, white);
+      }
+
+      .wall-editor-title {
+        font-size: 14px;
+      }
+
+      .wall-editor-close {
+        min-width: 44px;
+        min-height: 44px;
+        margin: -8px -8px -8px 0;
+      }
+
+      .wall-editor-section {
+        gap: 6px;
+      }
+
+      .wall-editor-row {
+        gap: 6px;
+      }
+
+      .wall-editor input,
+      .wall-editor-select {
+        min-height: 44px;
+        font-size: 16px;
+        box-sizing: border-box;
+      }
+
+      .wall-editor .constraint-btn {
+        min-height: 40px;
+      }
+
+      .wall-editor-actions {
+        position: sticky;
+        bottom: -14px;
+        z-index: 2;
+        margin: 0 -14px -14px;
+        padding: 10px 14px 14px;
+        background: var(--card-background-color, white);
+      }
+
+      .wall-editor-actions button {
+        min-height: 44px;
+      }
+
+      .wall-editor-colors {
+        gap: 8px;
+      }
+    }
+
     .color-swatch {
       width: 28px;
       height: 28px;
@@ -1091,6 +1175,13 @@ export class FpbCanvas extends LitElement {
 
     .color-swatch.active {
       border-color: var(--primary-color, #2196f3);
+    }
+
+    @media (max-width: 900px), (hover: none) and (pointer: coarse) {
+      .color-swatch {
+        width: 34px;
+        height: 34px;
+      }
     }
 
     .room-bg-upload {
