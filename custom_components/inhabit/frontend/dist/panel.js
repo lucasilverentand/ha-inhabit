@@ -3002,15 +3002,11 @@ function ft(t,e){return(e,i,o)=>((t,e,i)=>(i.configurable=!0,i.enumerable=!0,Ref
     }
 
     .tool-button.add-action {
-      width: auto;
-      min-width: 112px;
-      padding: 0 14px;
-      gap: 7px;
+      width: 36px;
+      min-width: 36px;
+      padding: 0;
       background: var(--mode-accent, var(--primary-color));
       color: #fff;
-      font-size: 13px;
-      font-weight: 700;
-      letter-spacing: 0;
     }
 
     .tool-button.add-action:hover {
@@ -3024,11 +3020,6 @@ function ft(t,e){return(e,i,o)=>((t,e,i)=>(i.configurable=!0,i.enumerable=!0,Ref
 
     .tool-button.add-action ha-icon {
       --mdc-icon-size: 22px;
-    }
-
-    .tool-button-label {
-      white-space: nowrap;
-      line-height: 1;
     }
 
     .overflow-wrapper {
@@ -3410,12 +3401,6 @@ function ft(t,e){return(e,i,o)=>((t,e,i)=>(i.configurable=!0,i.enumerable=!0,Ref
       .tool-button.add-action {
         width: 42px;
         min-width: 42px;
-        padding: 0;
-        gap: 0;
-      }
-
-      .tool-button.add-action .tool-button-label {
-        display: none;
       }
 
       .done-button {
@@ -3461,7 +3446,6 @@ function ft(t,e){return(e,i,o)=>((t,e,i)=>(i.configurable=!0,i.enumerable=!0,Ref
         title=${t.label}
       >
         <ha-icon icon=${t.icon}></ha-icon>
-        ${"add"===t.variant?H`<span class="tool-button-label">${t.label}</span>`:null}
       </button>
     `}_renderOverflowItem(t){return H`
       <button

@@ -354,15 +354,11 @@ export class FpbToolbar extends LitElement {
     }
 
     .tool-button.add-action {
-      width: auto;
-      min-width: 112px;
-      padding: 0 14px;
-      gap: 7px;
+      width: 36px;
+      min-width: 36px;
+      padding: 0;
       background: var(--mode-accent, var(--primary-color));
       color: #fff;
-      font-size: 13px;
-      font-weight: 700;
-      letter-spacing: 0;
     }
 
     .tool-button.add-action:hover {
@@ -376,11 +372,6 @@ export class FpbToolbar extends LitElement {
 
     .tool-button.add-action ha-icon {
       --mdc-icon-size: 22px;
-    }
-
-    .tool-button-label {
-      white-space: nowrap;
-      line-height: 1;
     }
 
     .overflow-wrapper {
@@ -762,12 +753,6 @@ export class FpbToolbar extends LitElement {
       .tool-button.add-action {
         width: 42px;
         min-width: 42px;
-        padding: 0;
-        gap: 0;
-      }
-
-      .tool-button.add-action .tool-button-label {
-        display: none;
       }
 
       .done-button {
@@ -1067,11 +1052,6 @@ export class FpbToolbar extends LitElement {
         title=${action.label}
       >
         <ha-icon icon=${action.icon}></ha-icon>
-        ${
-          action.variant === "add"
-            ? html`<span class="tool-button-label">${action.label}</span>`
-            : null
-        }
       </button>
     `;
   }
