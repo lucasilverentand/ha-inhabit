@@ -46,7 +46,7 @@ interface ToolbarAction {
 
 const TOOL_ITEMS: Record<ToolType, AddMenuItem> = {
   select: { id: "select", icon: "mdi:cursor-default-outline", label: "Select" },
-  wall: { id: "wall", icon: "mdi:wall", label: "Wall" },
+  wall: { id: "wall", icon: "mdi:plus", label: "Add wall" },
   door: { id: "door", icon: "mdi:door", label: "Door" },
   window: { id: "window", icon: "mdi:window-closed-variant", label: "Window" },
   zone: { id: "zone", icon: "mdi:vector-polygon", label: "Zone" },
