@@ -68,6 +68,7 @@ import {
   buildNodeMap,
   edgesAtNode,
   findNearestNode,
+  type ResolvedEdge,
   resolveFloorEdges,
 } from "../../utils/node-graph";
 import { detectRoomsFromEdges } from "../../utils/room-detection";
@@ -92,6 +93,17 @@ import "../shared/fpb-entity-picker";
 /** Door swing angle: how far a door opens (degrees from closed/wall position). */
 const DOOR_SWING_DEG = 85;
 const DOOR_SWING_RAD = (DOOR_SWING_DEG * Math.PI) / 180;
+
+interface OpeningPositionContext {
+  beforeEdge: ResolvedEdge;
+  afterEdge: ResolvedEdge;
+  beforeLength: number;
+  afterLength: number;
+  openingLength: number;
+  totalLength: number;
+  runStart: Coordinates;
+  runEnd: Coordinates;
+}
 /**
  * Compute arc geometry for a swing opening.
  * Returns the open-end position and cubic Bézier control points for the arc.
@@ -246,6 +258,12 @@ export class FpbCanvas extends LitElement {
 
   @state()
   private _editingLength: string = "";
+
+  @state()
+  private _editingOpeningBeforeLength: string = "";
+
+  @state()
+  private _editingOpeningAfterLength: string = "";
 
   @state()
   private _editingLengthLocked: boolean = false;
@@ -929,6 +947,49 @@ export class FpbCanvas extends LitElement {
     .wall-editor-unit {
       font-size: 12px;
       color: var(--secondary-text-color, #999);
+    }
+
+    .opening-position-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .opening-position-field {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      min-width: 0;
+      color: var(--secondary-text-color, #777);
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.02em;
+    }
+
+    .opening-position-input {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      min-width: 0;
+    }
+
+    .opening-position-input input {
+      min-width: 0;
+      width: 100%;
+      padding: 8px 6px;
+      border-radius: 8px;
+      font-size: 14px;
+      box-sizing: border-box;
+    }
+
+    .opening-position-input span {
+      flex: 0 0 auto;
+      font-size: 11px;
+      color: var(--secondary-text-color, #777);
+      text-transform: none;
+      font-weight: 500;
+      letter-spacing: 0;
     }
 
     .wall-editor-constraints {
@@ -3071,6 +3132,24 @@ export class FpbCanvas extends LitElement {
     const directionChanged = this._editingDirection !== edge.direction;
     const lengthLockChanged = this._editingLengthLocked !== edge.length_locked;
     const isEdgeOpening = edge.type === "door" || edge.type === "window";
+    const openingPositionContext = isEdgeOpening
+      ? this._getOpeningPositionContext(edge)
+      : null;
+    const newOpeningBeforeLength = parseFloat(this._editingOpeningBeforeLength);
+    const newOpeningAfterLength = parseFloat(this._editingOpeningAfterLength);
+    const openingBeforeChanged =
+      !!openingPositionContext &&
+      Number.isFinite(newOpeningBeforeLength) &&
+      Math.abs(newOpeningBeforeLength - openingPositionContext.beforeLength) >=
+        0.01;
+    const openingAfterChanged =
+      !!openingPositionContext &&
+      Number.isFinite(newOpeningAfterLength) &&
+      Math.abs(newOpeningAfterLength - openingPositionContext.afterLength) >=
+        0.01;
+    const openingPositionChanged =
+      !!openingPositionContext &&
+      (lengthChanged || openingBeforeChanged || openingAfterChanged);
     const edgeTypeChanged =
       isEdgeOpening && this._editingEdgeType !== edge.type;
     const partsChanged =
@@ -3101,8 +3180,16 @@ export class FpbCanvas extends LitElement {
         if (!ok) return; // blocked — blink already triggered, bail out entirely
       }
 
-      // 2. Apply length change (moves nodes)
-      if (lengthChanged) {
+      // 2. Apply length/position changes (moves nodes)
+      if (openingPositionChanged && openingPositionContext) {
+        const ok = await this._updateOpeningPosition(
+          edge,
+          openingPositionContext,
+          newOpeningBeforeLength,
+          newLength,
+        );
+        if (!ok) return;
+      } else if (lengthChanged) {
         await this._updateEdgeLength(edge, newLength);
       }
 
@@ -3401,6 +3488,82 @@ export class FpbCanvas extends LitElement {
 
     // Auto-remove any edges that collapsed to zero length
     await this._removeDegenerateEdges();
+  }
+
+  private async _updateOpeningPosition(
+    edge: Edge,
+    context: OpeningPositionContext,
+    beforeLength: number,
+    openingLength: number,
+  ): Promise<boolean> {
+    if (!this.hass) return false;
+
+    if (
+      !Number.isFinite(beforeLength) ||
+      !Number.isFinite(openingLength) ||
+      beforeLength < 0 ||
+      openingLength <= 0 ||
+      beforeLength + openingLength > context.totalLength
+    ) {
+      return false;
+    }
+
+    const runDx = context.runEnd.x - context.runStart.x;
+    const runDy = context.runEnd.y - context.runStart.y;
+    const runLength = Math.sqrt(runDx * runDx + runDy * runDy);
+    if (runLength <= 0) return false;
+
+    const ux = runDx / runLength;
+    const uy = runDy / runLength;
+    const newStart = {
+      x: context.runStart.x + ux * beforeLength,
+      y: context.runStart.y + uy * beforeLength,
+    };
+    const newEnd = {
+      x: newStart.x + ux * openingLength,
+      y: newStart.y + uy * openingLength,
+    };
+
+    const floor = currentFloor.value;
+    if (!floor) return false;
+    const nodeMap = buildNodeMap(floor.nodes);
+    const currentStart = nodeMap.get(edge.start_node);
+    const currentEnd = nodeMap.get(edge.end_node);
+    if (!currentStart || !currentEnd) return false;
+
+    const updates = [
+      { nodeId: edge.start_node, x: newStart.x, y: newStart.y },
+      { nodeId: edge.end_node, x: newEnd.x, y: newEnd.y },
+    ].filter((update) => {
+      const current =
+        update.nodeId === edge.start_node ? currentStart : currentEnd;
+      return this._calculateWallLength(current, update) >= 0.01;
+    });
+
+    if (updates.length === 0) return true;
+
+    try {
+      const floorPlan = currentFloorPlan.value;
+      if (!floorPlan) return false;
+      await this._withNodeUndo(updates, "Move opening", async () => {
+        await this.hass!.callWS({
+          type: "inhabit/nodes/update",
+          floor_plan_id: floorPlan.id,
+          floor_id: floor.id,
+          updates: updates.map((update) => ({
+            node_id: update.nodeId,
+            x: update.x,
+            y: update.y,
+          })),
+        });
+        await reloadFloorData();
+      });
+      await this._removeDegenerateEdges();
+      return true;
+    } catch (err) {
+      console.error("Error moving opening:", err);
+      return false;
+    }
   }
 
   private _getSnappedPointForNode(point: Coordinates): Coordinates {
@@ -3949,6 +4112,13 @@ export class FpbCanvas extends LitElement {
             length: currentLength,
           };
           this._editingLength = Math.round(currentLength).toString();
+          const openingPositionContext = this._getOpeningPositionContext(edge);
+          this._editingOpeningBeforeLength = openingPositionContext
+            ? this._formatEditorLength(openingPositionContext.beforeLength)
+            : "";
+          this._editingOpeningAfterLength = openingPositionContext
+            ? this._formatEditorLength(openingPositionContext.afterLength)
+            : "";
           this._editingLengthLocked = edge.length_locked;
           this._editingDirection = edge.direction;
           this._editingEdgeType = edge.type === "window" ? "window" : "door";
@@ -5992,6 +6162,114 @@ export class FpbCanvas extends LitElement {
     return Math.sqrt((end.x - start.x) ** 2 + (end.y - start.y) ** 2);
   }
 
+  private _formatEditorLength(length: number): string {
+    if (!Number.isFinite(length)) return "";
+    const rounded = Math.round(length * 10) / 10;
+    return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
+  }
+
+  private _getOpeningPositionContext(
+    edge: Edge,
+  ): OpeningPositionContext | null {
+    if (edge.type !== "door" && edge.type !== "window") return null;
+
+    const floor = currentFloor.value;
+    if (!floor) return null;
+
+    const nodeMap = buildNodeMap(floor.nodes);
+    const start = nodeMap.get(edge.start_node);
+    const end = nodeMap.get(edge.end_node);
+    if (!start || !end) return null;
+
+    const openingLength = this._calculateWallLength(start, end);
+    if (openingLength <= 0) return null;
+
+    const axis = {
+      x: (end.x - start.x) / openingLength,
+      y: (end.y - start.y) / openingLength,
+    };
+    const isCollinearWall = (resolved: ResolvedEdge): boolean => {
+      if (resolved.type !== "wall") return false;
+      const dx = resolved.endPos.x - resolved.startPos.x;
+      const dy = resolved.endPos.y - resolved.startPos.y;
+      const length = Math.sqrt(dx * dx + dy * dy);
+      if (length <= 0) return false;
+      const cross = Math.abs(axis.x * (dy / length) - axis.y * (dx / length));
+      return cross < 0.01;
+    };
+
+    const resolved = resolveFloorEdges(floor);
+    const beforeEdge = resolved.find(
+      (candidate) =>
+        candidate.id !== edge.id &&
+        (candidate.start_node === edge.start_node ||
+          candidate.end_node === edge.start_node) &&
+        isCollinearWall(candidate),
+    );
+    const afterEdge = resolved.find(
+      (candidate) =>
+        candidate.id !== edge.id &&
+        (candidate.start_node === edge.end_node ||
+          candidate.end_node === edge.end_node) &&
+        isCollinearWall(candidate),
+    );
+    if (!beforeEdge || !afterEdge) return null;
+
+    const runStart =
+      beforeEdge.start_node === edge.start_node
+        ? beforeEdge.endPos
+        : beforeEdge.startPos;
+    const runEnd =
+      afterEdge.start_node === edge.end_node
+        ? afterEdge.endPos
+        : afterEdge.startPos;
+    const totalLength = this._calculateWallLength(runStart, runEnd);
+    if (totalLength <= openingLength) return null;
+
+    return {
+      beforeEdge,
+      afterEdge,
+      beforeLength: this._calculateWallLength(runStart, start),
+      afterLength: this._calculateWallLength(end, runEnd),
+      openingLength,
+      totalLength,
+      runStart,
+      runEnd,
+    };
+  }
+
+  private _syncOpeningSideLengths(changed: "before" | "after" | "width"): void {
+    if (!this._edgeEditor) return;
+    const context = this._getOpeningPositionContext(this._edgeEditor.edge);
+    if (!context) return;
+
+    const width = parseFloat(this._editingLength);
+    if (!Number.isFinite(width) || width <= 0) return;
+
+    if (changed === "after") {
+      const after = parseFloat(this._editingOpeningAfterLength);
+      if (!Number.isFinite(after)) return;
+      const before = Math.max(0, context.totalLength - width - after);
+      this._editingOpeningBeforeLength = this._formatEditorLength(before);
+      return;
+    }
+
+    const before = parseFloat(this._editingOpeningBeforeLength);
+    if (!Number.isFinite(before)) return;
+    const after = Math.max(0, context.totalLength - width - before);
+    this._editingOpeningAfterLength = this._formatEditorLength(after);
+  }
+
+  private _handleEditorLengthInput(e: InputEvent): void {
+    this._editingLength = (e.target as HTMLInputElement).value;
+    if (
+      this._edgeEditor?.edge.type === "door" ||
+      this._edgeEditor?.edge.type === "window"
+    ) {
+      this._syncOpeningSideLengths("width");
+    }
+  }
+
   private _formatLength(length: number): string {
     // Assuming units are in cm, show in meters if > 100cm
     if (length >= 100) {
@@ -8017,6 +8295,9 @@ export class FpbCanvas extends LitElement {
       : editingIsWindow
         ? "Window Properties"
         : "Wall Properties";
+    const openingPositionContext = isOpening
+      ? this._getOpeningPositionContext(edge)
+      : null;
 
     return html`
       <div class="wall-editor"
@@ -8369,32 +8650,94 @@ export class FpbCanvas extends LitElement {
             : null
         }
 
-        <div class="wall-editor-section">
-          <span class="wall-editor-section-label">Width</span>
-          <div class="wall-editor-row">
-            <input
-              type="number"
-              .value=${this._editingLength}
-              @input=${(e: InputEvent) => (this._editingLength = (e.target as HTMLInputElement).value)}
-              @keydown=${this._handleEditorKeyDown}
-              autofocus
-            />
-            <span class="wall-editor-unit">cm</span>
-            ${
-              !isOpening
-                ? html`
-              <button
-                class="constraint-btn lock-btn ${this._editingLengthLocked ? "active" : ""}"
-                @click=${() => {
-                  this._editingLengthLocked = !this._editingLengthLocked;
-                }}
-                title="${this._editingLengthLocked ? "Unlock length" : "Lock length"}"
-              ><ha-icon icon="${this._editingLengthLocked ? "mdi:lock" : "mdi:lock-open-variant"}"></ha-icon></button>
-            `
-                : null
-            }
+        ${
+          isOpening && openingPositionContext
+            ? html`
+          <div class="wall-editor-section">
+            <span class="wall-editor-section-label">Position on wall</span>
+            <div class="opening-position-grid">
+              <label class="opening-position-field">
+                <span>Before</span>
+                <div class="opening-position-input">
+                  <input
+                    type="number"
+                    min="0"
+                    .value=${this._editingOpeningBeforeLength}
+                    @input=${(e: InputEvent) => {
+                      this._editingOpeningBeforeLength = (
+                        e.target as HTMLInputElement
+                      ).value;
+                      this._syncOpeningSideLengths("before");
+                    }}
+                    @keydown=${this._handleEditorKeyDown}
+                  />
+                  <span>cm</span>
+                </div>
+              </label>
+              <label class="opening-position-field">
+                <span>Width</span>
+                <div class="opening-position-input">
+                  <input
+                    type="number"
+                    min="1"
+                    .value=${this._editingLength}
+                    @input=${this._handleEditorLengthInput}
+                    @keydown=${this._handleEditorKeyDown}
+                    autofocus
+                  />
+                  <span>cm</span>
+                </div>
+              </label>
+              <label class="opening-position-field">
+                <span>After</span>
+                <div class="opening-position-input">
+                  <input
+                    type="number"
+                    min="0"
+                    .value=${this._editingOpeningAfterLength}
+                    @input=${(e: InputEvent) => {
+                      this._editingOpeningAfterLength = (
+                        e.target as HTMLInputElement
+                      ).value;
+                      this._syncOpeningSideLengths("after");
+                    }}
+                    @keydown=${this._handleEditorKeyDown}
+                  />
+                  <span>cm</span>
+                </div>
+              </label>
+            </div>
           </div>
-        </div>
+        `
+            : html`
+          <div class="wall-editor-section">
+            <span class="wall-editor-section-label">Width</span>
+            <div class="wall-editor-row">
+              <input
+                type="number"
+                .value=${this._editingLength}
+                @input=${this._handleEditorLengthInput}
+                @keydown=${this._handleEditorKeyDown}
+                autofocus
+              />
+              <span class="wall-editor-unit">cm</span>
+              ${
+                !isOpening
+                  ? html`
+                <button
+                  class="constraint-btn lock-btn ${this._editingLengthLocked ? "active" : ""}"
+                  @click=${() => {
+                    this._editingLengthLocked = !this._editingLengthLocked;
+                  }}
+                  title="${this._editingLengthLocked ? "Unlock length" : "Lock length"}"
+                ><ha-icon icon="${this._editingLengthLocked ? "mdi:lock" : "mdi:lock-open-variant"}"></ha-icon></button>
+              `
+                  : null
+              }
+            </div>
+          </div>
+        `
+        }
 
         ${
           edge.angle_group
