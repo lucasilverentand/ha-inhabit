@@ -2,6 +2,7 @@ import { expect } from "@open-wc/testing";
 import {
   getCanvasModePolicy,
   getMapModeDefinition,
+  getMapModeDefinitions,
   getModeTools,
   shouldShowLayer,
 } from "./map-modes";
@@ -9,11 +10,23 @@ import {
 describe("map mode policy", () => {
   it("maps current canvas modes to task labels", () => {
     expect(getMapModeDefinition("viewing").label).to.equal("View");
-    expect(getMapModeDefinition("walls").label).to.equal("Rooms");
-    expect(getMapModeDefinition("openings").label).to.equal("Openings");
+    expect(getMapModeDefinition("walls").label).to.equal("Rooms / Walls");
+    expect(getMapModeDefinition("openings").label).to.equal("Doors & Windows");
     expect(getMapModeDefinition("furniture").label).to.equal("Zones");
     expect(getMapModeDefinition("placement").label).to.equal("Devices");
     expect(getMapModeDefinition("occupancy").label).to.equal("Occupancy");
+  });
+
+  it("presents editable layers in the expected order", () => {
+    expect(
+      getMapModeDefinitions().map((definition) => definition.label),
+    ).to.deep.equal([
+      "Rooms / Walls",
+      "Zones",
+      "Doors & Windows",
+      "Devices",
+      "Occupancy",
+    ]);
   });
 
   it("returns contextual tools by mode", () => {

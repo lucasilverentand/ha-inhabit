@@ -34,7 +34,7 @@ export const MAP_MODE_DEFINITIONS: Record<CanvasMode, MapModeDefinition> = {
   },
   walls: {
     mode: "walls",
-    label: "Rooms",
+    label: "Rooms / Walls",
     icon: "mdi:wall",
     accent: "#455a64",
     tools: ["wall"],
@@ -49,7 +49,7 @@ export const MAP_MODE_DEFINITIONS: Record<CanvasMode, MapModeDefinition> = {
   },
   openings: {
     mode: "openings",
-    label: "Openings",
+    label: "Doors & Windows",
     icon: "mdi:door-open",
     accent: "#6d4c41",
     tools: ["door", "window"],
@@ -115,10 +115,9 @@ export function getMapModeDefinition(mode: CanvasMode): MapModeDefinition {
 
 export function getMapModeDefinitions(): MapModeDefinition[] {
   return [
-    MAP_MODE_DEFINITIONS.viewing,
     MAP_MODE_DEFINITIONS.walls,
-    MAP_MODE_DEFINITIONS.openings,
     MAP_MODE_DEFINITIONS.furniture,
+    MAP_MODE_DEFINITIONS.openings,
     MAP_MODE_DEFINITIONS.placement,
     MAP_MODE_DEFINITIONS.occupancy,
   ];
