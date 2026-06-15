@@ -183,6 +183,66 @@ class TestOldFormatMigration:
         assert len(window_edges) == 1
         assert window_edges[0].height == 120
 
+    def test_wall_with_door_and_window_migrates_to_shared_edges(self):
+        """Legacy doors and windows become typed opening edges on one edge list."""
+        data = {
+            "id": "f1",
+            "name": "Shared Opening Test",
+            "walls": [
+                {
+                    "id": "w1",
+                    "start": {"x": 0, "y": 0},
+                    "end": {"x": 600, "y": 0},
+                    "thickness": 14,
+                    "is_exterior": True,
+                },
+            ],
+            "doors": [
+                {
+                    "id": "d1",
+                    "wall_id": "w1",
+                    "position": 0.25,
+                    "width": 80,
+                    "swing_direction": "right",
+                    "entity_id": "binary_sensor.front_door",
+                },
+            ],
+            "windows": [
+                {
+                    "id": "win1",
+                    "wall_id": "w1",
+                    "position": 0.75,
+                    "width": 100,
+                    "height": 120,
+                },
+            ],
+        }
+
+        floor = Floor.from_dict(data)
+        migrated = floor.to_dict()
+
+        assert "doors" not in migrated
+        assert "windows" not in migrated
+        assert len(floor.edges) == 5
+        assert [e.type for e in floor.edges] == [
+            "wall",
+            "door",
+            "wall",
+            "window",
+            "wall",
+        ]
+
+        door_edge = next(e for e in floor.edges if e.type == "door")
+        assert door_edge.swing_direction == "right"
+        assert door_edge.entity_id == "binary_sensor.front_door"
+        assert door_edge.thickness == 14
+        assert door_edge.is_exterior is True
+
+        window_edge = next(e for e in floor.edges if e.type == "window")
+        assert window_edge.height == 120
+        assert window_edge.thickness == 14
+        assert window_edge.is_exterior is True
+
     def test_wall_with_door_preserves_wall_properties(self):
         """Door split preserves parent wall's thickness and is_exterior."""
         data = {

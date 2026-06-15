@@ -48,6 +48,7 @@ interface ToolbarAction {
 const TOOL_ITEMS: Record<ToolType, AddMenuItem> = {
   select: { id: "select", icon: "mdi:cursor-default-outline", label: "Select" },
   wall: { id: "wall", icon: "mdi:plus", label: "Add wall" },
+  opening: { id: "opening", icon: "mdi:plus", label: "Add opening" },
   door: { id: "door", icon: "mdi:door", label: "Door" },
   window: { id: "window", icon: "mdi:window-closed-variant", label: "Window" },
   zone: { id: "zone", icon: "mdi:vector-polygon", label: "Zone" },
@@ -981,7 +982,7 @@ export class FpbToolbar extends LitElement {
       label: item.label,
       active: activeTool.value === item.id,
       accent: modeDef.accent,
-      variant: item.id === "wall" ? "add" : undefined,
+      variant: item.id === "wall" || item.id === "opening" ? "add" : undefined,
       run: () => this._handleToolSelect(item.id),
     };
   }

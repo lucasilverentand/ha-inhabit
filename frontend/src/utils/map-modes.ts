@@ -52,7 +52,7 @@ export const MAP_MODE_DEFINITIONS: Record<CanvasMode, MapModeDefinition> = {
     label: "Doors & Windows",
     icon: "mdi:door-open",
     accent: "#6d4c41",
-    tools: ["door", "window"],
+    tools: ["opening"],
     layers: ["background", "structure", "labels"],
     showNormalDevices: false,
     showMmwave: false,

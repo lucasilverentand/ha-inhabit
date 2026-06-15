@@ -47,6 +47,7 @@ import type {
   SelectionState,
   SimulatedTarget,
   SwitchPlacement,
+  ToolType,
   ViewBox,
   WallDirection,
   Zone,
@@ -251,6 +252,9 @@ export class FpbCanvas extends LitElement {
 
   @state()
   private _editingDirection: WallDirection = "free";
+
+  @state()
+  private _editingEdgeType: "door" | "window" = "door";
 
   @state()
   private _editingOpeningParts: "single" | "double" = "single";
@@ -2089,15 +2093,12 @@ export class FpbCanvas extends LitElement {
         this._edgeEditor = null;
         this._multiEdgeEditor = null;
         this._placeMmwave(snappedPoint);
-      } else if (
-        mode === "openings" &&
-        (tool === "door" || tool === "window")
-      ) {
+      } else if (mode === "openings" && this._isOpeningTool(tool)) {
         if (this._openingPreview) {
           this._edgeEditor = null;
           this._multiEdgeEditor = null;
           this._roomEditor = null;
-          this._placeOpening(tool);
+          this._placeOpening();
         }
       } else if (tool === "zone" && mode === "furniture") {
         this._edgeEditor = null;
@@ -2124,7 +2125,11 @@ export class FpbCanvas extends LitElement {
     this._showEntityPickerModal = true;
   }
 
-  private async _placeOpening(tool: "door" | "window"): Promise<void> {
+  private _isOpeningTool(tool: ToolType): boolean {
+    return tool === "opening" || tool === "door" || tool === "window";
+  }
+
+  private async _placeOpening(): Promise<void> {
     if (!this.hass || !this._openingPreview) return;
 
     const floor = currentFloor.value;
@@ -2136,8 +2141,8 @@ export class FpbCanvas extends LitElement {
     const fId = floor.id;
     const { edgeId, t, startPos, endPos, thickness, position } =
       this._openingPreview;
-    const openingWidth = tool === "door" ? 80 : 100;
-    const newType = tool;
+    const openingWidth = 80;
+    const newType = "door";
 
     // Capture values for undo/redo closures (openingPreview will change)
     const savedStartPos = { ...startPos };
@@ -2156,13 +2161,9 @@ export class FpbCanvas extends LitElement {
         position: t,
         new_type: newType,
         width: openingWidth,
-        ...(tool === "door"
-          ? {
-              opening_parts: "single",
-              opening_type: "swing",
-              swing_direction: "left",
-            }
-          : { opening_parts: "single", opening_type: "swing" }),
+        opening_parts: "single",
+        opening_type: "swing",
+        swing_direction: "left",
       });
 
       await reloadFloorData();
@@ -2172,7 +2173,7 @@ export class FpbCanvas extends LitElement {
 
       pushAction({
         type: "opening_place",
-        description: `Place ${tool}`,
+        description: "Place opening",
         undo: async () => {
           for (const eid of allEdgeIds) {
             try {
@@ -2222,13 +2223,9 @@ export class FpbCanvas extends LitElement {
               position: t,
               new_type: newType,
               width: openingWidth,
-              ...(tool === "door"
-                ? {
-                    opening_parts: "single",
-                    opening_type: "swing",
-                    swing_direction: "left",
-                  }
-                : { opening_parts: "single", opening_type: "swing" }),
+              opening_parts: "single",
+              opening_type: "swing",
+              swing_direction: "left",
             });
           }
           await reloadFloorData();
@@ -2562,10 +2559,7 @@ export class FpbCanvas extends LitElement {
     }
 
     // Opening tool: snap ghost preview to nearest wall edge
-    if (
-      this._canvasMode === "openings" &&
-      (tool === "door" || tool === "window")
-    ) {
+    if (this._canvasMode === "openings" && this._isOpeningTool(tool)) {
       this._updateOpeningPreview(point);
     } else {
       this._openingPreview = null;
@@ -3068,6 +3062,8 @@ export class FpbCanvas extends LitElement {
     const directionChanged = this._editingDirection !== edge.direction;
     const lengthLockChanged = this._editingLengthLocked !== edge.length_locked;
     const isEdgeOpening = edge.type === "door" || edge.type === "window";
+    const edgeTypeChanged =
+      isEdgeOpening && this._editingEdgeType !== edge.type;
     const partsChanged =
       isEdgeOpening &&
       this._editingOpeningParts !== (edge.opening_parts ?? "single");
@@ -3083,6 +3079,7 @@ export class FpbCanvas extends LitElement {
     const anyEdgePropChanged =
       directionChanged ||
       lengthLockChanged ||
+      edgeTypeChanged ||
       partsChanged ||
       openingTypeChanged ||
       swingChanged ||
@@ -3134,6 +3131,7 @@ export class FpbCanvas extends LitElement {
         if (directionChanged) edgeUpdate.direction = this._editingDirection;
         if (lengthLockChanged)
           edgeUpdate.length_locked = this._editingLengthLocked;
+        if (edgeTypeChanged) edgeUpdate.edge_type = this._editingEdgeType;
         if (partsChanged) edgeUpdate.opening_parts = this._editingOpeningParts;
         if (openingTypeChanged)
           edgeUpdate.opening_type = this._editingOpeningType;
@@ -3944,6 +3942,7 @@ export class FpbCanvas extends LitElement {
           this._editingLength = Math.round(currentLength).toString();
           this._editingLengthLocked = edge.length_locked;
           this._editingDirection = edge.direction;
+          this._editingEdgeType = edge.type === "window" ? "window" : "door";
           this._editingOpeningParts = edge.opening_parts ?? "single";
           this._editingOpeningType = edge.opening_type ?? "swing";
           this._editingSwingDirection = edge.swing_direction ?? "left";
@@ -7845,10 +7844,10 @@ export class FpbCanvas extends LitElement {
     if (!this._openingPreview) return null;
 
     const tool = activeTool.value;
-    if (tool !== "door" && tool !== "window") return null;
+    if (!this._isOpeningTool(tool)) return null;
 
     const { position, startPos, endPos, thickness } = this._openingPreview;
-    const openingWidth = tool === "door" ? 80 : 100;
+    const openingWidth = tool === "window" ? 100 : 80;
 
     // Edge direction vector
     const edx = endPos.x - startPos.x;
@@ -7872,6 +7871,20 @@ export class FpbCanvas extends LitElement {
                       L${cx + ux * halfW - nx * halfT},${cy + uy * halfW - ny * halfT}
                       L${cx - ux * halfW - nx * halfT},${cy - uy * halfW - ny * halfT}
                       Z`;
+    const jambStartX = cx - ux * halfW;
+    const jambStartY = cy - uy * halfW;
+    const jambEndX = cx + ux * halfW;
+    const jambEndY = cy + uy * halfW;
+
+    if (tool === "opening") {
+      return svg`
+        <g class="opening-ghost">
+          <path class="door" d="${rectPath}"/>
+          <line class="door-jamb" x1="${jambStartX - nx * halfT}" y1="${jambStartY - ny * halfT}" x2="${jambStartX + nx * halfT}" y2="${jambStartY + ny * halfT}"/>
+          <line class="door-jamb" x1="${jambEndX - nx * halfT}" y1="${jambEndY - ny * halfT}" x2="${jambEndX + nx * halfT}" y2="${jambEndY + ny * halfT}"/>
+        </g>
+      `;
+    }
 
     if (tool === "window") {
       return svg`
@@ -7986,9 +7999,13 @@ export class FpbCanvas extends LitElement {
     const isDoor = edge.type === "door";
     const isWindow = edge.type === "window";
     const isOpening = isDoor || isWindow;
-    const title = isDoor
+    const editingIsDoor = isOpening ? this._editingEdgeType === "door" : isDoor;
+    const editingIsWindow = isOpening
+      ? this._editingEdgeType === "window"
+      : isWindow;
+    const title = editingIsDoor
       ? "Door Properties"
-      : isWindow
+      : editingIsWindow
         ? "Window Properties"
         : "Wall Properties";
 
@@ -8060,6 +8077,33 @@ export class FpbCanvas extends LitElement {
 
         ${
           isOpening
+            ? html`
+          <div class="wall-editor-section">
+            <span class="wall-editor-section-label">Type</span>
+            <div class="wall-editor-constraints">
+              <button
+                class="constraint-btn ${this._editingEdgeType === "door" ? "active" : ""}"
+                @click=${() => {
+                  this._editingEdgeType = "door";
+                  if (this._editingOpeningType === "tilt") {
+                    this._editingOpeningType = "swing";
+                  }
+                }}
+              >Door</button>
+              <button
+                class="constraint-btn ${this._editingEdgeType === "window" ? "active" : ""}"
+                @click=${() => {
+                  this._editingEdgeType = "window";
+                }}
+              >Window</button>
+            </div>
+          </div>
+        `
+            : null
+        }
+
+        ${
+          isOpening
             ? (
                 () => {
                   const floor = currentFloor.value;
@@ -8125,7 +8169,7 @@ export class FpbCanvas extends LitElement {
                   const types: Array<{
                     value: "swing" | "sliding" | "tilt";
                     label: string;
-                  }> = isDoor
+                  }> = editingIsDoor
                     ? [
                         { value: "swing", label: "Swing" },
                         { value: "sliding", label: "Sliding" },
@@ -8169,7 +8213,7 @@ export class FpbCanvas extends LitElement {
             </div>
 
             <div class="wall-editor-section">
-              <span class="wall-editor-section-label">Type</span>
+              <span class="wall-editor-section-label">Mechanism</span>
               <div class="wall-editor-constraints">
                 ${types.map(
                   (t) => html`

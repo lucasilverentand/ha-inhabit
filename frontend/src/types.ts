@@ -326,6 +326,7 @@ export interface SimulatedTarget {
 export type ToolType =
   | "select"
   | "wall"
+  | "opening"
   | "door"
   | "window"
   | "light"
