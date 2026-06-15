@@ -323,9 +323,10 @@ export class FpbCanvas extends LitElement {
 
   private _viewBoxAnimation: number | null = null;
 
-  /** Window-level keydown/keyup handlers for space-to-pan. */
+  /** Window-level key handlers for canvas shortcuts. */
   private _onSpaceDown?: (e: KeyboardEvent) => void;
   private _onSpaceUp?: (e: KeyboardEvent) => void;
+  private _onEscapeDown?: (e: KeyboardEvent) => void;
 
   @state()
   private _pendingDevice: { position: Coordinates } | null = null;
@@ -1768,6 +1769,9 @@ export class FpbCanvas extends LitElement {
         if (!this._isOpeningTool(tool)) {
           this._openingPreview = null;
         }
+        if (tool !== "device") {
+          this._cancelDevicePlacement();
+        }
       }),
       effect(() => {
         void mmwaveCalibrationTarget.value;
@@ -1814,7 +1818,14 @@ export class FpbCanvas extends LitElement {
         }
       }
     };
+    this._onEscapeDown = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (!this._hasCancelableInteraction()) return;
+      e.preventDefault();
+      this._cancelCurrentInteraction();
+    };
     window.addEventListener("keydown", this._onSpaceDown);
+    window.addEventListener("keydown", this._onEscapeDown);
     window.addEventListener("keyup", this._onSpaceUp);
 
     // Observe container resizes to keep zoom/pan calculations accurate
@@ -1847,6 +1858,8 @@ export class FpbCanvas extends LitElement {
     // Clean up space-to-pan listeners
     if (this._onSpaceDown)
       window.removeEventListener("keydown", this._onSpaceDown);
+    if (this._onEscapeDown)
+      window.removeEventListener("keydown", this._onEscapeDown);
     if (this._onSpaceUp) window.removeEventListener("keyup", this._onSpaceUp);
     this._spaceHeld = false;
 
@@ -3113,35 +3126,64 @@ export class FpbCanvas extends LitElement {
     }
   }
 
+  private _hasCancelableInteraction(): boolean {
+    return (
+      activeTool.value !== "select" ||
+      this._pendingDevice !== null ||
+      this._showEntityPickerModal ||
+      this._wallStartPoint !== null ||
+      this._draggingNode !== null ||
+      this._draggingZoneVertex !== null ||
+      this._draggingPlacement !== null ||
+      this._draggingLayer !== null ||
+      this._draggingCorner !== null ||
+      this._rotatingMmwave !== null ||
+      this._edgeEditor !== null ||
+      this._multiEdgeEditor !== null ||
+      this._nodeEditor !== null ||
+      this._roomEditor !== null ||
+      this._zoneEditor !== null ||
+      this._zonePolyPoints.length > 0 ||
+      this._pendingZonePolygon !== null ||
+      selection.value.type !== "none" ||
+      devicePanelTarget.value !== null
+    );
+  }
+
+  private _cancelCurrentInteraction(): void {
+    this._wallStartPoint = null;
+    this._wallChainStart = null;
+    this._hoveredNode = null;
+    this._draggingNode = null;
+    this._draggingZoneVertex = null;
+    this._draggingPlacement = null;
+    this._draggingLayer = null;
+    this._draggingCorner = null;
+    if (this._rotatingMmwave) {
+      // Revert angle on cancel
+      const rm = this._rotatingMmwave;
+      mmwavePlacements.value = mmwavePlacements.value.map((p) =>
+        p.id === rm.id ? { ...p, angle: rm.originalAngle } : p,
+      );
+      this._rotatingMmwave = null;
+    }
+    this._pendingDevice = null;
+    this._showEntityPickerModal = false;
+    this._edgeEditor = null;
+    this._multiEdgeEditor = null;
+    this._nodeEditor = null;
+    this._roomEditor = null;
+    this._zoneEditor = null;
+    this._zonePolyPoints = [];
+    this._pendingZonePolygon = null;
+    selection.value = { type: "none", ids: [] };
+    devicePanelTarget.value = null;
+    activeTool.value = "select";
+  }
+
   private _handleKeyDown(e: KeyboardEvent): void {
     if (e.key === "Escape") {
-      this._wallStartPoint = null;
-      this._wallChainStart = null;
-      this._hoveredNode = null;
-      this._draggingNode = null;
-      this._draggingZoneVertex = null;
-      this._draggingPlacement = null;
-      this._draggingLayer = null;
-      this._draggingCorner = null;
-      if (this._rotatingMmwave) {
-        // Revert angle on cancel
-        const rm = this._rotatingMmwave;
-        mmwavePlacements.value = mmwavePlacements.value.map((p) =>
-          p.id === rm.id ? { ...p, angle: rm.originalAngle } : p,
-        );
-        this._rotatingMmwave = null;
-      }
-      this._pendingDevice = null;
-      this._edgeEditor = null;
-      this._multiEdgeEditor = null;
-      this._nodeEditor = null;
-      this._roomEditor = null;
-      this._zoneEditor = null;
-      this._zonePolyPoints = [];
-      this._pendingZonePolygon = null;
-      selection.value = { type: "none", ids: [] };
-      devicePanelTarget.value = null;
-      activeTool.value = "select";
+      this._cancelCurrentInteraction();
     } else if (
       (e.key === "Backspace" || e.key === "Delete") &&
       this._zoneEditor
