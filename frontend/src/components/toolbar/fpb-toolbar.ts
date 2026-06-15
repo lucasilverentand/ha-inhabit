@@ -77,6 +77,9 @@ export class FpbToolbar extends LitElement {
   private _toolbarWidth = 0;
 
   @state()
+  private _toolbarCenterX = 0;
+
+  @state()
   private _canvasMode: CanvasMode = "walls";
 
   @state()
@@ -89,6 +92,7 @@ export class FpbToolbar extends LitElement {
   private _renameCommitted = false;
   private _documentListenerAttached = false;
   private _resizeObserver?: ResizeObserver;
+  private _boundWindowResize = (): void => this._updateToolbarMetrics();
 
   static override styles = css`
     :host {
@@ -288,6 +292,27 @@ export class FpbToolbar extends LitElement {
       gap: 4px;
       min-width: 0;
       position: relative;
+    }
+
+    .map-actions {
+      position: fixed;
+      left: var(--map-actions-x, 50vw);
+      bottom: max(18px, env(safe-area-inset-bottom));
+      transform: translateX(-50%);
+      display: flex;
+      align-items: center;
+      max-width: min(calc(100vw - 32px), 640px);
+      padding: 6px;
+      border-radius: 16px;
+      background: var(--card-background-color, #fff);
+      border: 1px solid var(--divider-color, rgba(0, 0, 0, 0.12));
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
+      z-index: 240;
+    }
+
+    .map-actions .context-actions {
+      justify-content: center;
+      gap: 6px;
     }
 
     .tool-button {
@@ -619,7 +644,7 @@ export class FpbToolbar extends LitElement {
       .toolbar-right {
         width: 100%;
         justify-self: stretch;
-        justify-content: space-between;
+        justify-content: flex-end;
         gap: 6px;
         overflow: visible;
         scrollbar-width: none;
@@ -635,10 +660,15 @@ export class FpbToolbar extends LitElement {
       }
 
       .context-actions {
-        flex: 1 1 auto;
-        justify-content: flex-start;
         gap: 6px;
         min-width: 0;
+      }
+
+      .map-actions {
+        bottom: calc(88px + env(safe-area-inset-bottom));
+        max-width: calc(100vw - 20px);
+        border-radius: 18px;
+        padding: 7px;
       }
 
       .tool-button {
@@ -1021,6 +1051,7 @@ export class FpbToolbar extends LitElement {
   override disconnectedCallback(): void {
     super.disconnectedCallback();
     document.removeEventListener("click", this._handleDocumentClick);
+    window.removeEventListener("resize", this._boundWindowResize);
     this._resizeObserver?.disconnect();
     this._resizeObserver = undefined;
     this._documentListenerAttached = false;
@@ -1034,9 +1065,23 @@ export class FpbToolbar extends LitElement {
       if (width !== this._toolbarWidth) {
         this._toolbarWidth = width;
       }
+      this._updateToolbarMetrics();
     });
     this._resizeObserver.observe(this);
-    this._toolbarWidth = Math.round(this.getBoundingClientRect().width);
+    window.addEventListener("resize", this._boundWindowResize);
+    this._updateToolbarMetrics();
+  }
+
+  private _updateToolbarMetrics(): void {
+    const rect = this.getBoundingClientRect();
+    const width = Math.round(rect.width);
+    const centerX = Math.round(rect.left + rect.width / 2);
+    if (width !== this._toolbarWidth) {
+      this._toolbarWidth = width;
+    }
+    if (centerX !== this._toolbarCenterX) {
+      this._toolbarCenterX = centerX;
+    }
   }
 
   private _handleDocumentClick = (e: MouseEvent): void => {
@@ -1187,8 +1232,25 @@ export class FpbToolbar extends LitElement {
         }
       </div>
 
-      <!-- Right: Undo/Redo + contextual tools -->
+      <!-- Right: Done -->
       <div class="toolbar-right">
+        <button
+          class="done-button"
+          @click=${this._exitEditor}
+          title="Exit editor"
+        >
+          <ha-icon icon="mdi:check"></ha-icon>
+          Done
+        </button>
+      </div>
+
+      <!-- Map overlay: Undo/Redo + contextual tools -->
+      <div
+        class="map-actions"
+        style="--map-actions-x: ${
+          this._toolbarCenterX ? `${this._toolbarCenterX}px` : "50vw"
+        };"
+      >
         <div class="context-actions">
           ${direct.map((action) => this._renderActionButton(action))}
           ${
@@ -1219,16 +1281,6 @@ export class FpbToolbar extends LitElement {
               : null
           }
         </div>
-
-        <div class="divider"></div>
-        <button
-          class="done-button"
-          @click=${this._exitEditor}
-          title="Exit editor"
-        >
-          <ha-icon icon="mdi:check"></ha-icon>
-          Done
-        </button>
       </div>
     `;
   }
