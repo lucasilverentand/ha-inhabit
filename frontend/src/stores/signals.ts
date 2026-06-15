@@ -12,6 +12,7 @@ import { type Signal, signal } from "@preact/signals-core";
 import type {
   ButtonPlacement,
   CanvasMode,
+  Coordinates,
   Floor,
   FloorPlan,
   LayerConfig,
@@ -92,6 +93,17 @@ interface InhabitSignals {
     id: string;
     type: "light" | "switch" | "mmwave" | "button" | "other";
   } | null>;
+  mmwaveCalibrationTarget: Signal<{
+    placementId: string;
+    targetIndex: number;
+    points?: Coordinates[];
+    activePoint?: Coordinates;
+    sampleCount?: number;
+    sampleGoal?: number;
+    sampleProgress?: number;
+    status?: string;
+    sampling?: boolean;
+  } | null>;
   mmwavePlacements: Signal<MmwavePlacement[]>;
   simulatedTargets: Signal<SimulatedTarget[]>;
   simHitboxEnabled: Signal<boolean>;
@@ -131,6 +143,17 @@ function createSignals(): InhabitSignals {
       id: string;
       type: "light" | "switch" | "mmwave" | "button" | "other";
     } | null>(null),
+    mmwaveCalibrationTarget: signal<{
+      placementId: string;
+      targetIndex: number;
+      points?: Coordinates[];
+      activePoint?: Coordinates;
+      sampleCount?: number;
+      sampleGoal?: number;
+      sampleProgress?: number;
+      status?: string;
+      sampling?: boolean;
+    } | null>(null),
     mmwavePlacements: signal<MmwavePlacement[]>([]),
     simulatedTargets: signal<SimulatedTarget[]>([]),
     simHitboxEnabled: signal<boolean>(false),
@@ -164,6 +187,7 @@ export const constraintConflicts = s.constraintConflicts;
 export const focusedRoomId = s.focusedRoomId;
 export const occupancyPanelTarget = s.occupancyPanelTarget;
 export const devicePanelTarget = s.devicePanelTarget;
+export const mmwaveCalibrationTarget = s.mmwaveCalibrationTarget;
 export const mmwavePlacements = s.mmwavePlacements;
 export const simulatedTargets = s.simulatedTargets;
 export const simHitboxEnabled = s.simHitboxEnabled;
@@ -177,8 +201,9 @@ export function setCanvasMode(mode: CanvasMode): void {
     simulatedTargets.value = [];
     simHitboxEnabled.value = false;
   }
-  if (mode !== "placement") {
+  if (mode !== "placement" && mode !== "occupancy") {
     devicePanelTarget.value = null;
+    mmwaveCalibrationTarget.value = null;
   }
 }
 
@@ -215,6 +240,7 @@ export function resetSignals(): void {
   focusedRoomId.value = null;
   occupancyPanelTarget.value = null;
   devicePanelTarget.value = null;
+  mmwaveCalibrationTarget.value = null;
   mmwavePlacements.value = [];
   simulatedTargets.value = [];
   simHitboxEnabled.value = false;

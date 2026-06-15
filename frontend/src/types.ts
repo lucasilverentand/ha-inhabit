@@ -215,6 +215,40 @@ export interface OccupancyStateData {
 }
 
 // mmWave sensor types
+export interface MmwaveCalibration {
+  enabled: boolean;
+  target_index: number;
+  map_point: Coordinates;
+  raw_mean: Coordinates;
+  raw_stddev: Coordinates;
+  raw_bias: Coordinates;
+  jitter_radius: number;
+  sample_count: number;
+  calibrated_at?: string;
+  points?: MmwaveCalibrationPoint[];
+  world_transform?: MmwaveCalibrationTransform;
+}
+
+export interface MmwaveCalibrationPoint {
+  target_index: number;
+  map_point: Coordinates;
+  raw_mean: Coordinates;
+  raw_stddev: Coordinates;
+  raw_bias: Coordinates;
+  sample_count: number;
+}
+
+export interface MmwaveCalibrationTransform {
+  type: "affine" | "similarity";
+  a: number;
+  b: number;
+  c: number;
+  d: number;
+  e: number;
+  f: number;
+  residual_error: number;
+}
+
 export interface MmwavePlacement {
   id: string;
   floor_plan_id: string;
@@ -226,6 +260,7 @@ export interface MmwavePlacement {
   detection_range: number;
   label?: string;
   targets: Array<{ x_entity_id: string; y_entity_id: string }>;
+  calibration?: MmwaveCalibration;
 }
 
 // Visual rule types
@@ -272,6 +307,7 @@ export interface VisualRule {
 export type CanvasMode =
   | "viewing"
   | "walls"
+  | "openings"
   | "furniture"
   | "placement"
   | "occupancy";
@@ -290,6 +326,7 @@ export interface SimulatedTarget {
 export type ToolType =
   | "select"
   | "wall"
+  | "opening"
   | "door"
   | "window"
   | "light"

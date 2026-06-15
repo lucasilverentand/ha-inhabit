@@ -693,4 +693,6 @@ export class FpbOccupancyPanel extends LitElement {
   }
 }
 
-customElements.define("fpb-occupancy-panel", FpbOccupancyPanel);
+if (!customElements.get("fpb-occupancy-panel")) {
+  customElements.define("fpb-occupancy-panel", FpbOccupancyPanel);
+}

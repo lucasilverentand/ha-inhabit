@@ -18,6 +18,7 @@ import {
   gridSize,
   layers,
   lightPlacements,
+  mmwaveCalibrationTarget,
   mmwavePlacements,
   occupancyPanelTarget,
   otherPlacements,
@@ -39,20 +40,30 @@ import type {
   HassEntity,
   HomeAssistant,
   LightPlacement,
+  MmwavePlacement,
   Node,
   OtherPlacement,
   Room,
   SelectionState,
   SimulatedTarget,
   SwitchPlacement,
+  ToolType,
   ViewBox,
   WallDirection,
   Zone,
 } from "../../types";
 import {
+  type DeviceIssue,
+  getMmwavePlacementIssues,
+  getNormalDeviceIssues,
+  summarizeIssues,
+} from "../../utils/device-issues";
+import {
   arePointsCollinear,
   snapToGrid as snapPoint,
 } from "../../utils/geometry";
+import { getCanvasModePolicy, shouldShowLayer } from "../../utils/map-modes";
+import { filterJitter, rawTargetToWorld } from "../../utils/mmwave-calibration";
 import {
   buildNodeMap,
   edgesAtNode,
@@ -241,6 +252,9 @@ export class FpbCanvas extends LitElement {
 
   @state()
   private _editingDirection: WallDirection = "free";
+
+  @state()
+  private _editingEdgeType: "door" | "window" = "door";
 
   @state()
   private _editingOpeningParts: "single" | "double" = "single";
@@ -655,6 +669,24 @@ export class FpbCanvas extends LitElement {
       pointer-events: none;
     }
 
+    .device-issue-badge {
+      pointer-events: none;
+    }
+
+    .device-issue-badge circle {
+      fill: #ffb300;
+      stroke: var(--card-background-color, #fff);
+      stroke-width: 1.5;
+    }
+
+    .device-issue-badge text {
+      fill: #2c1d00;
+      font-size: 10px;
+      font-weight: 800;
+      text-anchor: middle;
+      dominant-baseline: central;
+    }
+
     svg.mode-placement .device-marker,
     svg.mode-viewing .device-marker {
       pointer-events: auto;
@@ -1048,6 +1080,90 @@ export class FpbCanvas extends LitElement {
       flex-wrap: wrap;
     }
 
+    @media (max-width: 900px), (hover: none) and (pointer: coarse) {
+      .wall-editor {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        width: auto;
+        max-height: min(76vh, 620px);
+        padding: 14px 14px calc(14px + env(safe-area-inset-bottom));
+        border-radius: 20px 20px 0 0;
+        gap: 10px;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.22);
+        z-index: 320;
+      }
+
+      .wall-editor::before {
+        content: "";
+        width: 38px;
+        height: 4px;
+        flex: 0 0 auto;
+        align-self: center;
+        border-radius: 999px;
+        background: var(--divider-color, rgba(0, 0, 0, 0.18));
+        margin-top: -4px;
+      }
+
+      .wall-editor-header {
+        position: sticky;
+        top: -14px;
+        z-index: 2;
+        margin: -14px -14px 0;
+        padding: 14px 14px 10px;
+        background: var(--card-background-color, white);
+      }
+
+      .wall-editor-title {
+        font-size: 14px;
+      }
+
+      .wall-editor-close {
+        min-width: 44px;
+        min-height: 44px;
+        margin: -8px -8px -8px 0;
+      }
+
+      .wall-editor-section {
+        gap: 6px;
+      }
+
+      .wall-editor-row {
+        gap: 6px;
+      }
+
+      .wall-editor input,
+      .wall-editor-select {
+        min-height: 44px;
+        font-size: 16px;
+        box-sizing: border-box;
+      }
+
+      .wall-editor .constraint-btn {
+        min-height: 40px;
+      }
+
+      .wall-editor-actions {
+        position: sticky;
+        bottom: calc(-14px - env(safe-area-inset-bottom));
+        z-index: 2;
+        margin: 0 -14px calc(-14px - env(safe-area-inset-bottom));
+        padding: 10px 14px calc(14px + env(safe-area-inset-bottom));
+        background: var(--card-background-color, white);
+      }
+
+      .wall-editor-actions button {
+        min-height: 44px;
+      }
+
+      .wall-editor-colors {
+        gap: 8px;
+      }
+    }
+
     .color-swatch {
       width: 28px;
       height: 28px;
@@ -1064,6 +1180,13 @@ export class FpbCanvas extends LitElement {
 
     .color-swatch.active {
       border-color: var(--primary-color, #2196f3);
+    }
+
+    @media (max-width: 900px), (hover: none) and (pointer: coarse) {
+      .color-swatch {
+        width: 34px;
+        height: 34px;
+      }
     }
 
     .room-bg-upload {
@@ -1542,6 +1665,19 @@ export class FpbCanvas extends LitElement {
         }
       }),
       effect(() => {
+        const tool = activeTool.value;
+        if (tool !== "wall") {
+          this._wallStartPoint = null;
+        }
+        if (!this._isOpeningTool(tool)) {
+          this._openingPreview = null;
+        }
+      }),
+      effect(() => {
+        void mmwaveCalibrationTarget.value;
+        this.requestUpdate();
+      }),
+      effect(() => {
         const roomId = focusedRoomId.value;
         const prev = this._focusedRoomId;
         this._focusedRoomId = roomId;
@@ -1682,6 +1818,23 @@ export class FpbCanvas extends LitElement {
     }
 
     const point = this._screenToSvg({ x: e.clientX, y: e.clientY });
+    const calibrationTarget = mmwaveCalibrationTarget.value;
+    if (calibrationTarget) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (calibrationTarget.sampling) return;
+      window.dispatchEvent(
+        new CustomEvent("inhabit-mmwave-calibration-point", {
+          detail: {
+            placementId: calibrationTarget.placementId,
+            targetIndex: calibrationTarget.targetIndex,
+            point,
+          },
+        }),
+      );
+      return;
+    }
+
     const tool = activeTool.value;
     const snappedPoint = this._getSnappedPoint(
       point,
@@ -1882,6 +2035,7 @@ export class FpbCanvas extends LitElement {
             }
           }
         } else if (
+          mode === "placement" &&
           (selection.value.type === "light" ||
             selection.value.type === "switch" ||
             selection.value.type === "button" ||
@@ -1926,7 +2080,7 @@ export class FpbCanvas extends LitElement {
             this._svg?.setPointerCapture(e.pointerId);
           }
         }
-      } else if (tool === "wall") {
+      } else if (tool === "wall" && mode === "walls") {
         this._edgeEditor = null;
         this._multiEdgeEditor = null;
         this._roomEditor = null;
@@ -1935,26 +2089,27 @@ export class FpbCanvas extends LitElement {
           this._wallStartPoint && e.shiftKey ? this._cursorPos : snappedPoint;
         this._handleWallClick(wallPoint, e.shiftKey);
       } else if (
-        tool === "light" ||
-        tool === "switch" ||
-        tool === "button" ||
-        tool === "other"
+        mode === "placement" &&
+        (tool === "light" ||
+          tool === "switch" ||
+          tool === "button" ||
+          tool === "other")
       ) {
         this._edgeEditor = null;
         this._multiEdgeEditor = null;
         this._handleDeviceClick(snappedPoint);
-      } else if (tool === "mmwave") {
+      } else if (tool === "mmwave" && mode === "placement") {
         this._edgeEditor = null;
         this._multiEdgeEditor = null;
         this._placeMmwave(snappedPoint);
-      } else if (tool === "door" || tool === "window") {
+      } else if (mode === "openings" && this._isOpeningTool(tool)) {
         if (this._openingPreview) {
           this._edgeEditor = null;
           this._multiEdgeEditor = null;
           this._roomEditor = null;
-          this._placeOpening(tool);
+          this._placeOpening();
         }
-      } else if (tool === "zone") {
+      } else if (tool === "zone" && mode === "furniture") {
         this._edgeEditor = null;
         this._multiEdgeEditor = null;
         this._roomEditor = null;
@@ -1979,7 +2134,11 @@ export class FpbCanvas extends LitElement {
     this._showEntityPickerModal = true;
   }
 
-  private async _placeOpening(tool: "door" | "window"): Promise<void> {
+  private _isOpeningTool(tool: ToolType): boolean {
+    return tool === "opening" || tool === "door" || tool === "window";
+  }
+
+  private async _placeOpening(): Promise<void> {
     if (!this.hass || !this._openingPreview) return;
 
     const floor = currentFloor.value;
@@ -1991,8 +2150,8 @@ export class FpbCanvas extends LitElement {
     const fId = floor.id;
     const { edgeId, t, startPos, endPos, thickness, position } =
       this._openingPreview;
-    const openingWidth = tool === "door" ? 80 : 100;
-    const newType = tool;
+    const openingWidth = 80;
+    const newType = "door";
 
     // Capture values for undo/redo closures (openingPreview will change)
     const savedStartPos = { ...startPos };
@@ -2011,13 +2170,9 @@ export class FpbCanvas extends LitElement {
         position: t,
         new_type: newType,
         width: openingWidth,
-        ...(tool === "door"
-          ? {
-              opening_parts: "single",
-              opening_type: "swing",
-              swing_direction: "left",
-            }
-          : { opening_parts: "single", opening_type: "swing" }),
+        opening_parts: "single",
+        opening_type: "swing",
+        swing_direction: "left",
       });
 
       await reloadFloorData();
@@ -2027,7 +2182,7 @@ export class FpbCanvas extends LitElement {
 
       pushAction({
         type: "opening_place",
-        description: `Place ${tool}`,
+        description: "Place opening",
         undo: async () => {
           for (const eid of allEdgeIds) {
             try {
@@ -2077,13 +2232,9 @@ export class FpbCanvas extends LitElement {
               position: t,
               new_type: newType,
               width: openingWidth,
-              ...(tool === "door"
-                ? {
-                    opening_parts: "single",
-                    opening_type: "swing",
-                    swing_direction: "left",
-                  }
-                : { opening_parts: "single", opening_type: "swing" }),
+              opening_parts: "single",
+              opening_type: "swing",
+              swing_direction: "left",
             });
           }
           await reloadFloorData();
@@ -2417,8 +2568,10 @@ export class FpbCanvas extends LitElement {
     }
 
     // Opening tool: snap ghost preview to nearest wall edge
-    if (tool === "door" || tool === "window") {
+    if (this._canvasMode === "openings" && this._isOpeningTool(tool)) {
       this._updateOpeningPreview(point);
+    } else {
+      this._openingPreview = null;
     }
   }
 
@@ -2918,6 +3071,8 @@ export class FpbCanvas extends LitElement {
     const directionChanged = this._editingDirection !== edge.direction;
     const lengthLockChanged = this._editingLengthLocked !== edge.length_locked;
     const isEdgeOpening = edge.type === "door" || edge.type === "window";
+    const edgeTypeChanged =
+      isEdgeOpening && this._editingEdgeType !== edge.type;
     const partsChanged =
       isEdgeOpening &&
       this._editingOpeningParts !== (edge.opening_parts ?? "single");
@@ -2933,6 +3088,7 @@ export class FpbCanvas extends LitElement {
     const anyEdgePropChanged =
       directionChanged ||
       lengthLockChanged ||
+      edgeTypeChanged ||
       partsChanged ||
       openingTypeChanged ||
       swingChanged ||
@@ -2984,6 +3140,7 @@ export class FpbCanvas extends LitElement {
         if (directionChanged) edgeUpdate.direction = this._editingDirection;
         if (lengthLockChanged)
           edgeUpdate.length_locked = this._editingLengthLocked;
+        if (edgeTypeChanged) edgeUpdate.edge_type = this._editingEdgeType;
         if (partsChanged) edgeUpdate.opening_parts = this._editingOpeningParts;
         if (openingTypeChanged)
           edgeUpdate.opening_type = this._editingOpeningType;
@@ -3468,15 +3625,120 @@ export class FpbCanvas extends LitElement {
     };
   }
 
+  private _getOccupancyHits(
+    point: Coordinates,
+    floor: Floor,
+  ): Array<
+    | { type: "mmwave"; id: string; placement: MmwavePlacement }
+    | { type: "zone"; id: string; zone: Zone }
+    | { type: "room"; id: string; room: Room }
+  > {
+    const hits: Array<
+      | { type: "mmwave"; id: string; placement: MmwavePlacement }
+      | { type: "zone"; id: string; zone: Zone }
+      | { type: "room"; id: string; room: Room }
+    > = [];
+
+    for (const placement of mmwavePlacements.value.filter(
+      (p) => p.floor_id === floor.id,
+    )) {
+      const dist = Math.hypot(
+        point.x - placement.position.x,
+        point.y - placement.position.y,
+      );
+      if (dist < 18) {
+        hits.push({ type: "mmwave", id: placement.id, placement });
+      }
+    }
+
+    for (const zone of floor.zones ?? []) {
+      if (
+        zone.polygon?.vertices &&
+        this._pointInPolygon(point, zone.polygon.vertices)
+      ) {
+        hits.push({ type: "zone", id: zone.id, zone });
+      }
+    }
+
+    for (const room of floor.rooms) {
+      if (this._pointInPolygon(point, room.polygon.vertices)) {
+        hits.push({ type: "room", id: room.id, room });
+      }
+    }
+
+    return hits;
+  }
+
+  private _selectOccupancyHit(point: Coordinates, floor: Floor): boolean {
+    const hits = this._getOccupancyHits(point, floor);
+    if (hits.length === 0) return false;
+
+    const currentKey = devicePanelTarget.value
+      ? `${devicePanelTarget.value.type}:${devicePanelTarget.value.id}`
+      : occupancyPanelTarget.value
+        ? `${occupancyPanelTarget.value.type}:${occupancyPanelTarget.value.id}`
+        : null;
+    const currentIndex = currentKey
+      ? hits.findIndex((hit) => `${hit.type}:${hit.id}` === currentKey)
+      : -1;
+    const nextHit = hits[(currentIndex + 1) % hits.length];
+
+    if (nextHit.type === "mmwave") {
+      selection.value = { type: "mmwave", ids: [nextHit.id] };
+      occupancyPanelTarget.value = null;
+      focusedRoomId.value = null;
+      devicePanelTarget.value = { id: nextHit.id, type: "mmwave" };
+      return true;
+    }
+
+    devicePanelTarget.value = null;
+    selection.value = { type: nextHit.type, ids: [nextHit.id] };
+    if (nextHit.type === "zone") {
+      const zone = nextHit.zone;
+      const areaName = zone.ha_area_id
+        ? (this._haAreas.find((a) => a.area_id === zone.ha_area_id)?.name ??
+          zone.name)
+        : zone.name;
+      occupancyPanelTarget.value = {
+        id: zone.id,
+        name: areaName,
+        type: "zone",
+      };
+      focusedRoomId.value = zone.id;
+      return true;
+    }
+
+    const room = nextHit.room;
+    const areaName = room.ha_area_id
+      ? (this._haAreas.find((a) => a.area_id === room.ha_area_id)?.name ??
+        room.name)
+      : room.name;
+    occupancyPanelTarget.value = {
+      id: room.id,
+      name: areaName,
+      type: "room",
+    };
+    focusedRoomId.value = room.id;
+    return true;
+  }
+
   private _handleSelectClick(point: Coordinates, shiftKey = false): boolean {
     const floor = currentFloor.value;
     if (!floor) return false;
     const mode = this._canvasMode;
 
-    // Check edges first (they're on top visually) — walls mode only
-    if (mode === "walls") {
+    if (mode === "occupancy") {
+      const hit = this._selectOccupancyHit(point, floor);
+      if (hit) return true;
+    }
+
+    // Check edges first (they're on top visually) — only in the owning layer
+    if (mode === "walls" || mode === "openings") {
       const resolved = resolveFloorEdges(floor);
       for (const re of resolved) {
+        const edgeAllowed =
+          mode === "walls" ? re.type === "wall" : re.type !== "wall";
+        if (!edgeAllowed) continue;
         const dist = this._pointToSegmentDistance(
           point,
           re.startPos,
@@ -3484,7 +3746,7 @@ export class FpbCanvas extends LitElement {
         );
         if (dist < re.thickness / 2 + 5) {
           // Shift-click multi-select in walls mode
-          if (shiftKey && selection.value.type === "edge") {
+          if (mode === "walls" && shiftKey && selection.value.type === "edge") {
             const currentIds = [...selection.value.ids];
             const idx = currentIds.indexOf(re.id);
             if (idx >= 0) {
@@ -3584,9 +3846,7 @@ export class FpbCanvas extends LitElement {
         );
         if (dist < 15) {
           selection.value = { type: "mmwave", ids: [mw.id] };
-          if (mode === "placement") {
-            devicePanelTarget.value = { id: mw.id, type: "mmwave" };
-          }
+          devicePanelTarget.value = null;
           return true;
         }
       }
@@ -3691,6 +3951,7 @@ export class FpbCanvas extends LitElement {
           this._editingLength = Math.round(currentLength).toString();
           this._editingLengthLocked = edge.length_locked;
           this._editingDirection = edge.direction;
+          this._editingEdgeType = edge.type === "window" ? "window" : "door";
           this._editingOpeningParts = edge.opening_parts ?? "single";
           this._editingOpeningType = edge.opening_type ?? "swing";
           this._editingSwingDirection = edge.swing_direction ?? "left";
@@ -5782,6 +6043,11 @@ export class FpbCanvas extends LitElement {
 
     const sel = selection.value;
     const layerConfig = layers.value;
+    const calibrationTarget = mmwaveCalibrationTarget.value;
+    const modePolicy = getCanvasModePolicy(
+      this._canvasMode,
+      calibrationTarget !== null,
+    );
     const frid = this._focusedRoomId;
     const focusedEdgeIds = frid ? this._getRoomEdgeIds(frid, floor) : null;
     const backgroundLayer = layerConfig.find((l) => l.id === "background");
@@ -5789,28 +6055,35 @@ export class FpbCanvas extends LitElement {
     const furnitureLayer = layerConfig.find((l) => l.id === "furniture");
     const labelsLayer = layerConfig.find((l) => l.id === "labels");
     const showZonesAboveWalls =
-      this._canvasMode === "furniture" &&
+      modePolicy.showZoneEditing &&
       (activeTool.value === "zone" || !!this._zoneEditor);
-    const furnitureBlock = furnitureLayer?.visible
-      ? svg`
+    const furnitureBlock =
+      furnitureLayer?.visible && shouldShowLayer(this._canvasMode, "furniture")
+        ? svg`
       <g class="furniture-layer-container" opacity="${furnitureLayer.opacity ?? 1}">
         ${this._renderFurnitureLayer()}
       </g>
     `
-      : null;
-    const wallsBlock = structureLayer?.visible
-      ? svg`
+        : null;
+    const wallsBlock =
+      structureLayer?.visible && shouldShowLayer(this._canvasMode, "structure")
+        ? svg`
       <g class="structure-layer" opacity="${structureLayer.opacity ?? 1}">
         <!-- Edges (rendered as chains for proper corners) -->
         ${this._renderEdgeChains(floor, sel, focusedEdgeIds)}
       </g>
     `
-      : null;
+        : null;
 
     return svg`
       <!-- Background layer -->
       ${
         backgroundLayer?.visible &&
+        shouldShowLayer(
+          this._canvasMode,
+          "background",
+          calibrationTarget !== null,
+        ) &&
         floor.background_image &&
         floor.rooms.length > 0
           ? svg`
@@ -5832,7 +6105,12 @@ export class FpbCanvas extends LitElement {
 
       <!-- Structure layer (rooms) -->
       ${
-        structureLayer?.visible
+        structureLayer?.visible &&
+        shouldShowLayer(
+          this._canvasMode,
+          "structure",
+          calibrationTarget !== null,
+        )
           ? svg`
         <g class="structure-layer" opacity="${structureLayer.opacity ?? 1}">
           <!-- Rooms -->
@@ -5940,7 +6218,8 @@ export class FpbCanvas extends LitElement {
 
       <!-- Labels layer (hidden in viewing mode) -->
       ${
-        labelsLayer?.visible && this._canvasMode !== "viewing"
+        labelsLayer?.visible &&
+        shouldShowLayer(this._canvasMode, "labels", calibrationTarget !== null)
           ? svg`
         <g class="labels-layer" opacity="${labelsLayer.opacity ?? 1}">
           ${floor.rooms.map((room) => {
@@ -6012,50 +6291,74 @@ export class FpbCanvas extends LitElement {
   private _renderDeviceLayer(floor: Floor) {
     const layerConfig = layers.value;
     const frid = this._focusedRoomId;
+    const calibrationTarget = mmwaveCalibrationTarget.value;
+    const modePolicy = getCanvasModePolicy(
+      this._canvasMode,
+      calibrationTarget !== null,
+    );
 
-    if (!layerConfig.find((l) => l.id === "devices")?.visible) {
+    if (
+      !layerConfig.find((l) => l.id === "devices")?.visible ||
+      !shouldShowLayer(this._canvasMode, "devices", calibrationTarget !== null)
+    ) {
       return null;
     }
 
     return svg`
       <g class="devices-layer" opacity="${layerConfig.find((l) => l.id === "devices")?.opacity ?? 1}">
-        ${lightPlacements.value
-          .filter((d) => d.floor_id === floor.id)
-          .map(
-            (light) => svg`
+        ${
+          calibrationTarget || !modePolicy.showNormalDevices
+            ? null
+            : lightPlacements.value
+                .filter((d) => d.floor_id === floor.id)
+                .map(
+                  (light) => svg`
             <g class="${frid ? (this._isDeviceInFocusedRegion(light.room_id, light.position, frid, floor) ? "device-focused" : "device-dimmed") : ""}">
               ${this._renderLight(light)}
             </g>
           `,
-          )}
-        ${switchPlacements.value
-          .filter((d) => d.floor_id === floor.id)
-          .map(
-            (sw) => svg`
+                )
+        }
+        ${
+          calibrationTarget || !modePolicy.showNormalDevices
+            ? null
+            : switchPlacements.value
+                .filter((d) => d.floor_id === floor.id)
+                .map(
+                  (sw) => svg`
             <g class="${frid ? (this._isDeviceInFocusedRegion(sw.room_id, sw.position, frid, floor) ? "device-focused" : "device-dimmed") : ""}">
               ${this._renderSwitch(sw)}
             </g>
           `,
-          )}
-        ${buttonPlacements.value
-          .filter((d) => d.floor_id === floor.id)
-          .map(
-            (btn) => svg`
+                )
+        }
+        ${
+          calibrationTarget || !modePolicy.showNormalDevices
+            ? null
+            : buttonPlacements.value
+                .filter((d) => d.floor_id === floor.id)
+                .map(
+                  (btn) => svg`
             <g class="${frid ? (this._isDeviceInFocusedRegion(btn.room_id, btn.position, frid, floor) ? "device-focused" : "device-dimmed") : ""}">
               ${this._renderButton(btn)}
             </g>
           `,
-          )}
-        ${otherPlacements.value
-          .filter((d) => d.floor_id === floor.id)
-          .map(
-            (other) => svg`
+                )
+        }
+        ${
+          calibrationTarget || !modePolicy.showNormalDevices
+            ? null
+            : otherPlacements.value
+                .filter((d) => d.floor_id === floor.id)
+                .map(
+                  (other) => svg`
             <g class="${frid ? (this._isDeviceInFocusedRegion(other.room_id, other.position, frid, floor) ? "device-focused" : "device-dimmed") : ""}">
               ${this._renderOther(other)}
             </g>
           `,
-          )}
-        ${this._renderMmwaveLayer(floor)}
+                )
+        }
+        ${modePolicy.showMmwave ? this._renderMmwaveLayer(floor) : null}
       </g>
     `;
   }
@@ -6070,6 +6373,7 @@ export class FpbCanvas extends LitElement {
     bgOnColor: string,
     iconColor: string,
     iconData?: IconData,
+    issues: DeviceIssue[] = [],
   ) {
     const sel = selection.value;
     const viewing = this._canvasMode === "viewing";
@@ -6096,6 +6400,19 @@ export class FpbCanvas extends LitElement {
             : null
         }
         ${!viewing ? svg`<text y="${r + 12}" text-anchor="middle" font-size="10" fill="#333">${label}</text>` : null}
+        ${this._renderDeviceIssueBadge(r * 0.72, -r * 0.72, issues)}
+      </g>
+    `;
+  }
+
+  private _renderDeviceIssueBadge(x: number, y: number, issues: DeviceIssue[]) {
+    if (issues.length === 0) return null;
+    const summary = summarizeIssues(issues);
+    return svg`
+      <g class="device-issue-badge" transform="translate(${x}, ${y})">
+        <title>${summary}</title>
+        <circle cx="0" cy="0" r="7"/>
+        <text x="0" y="0">!</text>
       </g>
     `;
   }
@@ -6107,6 +6424,7 @@ export class FpbCanvas extends LitElement {
       state?.attributes.friendly_name ||
       light.entity_id) as string;
     const iconData = this._getEntityIconData(state, "mdi:lightbulb");
+    const issues = getNormalDeviceIssues(light, this.hass?.states ?? {});
     const rgb = state?.attributes?.rgb_color as
       | [number, number, number]
       | undefined;
@@ -6121,6 +6439,7 @@ export class FpbCanvas extends LitElement {
       lightColor,
       isOn ? "#333" : "#616161",
       iconData,
+      issues,
     );
   }
 
@@ -6131,6 +6450,7 @@ export class FpbCanvas extends LitElement {
       state?.attributes.friendly_name ||
       sw.entity_id) as string;
     const iconData = this._getEntityIconData(state, "mdi:toggle-switch");
+    const issues = getNormalDeviceIssues(sw, this.hass?.states ?? {});
     return this._renderDeviceIcon(
       sw.position.x,
       sw.position.y,
@@ -6141,6 +6461,7 @@ export class FpbCanvas extends LitElement {
       "#4caf50",
       isOn ? "#fff" : "#616161",
       iconData,
+      issues,
     );
   }
 
@@ -6151,6 +6472,7 @@ export class FpbCanvas extends LitElement {
       state?.attributes.friendly_name ||
       btn.entity_id) as string;
     const iconData = this._getEntityIconData(state, "mdi:gesture-tap-button");
+    const issues = getNormalDeviceIssues(btn, this.hass?.states ?? {});
     return this._renderDeviceIcon(
       btn.position.x,
       btn.position.y,
@@ -6161,6 +6483,7 @@ export class FpbCanvas extends LitElement {
       "#2196f3",
       "#616161",
       iconData,
+      issues,
     );
   }
 
@@ -6171,6 +6494,7 @@ export class FpbCanvas extends LitElement {
       state?.attributes.friendly_name ||
       other.entity_id) as string;
     const iconData = this._getEntityIconData(state, "mdi:devices");
+    const issues = getNormalDeviceIssues(other, this.hass?.states ?? {});
     return this._renderDeviceIcon(
       other.position.x,
       other.position.y,
@@ -6181,18 +6505,27 @@ export class FpbCanvas extends LitElement {
       "#9c27b0",
       isOn ? "#fff" : "#616161",
       iconData,
+      issues,
     );
   }
 
   private _renderMmwaveLayer(floor: Floor) {
+    const calibrationTarget = mmwaveCalibrationTarget.value;
+    const modePolicy = getCanvasModePolicy(
+      this._canvasMode,
+      calibrationTarget !== null,
+    );
     const placements = mmwavePlacements.value.filter(
-      (p) => p.floor_id === floor.id,
+      (p) =>
+        p.floor_id === floor.id &&
+        (!calibrationTarget || p.id === calibrationTarget.placementId),
     );
     if (placements.length === 0) return null;
 
     const isViewing = this._canvasMode === "viewing";
     const sel = selection.value;
-    const showCoverage = !isViewing;
+    const showCoverage =
+      modePolicy.showMmwaveCoverage && !isViewing && !calibrationTarget;
 
     // Scale-independent sizes for target dots
     const vb = this._viewBox;
@@ -6227,18 +6560,24 @@ export class FpbCanvas extends LitElement {
     return svg`
       <g class="mmwave-layer">
         <!-- Occupied room overlays -->
-        ${floor.rooms
-          .filter(
-            (r) => occupiedRoomIds.has(r.id) && r.polygon?.vertices?.length,
-          )
-          .map(
-            (r) => svg`
+        ${
+          calibrationTarget
+            ? null
+            : floor.rooms
+                .filter(
+                  (r) =>
+                    occupiedRoomIds.has(r.id) && r.polygon?.vertices?.length,
+                )
+                .map(
+                  (r) => svg`
             <path d="${polygonToPath(r.polygon)}"
                   fill="rgba(255, 255, 255, 0.05)" stroke="none"
                   class="mmwave-occupied-room"/>
           `,
-          )}
+                )
+        }
         ${placements.map((p) => {
+          const issues = getMmwavePlacementIssues(p, this.hass?.states ?? {});
           const isSelected = sel.type === "mmwave" && sel.ids.includes(p.id);
           const halfFov = p.field_of_view / 2;
           const range = p.detection_range;
@@ -6290,9 +6629,7 @@ export class FpbCanvas extends LitElement {
 
           // Update target goal positions from entity state
           const activeKeys = new Set<string>();
-          const rad = (p.angle * Math.PI) / 180;
-          const cosA = Math.cos(rad);
-          const sinA = Math.sin(rad);
+          const floorPlanUnit = currentFloorPlan.value?.unit ?? "cm";
 
           for (let idx = 0; idx < (p.targets ?? []).length; idx++) {
             const t = p.targets[idx];
@@ -6308,28 +6645,29 @@ export class FpbCanvas extends LitElement {
               (rawX === 0 && rawY === 0)
             )
               continue;
-            // Convert mm (sensor unit) to cm (floor plan unit)
-            const localX = rawX / 10;
-            const localY = rawY / 10;
-            // Transform from sensor-local coords to world coords
-            // localY = forward (along facing direction), localX = lateral (perpendicular)
-            const wx = px + localY * cosA - localX * sinA;
-            const wy = py + localY * sinA + localX * cosA;
 
             const key = `${p.id}-${idx}`;
             activeKeys.add(key);
             const existing = this._mmwaveTargetPositions.get(key);
+            const world = rawTargetToWorld(p, rawX, rawY, floorPlanUnit);
+            const filtered = filterJitter(
+              p,
+              existing
+                ? { x: existing.targetX, y: existing.targetY }
+                : undefined,
+              world,
+            );
             if (existing) {
-              existing.targetX = wx;
-              existing.targetY = wy;
+              existing.targetX = filtered.x;
+              existing.targetY = filtered.y;
               existing.arrived = false;
             } else {
               // New target — start at goal position
               this._mmwaveTargetPositions.set(key, {
-                displayX: wx,
-                displayY: wy,
-                targetX: wx,
-                targetY: wy,
+                displayX: filtered.x,
+                displayY: filtered.y,
+                targetX: filtered.x,
+                targetY: filtered.y,
                 arrived: true,
                 isNew: true,
               });
@@ -6389,6 +6727,78 @@ export class FpbCanvas extends LitElement {
               </g>
             `;
           });
+
+          const calibrationPointDots =
+            calibrationTarget?.placementId === p.id
+              ? (() => {
+                  const activePoint = calibrationTarget.activePoint;
+                  const savedPoints = (calibrationTarget.points ?? []).filter(
+                    (point) =>
+                      !activePoint ||
+                      Math.abs(point.x - activePoint.x) > 0.001 ||
+                      Math.abs(point.y - activePoint.y) > 0.001,
+                  );
+                  const savedMarkers = savedPoints.map(
+                    (point, idx) => svg`
+                      <g class="mmwave-calibration-point" transform="translate(${point.x}, ${point.y})">
+                        <circle cx="0" cy="0" r="${targetR * 1.15}"
+                          fill="#00bcd4" stroke="#fff" stroke-width="${scale * 0.1}" opacity="0.95"/>
+                        <rect x="${-scale * 0.52}" y="${-targetR - scale * 0.92}"
+                          width="${scale * 1.04}" height="${scale * 0.44}" rx="${scale * 0.18}"
+                          fill="var(--card-background-color, #fff)" stroke="#00acc1"
+                          stroke-width="${scale * 0.04}" opacity="0.94"/>
+                        <text x="0" y="${-targetR - scale * 0.6}" text-anchor="middle"
+                          font-size="${targetFontSize * 0.78}" fill="#00acc1" font-weight="700">P${idx + 1}</text>
+                      </g>
+                    `,
+                  );
+                  if (!activePoint) return savedMarkers;
+
+                  const progress = Math.max(
+                    0,
+                    Math.min(1, calibrationTarget.sampleProgress ?? 0),
+                  );
+                  const sampleCount = calibrationTarget.sampleCount ?? 0;
+                  const sampleGoal = calibrationTarget.sampleGoal ?? 25;
+                  const activeR = targetR * 1.55;
+                  const circumference = 2 * Math.PI * activeR;
+                  const dash = circumference * progress;
+                  const status = calibrationTarget.status ?? "Sampling";
+                  const statusLabel =
+                    status === "Captured"
+                      ? "Captured"
+                      : status === "Needs 10 samples"
+                        ? `${sampleCount}/${sampleGoal}`
+                        : `${sampleCount}/${sampleGoal}`;
+                  const statusFill =
+                    status === "Needs 10 samples" ? "#f44336" : "#00acc1";
+
+                  return [
+                    ...savedMarkers,
+                    svg`
+                      <g class="mmwave-calibration-point active" transform="translate(${activePoint.x}, ${activePoint.y})">
+                        <circle cx="0" cy="0" r="${activeR}"
+                          fill="rgba(0, 188, 212, 0.14)" stroke="rgba(255,255,255,0.9)"
+                          stroke-width="${scale * 0.08}"/>
+                        <circle cx="0" cy="0" r="${activeR}"
+                          fill="none" stroke="#00bcd4" stroke-width="${scale * 0.16}"
+                          stroke-linecap="round" stroke-dasharray="${dash} ${circumference}"
+                          transform="rotate(-90)"/>
+                        <circle cx="0" cy="0" r="${targetR * 1.05}"
+                          fill="${statusFill}" stroke="#fff" stroke-width="${scale * 0.1}" opacity="0.98"/>
+                        <rect x="${-scale * 0.95}" y="${-activeR - scale * 0.82}"
+                          width="${scale * 1.9}" height="${scale * 0.5}" rx="${scale * 0.2}"
+                          fill="var(--card-background-color, #fff)" stroke="${statusFill}"
+                          stroke-width="${scale * 0.04}" opacity="0.96"/>
+                        <text x="0" y="${-activeR - scale * 0.46}" text-anchor="middle"
+                          font-size="${targetFontSize * 0.76}" fill="${statusFill}" font-weight="800">${statusLabel}</text>
+                        <text x="0" y="${activeR + scale * 0.55}" text-anchor="middle"
+                          font-size="${targetFontSize * 0.72}" fill="${statusFill}" font-weight="700">${status}</text>
+                      </g>
+                    `,
+                  ];
+                })()
+              : null;
 
           // Render fading-out targets for this placement
           const fadingDots = this._mmwaveFadingTargets
@@ -6455,10 +6865,23 @@ export class FpbCanvas extends LitElement {
                   fill="#2196f3" stroke="#fff" stroke-width="2"/>
                 <text x="${px}" y="${py + 3}" text-anchor="middle"
                   font-size="8" fill="#fff" font-weight="bold">R</text>
+                ${this._renderDeviceIssueBadge(px + 8, py - 8, issues)}
+              `
+                  : null
+              }
+              ${
+                calibrationTarget
+                  ? svg`
+                <circle cx="${px}" cy="${py}" r="10"
+                  fill="#2196f3" stroke="#fff" stroke-width="2.5"/>
+                <text x="${px}" y="${py + 3}" text-anchor="middle"
+                  font-size="8" fill="#fff" font-weight="bold">R</text>
+                ${this._renderDeviceIssueBadge(px + 9, py - 9, issues)}
               `
                   : null
               }
               ${targetDots}
+              ${calibrationPointDots}
               ${fadingDots}
               ${
                 showCoverage && isSelected
@@ -7430,10 +7853,10 @@ export class FpbCanvas extends LitElement {
     if (!this._openingPreview) return null;
 
     const tool = activeTool.value;
-    if (tool !== "door" && tool !== "window") return null;
+    if (!this._isOpeningTool(tool)) return null;
 
     const { position, startPos, endPos, thickness } = this._openingPreview;
-    const openingWidth = tool === "door" ? 80 : 100;
+    const openingWidth = tool === "window" ? 100 : 80;
 
     // Edge direction vector
     const edx = endPos.x - startPos.x;
@@ -7457,6 +7880,20 @@ export class FpbCanvas extends LitElement {
                       L${cx + ux * halfW - nx * halfT},${cy + uy * halfW - ny * halfT}
                       L${cx - ux * halfW - nx * halfT},${cy - uy * halfW - ny * halfT}
                       Z`;
+    const jambStartX = cx - ux * halfW;
+    const jambStartY = cy - uy * halfW;
+    const jambEndX = cx + ux * halfW;
+    const jambEndY = cy + uy * halfW;
+
+    if (tool === "opening") {
+      return svg`
+        <g class="opening-ghost">
+          <path class="door" d="${rectPath}"/>
+          <line class="door-jamb" x1="${jambStartX - nx * halfT}" y1="${jambStartY - ny * halfT}" x2="${jambStartX + nx * halfT}" y2="${jambStartY + ny * halfT}"/>
+          <line class="door-jamb" x1="${jambEndX - nx * halfT}" y1="${jambEndY - ny * halfT}" x2="${jambEndX + nx * halfT}" y2="${jambEndY + ny * halfT}"/>
+        </g>
+      `;
+    }
 
     if (tool === "window") {
       return svg`
@@ -7571,9 +8008,13 @@ export class FpbCanvas extends LitElement {
     const isDoor = edge.type === "door";
     const isWindow = edge.type === "window";
     const isOpening = isDoor || isWindow;
-    const title = isDoor
+    const editingIsDoor = isOpening ? this._editingEdgeType === "door" : isDoor;
+    const editingIsWindow = isOpening
+      ? this._editingEdgeType === "window"
+      : isWindow;
+    const title = editingIsDoor
       ? "Door Properties"
-      : isWindow
+      : editingIsWindow
         ? "Window Properties"
         : "Wall Properties";
 
@@ -7645,6 +8086,33 @@ export class FpbCanvas extends LitElement {
 
         ${
           isOpening
+            ? html`
+          <div class="wall-editor-section">
+            <span class="wall-editor-section-label">Type</span>
+            <div class="wall-editor-constraints">
+              <button
+                class="constraint-btn ${this._editingEdgeType === "door" ? "active" : ""}"
+                @click=${() => {
+                  this._editingEdgeType = "door";
+                  if (this._editingOpeningType === "tilt") {
+                    this._editingOpeningType = "swing";
+                  }
+                }}
+              >Door</button>
+              <button
+                class="constraint-btn ${this._editingEdgeType === "window" ? "active" : ""}"
+                @click=${() => {
+                  this._editingEdgeType = "window";
+                }}
+              >Window</button>
+            </div>
+          </div>
+        `
+            : null
+        }
+
+        ${
+          isOpening
             ? (
                 () => {
                   const floor = currentFloor.value;
@@ -7710,7 +8178,7 @@ export class FpbCanvas extends LitElement {
                   const types: Array<{
                     value: "swing" | "sliding" | "tilt";
                     label: string;
-                  }> = isDoor
+                  }> = editingIsDoor
                     ? [
                         { value: "swing", label: "Swing" },
                         { value: "sliding", label: "Sliding" },
@@ -7754,7 +8222,7 @@ export class FpbCanvas extends LitElement {
             </div>
 
             <div class="wall-editor-section">
-              <span class="wall-editor-section-label">Type</span>
+              <span class="wall-editor-section-label">Mechanism</span>
               <div class="wall-editor-constraints">
                 ${types.map(
                   (t) => html`
@@ -9082,11 +9550,16 @@ export class FpbCanvas extends LitElement {
 
   override render() {
     const mode = this._canvasMode;
+    const calibrationTarget = mmwaveCalibrationTarget.value;
+    const modePolicy = getCanvasModePolicy(mode, calibrationTarget !== null);
+    const showEdgeEditor =
+      modePolicy.showWallEditing || modePolicy.showOpeningEditing;
     const svgClasses = [
       this._isPanning ? "panning" : "",
       this._spaceHeld ? "space-pan" : "",
       activeTool.value === "select" ? "select-tool" : "",
       mode === "viewing" ? "view-mode" : "",
+      calibrationTarget ? "calibration-mode" : "",
       `mode-${mode}`,
     ]
       .filter(Boolean)
@@ -9107,23 +9580,23 @@ export class FpbCanvas extends LitElement {
         tabindex="0"
       >
         ${this._renderFloor()}
-        ${mode === "walls" ? this._renderEdgeAnnotations() : null}
-        ${mode === "walls" ? this._renderAngleConstraints() : null}
-        ${mode === "walls" ? this._renderNodeEndpoints() : null}
-        ${mode === "furniture" && activeTool.value === "zone" ? this._renderNodeGuideDots() : null}
+        ${modePolicy.showWallEditing ? this._renderEdgeAnnotations() : null}
+        ${modePolicy.showWallEditing ? this._renderAngleConstraints() : null}
+        ${modePolicy.showWallEditing ? this._renderNodeEndpoints() : null}
+        ${modePolicy.showZoneEditing && activeTool.value === "zone" ? this._renderNodeGuideDots() : null}
         ${currentFloor.value ? this._renderDeviceLayer(currentFloor.value) : null}
-        ${mode !== "viewing" && mode !== "occupancy" ? this._renderDrawingPreview() : null}
-        ${mode === "furniture" ? this._renderFurnitureDrawingPreview() : null}
-        ${mode === "walls" ? this._renderOpeningPreview() : null}
-        ${mode === "placement" ? this._renderDevicePreview() : null}
+        ${modePolicy.showDrawingPreview ? this._renderDrawingPreview() : null}
+        ${modePolicy.showZoneEditing ? this._renderFurnitureDrawingPreview() : null}
+        ${modePolicy.showOpeningEditing ? this._renderOpeningPreview() : null}
+        ${mode === "placement" && !calibrationTarget ? this._renderDevicePreview() : null}
         ${mode === "occupancy" && simHitboxEnabled.value && currentFloor.value ? this._renderSimulationLayer(currentFloor.value) : null}
       </svg>
-      ${this._renderEdgeEditor()}
-      ${this._renderNodeEditor()}
-      ${this._renderMultiEdgeEditor()}
-      ${this._renderRoomEditor()}
-      ${mode !== "occupancy" ? this._renderZoneEditor() : null}
-      ${mode === "placement" ? this._renderEntityPicker() : null}
+      ${showEdgeEditor ? this._renderEdgeEditor() : null}
+      ${modePolicy.showWallEditing ? this._renderNodeEditor() : null}
+      ${modePolicy.showWallEditing ? this._renderMultiEdgeEditor() : null}
+      ${modePolicy.showWallEditing ? this._renderRoomEditor() : null}
+      ${modePolicy.showZoneEditing ? this._renderZoneEditor() : null}
+      ${mode === "placement" && !calibrationTarget ? this._renderEntityPicker() : null}
     `;
   }
 

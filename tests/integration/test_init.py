@@ -14,6 +14,7 @@ from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.inhabit.const import DOMAIN
+from custom_components.inhabit.frontend_cache import panel_module_url
 
 
 @pytest.fixture
@@ -37,6 +38,23 @@ def mock_frontend_file(tmp_path):
     panel_js = frontend_dir / "panel.js"
     panel_js.write_text("// Mock panel.js")
     return tmp_path
+
+
+def test_panel_module_url_uses_file_mtime(tmp_path):
+    """Test frontend module URL changes when the bundle timestamp changes."""
+    panel_js = tmp_path / "panel.js"
+    panel_js.write_text("// Mock panel.js")
+
+    expected_mtime = int(panel_js.stat().st_mtime)
+
+    assert panel_module_url(str(panel_js)) == f"/inhabit/panel.js?v={expected_mtime}"
+
+
+def test_panel_module_url_falls_back_when_missing(tmp_path):
+    """Test frontend module URL still resolves when the bundle is missing."""
+    missing_panel = tmp_path / "missing-panel.js"
+
+    assert panel_module_url(str(missing_panel)) == "/inhabit/panel.js"
 
 
 class TestIntegrationSetup:

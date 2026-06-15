@@ -41,6 +41,7 @@ export {
   gridSize,
   layers,
   lightPlacements,
+  mmwaveCalibrationTarget,
   mmwavePlacements,
   occupancyPanelTarget,
   otherPlacements,
@@ -67,6 +68,7 @@ import {
   focusedRoomId,
   gridSize,
   lightPlacements,
+  mmwaveCalibrationTarget,
   mmwavePlacements,
   occupancyPanelTarget,
   otherPlacements,
@@ -122,6 +124,9 @@ export class HaFloorplanPanel extends LitElement {
   @state()
   private _editorMode = false;
 
+  @state()
+  private _calibrationCaptureActive = false;
+
   private _cleanupEffects: (() => void)[] = [];
 
   private get _isAdmin(): boolean {
@@ -159,6 +164,7 @@ export class HaFloorplanPanel extends LitElement {
       flex: 1;
       position: relative;
       overflow: hidden;
+      min-height: 0;
     }
 
     .loading,
@@ -268,6 +274,7 @@ export class HaFloorplanPanel extends LitElement {
       display: flex;
       align-items: center;
       gap: 4px;
+      min-height: 32px;
       padding: 4px 12px;
       border: 1px solid var(--divider-color, #e0e0e0);
       border-radius: 18px;
@@ -332,6 +339,7 @@ export class HaFloorplanPanel extends LitElement {
       display: flex;
       align-items: center;
       gap: 4px;
+      min-height: 36px;
       padding: 4px 12px;
       border: 1px solid var(--divider-color, #e0e0e0);
       border-radius: 8px;
@@ -352,9 +360,63 @@ export class HaFloorplanPanel extends LitElement {
       border-color: var(--primary-color, #03a9f4);
     }
 
-    @media (hover: none) and (pointer: coarse) {
+    .calibration-hidden-panel {
+      display: none;
+    }
+
+    @media (max-width: 900px), (hover: none) and (pointer: coarse) {
+      :host {
+        --toolbar-height: 52px;
+      }
+
+      .main-area {
+        position: relative;
+      }
+
+      .container:not(.calibration-capture) .canvas-container {
+        padding-bottom: calc(148px + env(safe-area-inset-bottom));
+        box-sizing: border-box;
+      }
+
+      .viewer-toolbar {
+        height: auto;
+        min-height: 52px;
+        padding: 8px 12px;
+        gap: 8px;
+      }
+
       .edit-toggle {
-        display: none;
+        min-width: 44px;
+        min-height: 44px;
+        justify-content: center;
+        border-radius: 13px;
+      }
+
+      .floor-select {
+        min-height: 40px;
+      }
+
+      .room-chips-bar {
+        padding: 8px 10px;
+      }
+
+      .room-chip {
+        min-height: 40px;
+        border-radius: 20px;
+        padding: 6px 14px;
+      }
+
+      .floating-panel {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        width: auto;
+        max-height: min(76vh, 620px);
+        border-radius: 20px 20px 0 0;
+        box-shadow: 0 -10px 30px rgba(0,0,0,0.22);
+        padding-bottom: env(safe-area-inset-bottom);
+        z-index: 300;
       }
     }
 
@@ -377,6 +439,9 @@ export class HaFloorplanPanel extends LitElement {
       }),
       effect(() => {
         this._devicePanelTarget = devicePanelTarget.value;
+      }),
+      effect(() => {
+        this._calibrationCaptureActive = mmwaveCalibrationTarget.value !== null;
       }),
       effect(() => {
         void currentFloor.value;
@@ -914,23 +979,29 @@ export class HaFloorplanPanel extends LitElement {
 
     if (this._editorMode) {
       return html`
-        <div class="container">
+        <div class="container ${this._calibrationCaptureActive ? "calibration-capture" : ""}">
           <div class="main-area">
-            <fpb-toolbar
-              .hass=${this.hass}
-              .floorPlans=${this._floorPlans}
-              @floor-select=${(e: CustomEvent) =>
-                this._handleFloorSelect(e.detail.id)}
-              @add-floor=${this._addFloor}
-              @delete-floor=${(e: CustomEvent) =>
-                this._deleteFloor(e.detail.id)}
-              @rename-floor=${(e: CustomEvent) =>
-                this._renameFloor(e.detail.id, e.detail.name)}
-              @open-import-export=${this._openImportExport}
-              @exit-editor=${this._toggleEditorMode}
-            ></fpb-toolbar>
+            ${
+              this._calibrationCaptureActive
+                ? null
+                : html`
+              <fpb-toolbar
+                .hass=${this.hass}
+                .floorPlans=${this._floorPlans}
+                @floor-select=${(e: CustomEvent) =>
+                  this._handleFloorSelect(e.detail.id)}
+                @add-floor=${this._addFloor}
+                @delete-floor=${(e: CustomEvent) =>
+                  this._deleteFloor(e.detail.id)}
+                @rename-floor=${(e: CustomEvent) =>
+                  this._renameFloor(e.detail.id, e.detail.name)}
+                @open-import-export=${this._openImportExport}
+                @exit-editor=${this._toggleEditorMode}
+              ></fpb-toolbar>
+            `
+            }
 
-            ${this._renderRoomChips()}
+            ${this._calibrationCaptureActive ? null : this._renderRoomChips()}
 
             <div class="canvas-container">
               <fpb-canvas .hass=${this.hass}></fpb-canvas>
@@ -955,7 +1026,11 @@ export class HaFloorplanPanel extends LitElement {
                 this._devicePanelTarget
                   ? html`
                 <fpb-device-panel
-                  class="floating-panel"
+                  class=${
+                    this._calibrationCaptureActive
+                      ? "calibration-hidden-panel"
+                      : "floating-panel"
+                  }
                   .hass=${this.hass}
                   .placementId=${this._devicePanelTarget.id}
                   .deviceType=${this._devicePanelTarget.type}
