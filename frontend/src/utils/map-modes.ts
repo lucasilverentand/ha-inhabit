@@ -11,6 +11,7 @@ export interface MapModeDefinition {
   showMmwave: boolean;
   showMmwaveCoverage: boolean;
   showWallEditing: boolean;
+  showOpeningEditing: boolean;
   showZoneEditing: boolean;
   showDrawingPreview: boolean;
 }
@@ -27,20 +28,37 @@ export const MAP_MODE_DEFINITIONS: Record<CanvasMode, MapModeDefinition> = {
     showMmwave: true,
     showMmwaveCoverage: false,
     showWallEditing: false,
+    showOpeningEditing: false,
     showZoneEditing: false,
     showDrawingPreview: false,
   },
   walls: {
     mode: "walls",
-    label: "Build",
+    label: "Rooms",
     icon: "mdi:wall",
     accent: "#455a64",
-    tools: ["wall", "door", "window"],
+    tools: ["wall"],
     layers: ["background", "structure", "labels"],
     showNormalDevices: false,
     showMmwave: false,
     showMmwaveCoverage: false,
     showWallEditing: true,
+    showOpeningEditing: false,
+    showZoneEditing: false,
+    showDrawingPreview: true,
+  },
+  openings: {
+    mode: "openings",
+    label: "Openings",
+    icon: "mdi:door-open",
+    accent: "#6d4c41",
+    tools: ["door", "window"],
+    layers: ["background", "structure", "labels"],
+    showNormalDevices: false,
+    showMmwave: false,
+    showMmwaveCoverage: false,
+    showWallEditing: false,
+    showOpeningEditing: true,
     showZoneEditing: false,
     showDrawingPreview: true,
   },
@@ -55,6 +73,7 @@ export const MAP_MODE_DEFINITIONS: Record<CanvasMode, MapModeDefinition> = {
     showMmwave: false,
     showMmwaveCoverage: false,
     showWallEditing: false,
+    showOpeningEditing: false,
     showZoneEditing: true,
     showDrawingPreview: true,
   },
@@ -69,6 +88,7 @@ export const MAP_MODE_DEFINITIONS: Record<CanvasMode, MapModeDefinition> = {
     showMmwave: true,
     showMmwaveCoverage: true,
     showWallEditing: false,
+    showOpeningEditing: false,
     showZoneEditing: false,
     showDrawingPreview: true,
   },
@@ -83,6 +103,7 @@ export const MAP_MODE_DEFINITIONS: Record<CanvasMode, MapModeDefinition> = {
     showMmwave: true,
     showMmwaveCoverage: false,
     showWallEditing: false,
+    showOpeningEditing: false,
     showZoneEditing: false,
     showDrawingPreview: false,
   },
@@ -96,6 +117,7 @@ export function getMapModeDefinitions(): MapModeDefinition[] {
   return [
     MAP_MODE_DEFINITIONS.viewing,
     MAP_MODE_DEFINITIONS.walls,
+    MAP_MODE_DEFINITIONS.openings,
     MAP_MODE_DEFINITIONS.furniture,
     MAP_MODE_DEFINITIONS.placement,
     MAP_MODE_DEFINITIONS.occupancy,
@@ -132,6 +154,7 @@ export function getCanvasModePolicy(
     showMmwave: true,
     showMmwaveCoverage: false,
     showWallEditing: false,
+    showOpeningEditing: false,
     showZoneEditing: false,
     showDrawingPreview: false,
   };

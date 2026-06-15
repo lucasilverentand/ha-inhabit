@@ -201,7 +201,7 @@ export function setCanvasMode(mode: CanvasMode): void {
     simulatedTargets.value = [];
     simHitboxEnabled.value = false;
   }
-  if (mode !== "placement") {
+  if (mode !== "placement" && mode !== "occupancy") {
     devicePanelTarget.value = null;
     mmwaveCalibrationTarget.value = null;
   }

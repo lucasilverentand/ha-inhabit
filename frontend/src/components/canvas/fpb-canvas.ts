@@ -40,6 +40,7 @@ import type {
   HassEntity,
   HomeAssistant,
   LightPlacement,
+  MmwavePlacement,
   Node,
   OtherPlacement,
   Room,
@@ -2021,6 +2022,7 @@ export class FpbCanvas extends LitElement {
             }
           }
         } else if (
+          mode === "placement" &&
           (selection.value.type === "light" ||
             selection.value.type === "switch" ||
             selection.value.type === "button" ||
@@ -2065,7 +2067,7 @@ export class FpbCanvas extends LitElement {
             this._svg?.setPointerCapture(e.pointerId);
           }
         }
-      } else if (tool === "wall") {
+      } else if (tool === "wall" && mode === "walls") {
         this._edgeEditor = null;
         this._multiEdgeEditor = null;
         this._roomEditor = null;
@@ -2074,26 +2076,30 @@ export class FpbCanvas extends LitElement {
           this._wallStartPoint && e.shiftKey ? this._cursorPos : snappedPoint;
         this._handleWallClick(wallPoint, e.shiftKey);
       } else if (
-        tool === "light" ||
-        tool === "switch" ||
-        tool === "button" ||
-        tool === "other"
+        mode === "placement" &&
+        (tool === "light" ||
+          tool === "switch" ||
+          tool === "button" ||
+          tool === "other")
       ) {
         this._edgeEditor = null;
         this._multiEdgeEditor = null;
         this._handleDeviceClick(snappedPoint);
-      } else if (tool === "mmwave") {
+      } else if (tool === "mmwave" && mode === "placement") {
         this._edgeEditor = null;
         this._multiEdgeEditor = null;
         this._placeMmwave(snappedPoint);
-      } else if (tool === "door" || tool === "window") {
+      } else if (
+        mode === "openings" &&
+        (tool === "door" || tool === "window")
+      ) {
         if (this._openingPreview) {
           this._edgeEditor = null;
           this._multiEdgeEditor = null;
           this._roomEditor = null;
           this._placeOpening(tool);
         }
-      } else if (tool === "zone") {
+      } else if (tool === "zone" && mode === "furniture") {
         this._edgeEditor = null;
         this._multiEdgeEditor = null;
         this._roomEditor = null;
@@ -2556,8 +2562,13 @@ export class FpbCanvas extends LitElement {
     }
 
     // Opening tool: snap ghost preview to nearest wall edge
-    if (tool === "door" || tool === "window") {
+    if (
+      this._canvasMode === "openings" &&
+      (tool === "door" || tool === "window")
+    ) {
       this._updateOpeningPreview(point);
+    } else {
+      this._openingPreview = null;
     }
   }
 
@@ -3607,15 +3618,120 @@ export class FpbCanvas extends LitElement {
     };
   }
 
+  private _getOccupancyHits(
+    point: Coordinates,
+    floor: Floor,
+  ): Array<
+    | { type: "mmwave"; id: string; placement: MmwavePlacement }
+    | { type: "zone"; id: string; zone: Zone }
+    | { type: "room"; id: string; room: Room }
+  > {
+    const hits: Array<
+      | { type: "mmwave"; id: string; placement: MmwavePlacement }
+      | { type: "zone"; id: string; zone: Zone }
+      | { type: "room"; id: string; room: Room }
+    > = [];
+
+    for (const placement of mmwavePlacements.value.filter(
+      (p) => p.floor_id === floor.id,
+    )) {
+      const dist = Math.hypot(
+        point.x - placement.position.x,
+        point.y - placement.position.y,
+      );
+      if (dist < 18) {
+        hits.push({ type: "mmwave", id: placement.id, placement });
+      }
+    }
+
+    for (const zone of floor.zones ?? []) {
+      if (
+        zone.polygon?.vertices &&
+        this._pointInPolygon(point, zone.polygon.vertices)
+      ) {
+        hits.push({ type: "zone", id: zone.id, zone });
+      }
+    }
+
+    for (const room of floor.rooms) {
+      if (this._pointInPolygon(point, room.polygon.vertices)) {
+        hits.push({ type: "room", id: room.id, room });
+      }
+    }
+
+    return hits;
+  }
+
+  private _selectOccupancyHit(point: Coordinates, floor: Floor): boolean {
+    const hits = this._getOccupancyHits(point, floor);
+    if (hits.length === 0) return false;
+
+    const currentKey = devicePanelTarget.value
+      ? `${devicePanelTarget.value.type}:${devicePanelTarget.value.id}`
+      : occupancyPanelTarget.value
+        ? `${occupancyPanelTarget.value.type}:${occupancyPanelTarget.value.id}`
+        : null;
+    const currentIndex = currentKey
+      ? hits.findIndex((hit) => `${hit.type}:${hit.id}` === currentKey)
+      : -1;
+    const nextHit = hits[(currentIndex + 1) % hits.length];
+
+    if (nextHit.type === "mmwave") {
+      selection.value = { type: "mmwave", ids: [nextHit.id] };
+      occupancyPanelTarget.value = null;
+      focusedRoomId.value = null;
+      devicePanelTarget.value = { id: nextHit.id, type: "mmwave" };
+      return true;
+    }
+
+    devicePanelTarget.value = null;
+    selection.value = { type: nextHit.type, ids: [nextHit.id] };
+    if (nextHit.type === "zone") {
+      const zone = nextHit.zone;
+      const areaName = zone.ha_area_id
+        ? (this._haAreas.find((a) => a.area_id === zone.ha_area_id)?.name ??
+          zone.name)
+        : zone.name;
+      occupancyPanelTarget.value = {
+        id: zone.id,
+        name: areaName,
+        type: "zone",
+      };
+      focusedRoomId.value = zone.id;
+      return true;
+    }
+
+    const room = nextHit.room;
+    const areaName = room.ha_area_id
+      ? (this._haAreas.find((a) => a.area_id === room.ha_area_id)?.name ??
+        room.name)
+      : room.name;
+    occupancyPanelTarget.value = {
+      id: room.id,
+      name: areaName,
+      type: "room",
+    };
+    focusedRoomId.value = room.id;
+    return true;
+  }
+
   private _handleSelectClick(point: Coordinates, shiftKey = false): boolean {
     const floor = currentFloor.value;
     if (!floor) return false;
     const mode = this._canvasMode;
 
-    // Check edges first (they're on top visually) — walls mode only
-    if (mode === "walls") {
+    if (mode === "occupancy") {
+      const hit = this._selectOccupancyHit(point, floor);
+      if (hit) return true;
+    }
+
+    // Check edges first (they're on top visually) — only in the owning layer
+    if (mode === "walls" || mode === "openings") {
       const resolved = resolveFloorEdges(floor);
       for (const re of resolved) {
+        const edgeAllowed =
+          mode === "walls" ? re.type === "wall" : re.type !== "wall";
+        if (!edgeAllowed) continue;
         const dist = this._pointToSegmentDistance(
           point,
           re.startPos,
@@ -3623,7 +3739,7 @@ export class FpbCanvas extends LitElement {
         );
         if (dist < re.thickness / 2 + 5) {
           // Shift-click multi-select in walls mode
-          if (shiftKey && selection.value.type === "edge") {
+          if (mode === "walls" && shiftKey && selection.value.type === "edge") {
             const currentIds = [...selection.value.ids];
             const idx = currentIds.indexOf(re.id);
             if (idx >= 0) {
@@ -3723,9 +3839,7 @@ export class FpbCanvas extends LitElement {
         );
         if (dist < 15) {
           selection.value = { type: "mmwave", ids: [mw.id] };
-          if (mode === "placement") {
-            devicePanelTarget.value = { id: mw.id, type: "mmwave" };
-          }
+          devicePanelTarget.value = null;
           return true;
         }
       }
@@ -9385,6 +9499,8 @@ export class FpbCanvas extends LitElement {
     const mode = this._canvasMode;
     const calibrationTarget = mmwaveCalibrationTarget.value;
     const modePolicy = getCanvasModePolicy(mode, calibrationTarget !== null);
+    const showEdgeEditor =
+      modePolicy.showWallEditing || modePolicy.showOpeningEditing;
     const svgClasses = [
       this._isPanning ? "panning" : "",
       this._spaceHeld ? "space-pan" : "",
@@ -9418,11 +9534,11 @@ export class FpbCanvas extends LitElement {
         ${currentFloor.value ? this._renderDeviceLayer(currentFloor.value) : null}
         ${modePolicy.showDrawingPreview ? this._renderDrawingPreview() : null}
         ${modePolicy.showZoneEditing ? this._renderFurnitureDrawingPreview() : null}
-        ${modePolicy.showWallEditing ? this._renderOpeningPreview() : null}
+        ${modePolicy.showOpeningEditing ? this._renderOpeningPreview() : null}
         ${mode === "placement" && !calibrationTarget ? this._renderDevicePreview() : null}
         ${mode === "occupancy" && simHitboxEnabled.value && currentFloor.value ? this._renderSimulationLayer(currentFloor.value) : null}
       </svg>
-      ${modePolicy.showWallEditing ? this._renderEdgeEditor() : null}
+      ${showEdgeEditor ? this._renderEdgeEditor() : null}
       ${modePolicy.showWallEditing ? this._renderNodeEditor() : null}
       ${modePolicy.showWallEditing ? this._renderMultiEdgeEditor() : null}
       ${modePolicy.showWallEditing ? this._renderRoomEditor() : null}

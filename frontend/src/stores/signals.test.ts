@@ -50,4 +50,25 @@ describe("canvas mode signal transitions", () => {
     expect(simulatedTargets.value).to.deep.equal([]);
     expect(simHitboxEnabled.value).to.equal(false);
   });
+
+  it("keeps mmWave config available in Occupancy mode", () => {
+    devicePanelTarget.value = { id: "m1", type: "mmwave" };
+    mmwaveCalibrationTarget.value = { placementId: "m1", targetIndex: 0 };
+
+    setCanvasMode("occupancy");
+
+    expect(devicePanelTarget.value).to.deep.equal({
+      id: "m1",
+      type: "mmwave",
+    });
+    expect(mmwaveCalibrationTarget.value).to.deep.equal({
+      placementId: "m1",
+      targetIndex: 0,
+    });
+
+    setCanvasMode("openings");
+
+    expect(devicePanelTarget.value).to.equal(null);
+    expect(mmwaveCalibrationTarget.value).to.equal(null);
+  });
 });

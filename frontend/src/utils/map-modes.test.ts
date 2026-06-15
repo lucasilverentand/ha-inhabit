@@ -9,14 +9,16 @@ import {
 describe("map mode policy", () => {
   it("maps current canvas modes to task labels", () => {
     expect(getMapModeDefinition("viewing").label).to.equal("View");
-    expect(getMapModeDefinition("walls").label).to.equal("Build");
+    expect(getMapModeDefinition("walls").label).to.equal("Rooms");
+    expect(getMapModeDefinition("openings").label).to.equal("Openings");
     expect(getMapModeDefinition("furniture").label).to.equal("Zones");
     expect(getMapModeDefinition("placement").label).to.equal("Devices");
     expect(getMapModeDefinition("occupancy").label).to.equal("Occupancy");
   });
 
   it("returns contextual tools by mode", () => {
-    expect(getModeTools("walls")).to.deep.equal(["wall", "door", "window"]);
+    expect(getModeTools("walls")).to.deep.equal(["wall"]);
+    expect(getModeTools("openings")).to.deep.equal(["door", "window"]);
     expect(getModeTools("furniture")).to.deep.equal(["zone"]);
     expect(getModeTools("placement")).to.deep.equal([
       "light",
@@ -26,6 +28,31 @@ describe("map mode policy", () => {
       "other",
     ]);
     expect(getModeTools("occupancy")).to.deep.equal([]);
+  });
+
+  it("keeps editing controls isolated to their owning layer", () => {
+    const walls = getCanvasModePolicy("walls");
+    expect(walls.showWallEditing).to.equal(true);
+    expect(walls.showOpeningEditing).to.equal(false);
+    expect(walls.showZoneEditing).to.equal(false);
+    expect(walls.showNormalDevices).to.equal(false);
+
+    const openings = getCanvasModePolicy("openings");
+    expect(openings.showWallEditing).to.equal(false);
+    expect(openings.showOpeningEditing).to.equal(true);
+    expect(openings.showZoneEditing).to.equal(false);
+    expect(openings.showNormalDevices).to.equal(false);
+
+    const zones = getCanvasModePolicy("furniture");
+    expect(zones.showWallEditing).to.equal(false);
+    expect(zones.showOpeningEditing).to.equal(false);
+    expect(zones.showZoneEditing).to.equal(true);
+
+    const devices = getCanvasModePolicy("placement");
+    expect(devices.showWallEditing).to.equal(false);
+    expect(devices.showOpeningEditing).to.equal(false);
+    expect(devices.showZoneEditing).to.equal(false);
+    expect(devices.showNormalDevices).to.equal(true);
   });
 
   it("hides unrelated layers by default", () => {
@@ -42,6 +69,7 @@ describe("map mode policy", () => {
     expect(policy.showMmwave).to.equal(true);
     expect(policy.showMmwaveCoverage).to.equal(false);
     expect(policy.showWallEditing).to.equal(false);
+    expect(policy.showOpeningEditing).to.equal(false);
     expect(shouldShowLayer("placement", "furniture", true)).to.equal(false);
   });
 });

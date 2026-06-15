@@ -307,6 +307,7 @@ export interface VisualRule {
 export type CanvasMode =
   | "viewing"
   | "walls"
+  | "openings"
   | "furniture"
   | "placement"
   | "occupancy";
