@@ -3001,6 +3001,36 @@ function ft(t,e){return(e,i,o)=>((t,e,i)=>(i.configurable=!0,i.enumerable=!0,Ref
       --mdc-icon-size: 20px;
     }
 
+    .tool-button.add-action {
+      width: auto;
+      min-width: 112px;
+      padding: 0 14px;
+      gap: 7px;
+      background: var(--mode-accent, var(--primary-color));
+      color: #fff;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0;
+    }
+
+    .tool-button.add-action:hover {
+      background: color-mix(
+        in srgb,
+        var(--mode-accent, var(--primary-color)) 88%,
+        #000
+      );
+      color: #fff;
+    }
+
+    .tool-button.add-action ha-icon {
+      --mdc-icon-size: 22px;
+    }
+
+    .tool-button-label {
+      white-space: nowrap;
+      line-height: 1;
+    }
+
     .overflow-wrapper {
       position: relative;
     }
@@ -3377,6 +3407,17 @@ function ft(t,e){return(e,i,o)=>((t,e,i)=>(i.configurable=!0,i.enumerable=!0,Ref
         border-radius: 12px;
       }
 
+      .tool-button.add-action {
+        width: 42px;
+        min-width: 42px;
+        padding: 0;
+        gap: 0;
+      }
+
+      .tool-button.add-action .tool-button-label {
+        display: none;
+      }
+
       .done-button {
         width: 42px;
         min-width: 42px;
@@ -3404,17 +3445,23 @@ function ft(t,e){return(e,i,o)=>((t,e,i)=>(i.configurable=!0,i.enumerable=!0,Ref
         width: 40px;
         min-width: 40px;
       }
+
+      .tool-button.add-action {
+        width: 40px;
+        min-width: 40px;
+      }
     }
 
-  `}_selectFloor(t){this._floorMenuOpen=!1,this.dispatchEvent(new CustomEvent("floor-select",{detail:{id:t},bubbles:!0,composed:!0}))}_handleToolSelect(t){Gt.value=t}_handleUndo(){jt()}_handleRedo(){Ht()}_handleAddFloor(){this._floorMenuOpen=!1,this.dispatchEvent(new CustomEvent("add-floor",{bubbles:!0,composed:!0}))}_handleDeleteFloor(t,e,i){t.stopPropagation(),confirm(`Delete "${i}"? This will remove all walls, rooms, and devices on this floor.`)&&(this._floorMenuOpen=!1,this.dispatchEvent(new CustomEvent("delete-floor",{detail:{id:e},bubbles:!0,composed:!0})))}_startRename(t,e,i){t.stopPropagation(),this._renamingFloorId=e,this._renameValue=i,this._renameCommitted=!1,this.updateComplete.then(()=>{const t=this.shadowRoot?.querySelector(".rename-input");t&&(t.focus(),t.select())})}_commitRename(){if(this._renameCommitted)return;this._renameCommitted=!0;const t=this._renamingFloorId,e=this._renameValue.trim();this._renamingFloorId=null,t&&e&&this.dispatchEvent(new CustomEvent("rename-floor",{detail:{id:t,name:e},bubbles:!0,composed:!0}))}_cancelRename(){this._renamingFloorId=null}_handleRenameKeyDown(t){"Enter"===t.key?this._commitRename():"Escape"===t.key&&this._cancelRename()}_exitEditor(){this.dispatchEvent(new CustomEvent("exit-editor",{bubbles:!0,composed:!0}))}_openImportExport(){this._floorMenuOpen=!1,this.dispatchEvent(new CustomEvent("open-import-export",{bubbles:!0,composed:!0}))}_toggleFloorMenu(){this._floorMenuOpen=!this._floorMenuOpen,this._floorMenuOpen&&(this._actionsMenuOpen=!1,this._modeMenuOpen=!1)}_toggleActionsMenu(t){t?.stopPropagation(),this._actionsMenuOpen=!this._actionsMenuOpen,this._actionsMenuOpen&&(this._floorMenuOpen=!1,this._modeMenuOpen=!1)}_toggleModeMenu(t){t?.stopPropagation(),this._modeMenuOpen=!this._modeMenuOpen,this._modeMenuOpen&&(this._floorMenuOpen=!1,this._actionsMenuOpen=!1)}_selectMode(t){!function(t){Kt.value=t,Gt.value="select",Jt.value={type:"none",ids:[]},"occupancy"!==t&&(ce.value=null,ue.value=[],fe.value=!1),"placement"!==t&&"occupancy"!==t&&(he.value=null,pe.value=null)}(t),this._modeMenuOpen=!1}_closeMenus(){this._floorMenuOpen=!1,this._actionsMenuOpen=!1,this._modeMenuOpen=!1}_runAction(t){t.disabled||(t.run(),this._actionsMenuOpen=!1)}_directActionLimit(t){return function(t,e){return 0===t||t>=900||t>=620?e:t>=520?Math.min(e,5):t>=440?Math.min(e,4):t>=360?Math.min(e,3):t>=300?Math.min(e,2):Math.min(e,1)}(this._toolbarWidth,t)}_splitActions(t){const e=this._directActionLimit(t.length);return e>=t.length?{direct:t,overflow:[]}:{direct:t.slice(0,e),overflow:t.slice(e)}}_toolAction(t,e){return{id:`tool-${t.id}`,icon:t.icon,label:t.label,active:Gt.value===t.id,accent:e.accent,run:()=>this._handleToolSelect(t.id)}}_toolbarActions(t,e,i){const o=[{id:"undo",icon:"mdi:undo",label:"Undo",disabled:!Rt.value,run:()=>this._handleUndo()},{id:"redo",icon:"mdi:redo",label:"Redo",disabled:!Bt.value,run:()=>this._handleRedo()}];"occupancy"===e&&o.push({id:"simulate",icon:"mdi:target-account",label:fe.value?"Stop simulating":"Simulate positions",active:fe.value,accent:i.accent,run:()=>{const t=!fe.value;fe.value=t,t||(ue.value=[])}});const n=t.find(t=>t.id===Gt.value);n&&o.push(this._toolAction(n,i));for(const e of t)e.id!==n?.id&&o.push(this._toolAction(e,i));return o}_renderActionButton(t){return H`
+  `}_selectFloor(t){this._floorMenuOpen=!1,this.dispatchEvent(new CustomEvent("floor-select",{detail:{id:t},bubbles:!0,composed:!0}))}_handleToolSelect(t){Gt.value=t}_handleUndo(){jt()}_handleRedo(){Ht()}_handleAddFloor(){this._floorMenuOpen=!1,this.dispatchEvent(new CustomEvent("add-floor",{bubbles:!0,composed:!0}))}_handleDeleteFloor(t,e,i){t.stopPropagation(),confirm(`Delete "${i}"? This will remove all walls, rooms, and devices on this floor.`)&&(this._floorMenuOpen=!1,this.dispatchEvent(new CustomEvent("delete-floor",{detail:{id:e},bubbles:!0,composed:!0})))}_startRename(t,e,i){t.stopPropagation(),this._renamingFloorId=e,this._renameValue=i,this._renameCommitted=!1,this.updateComplete.then(()=>{const t=this.shadowRoot?.querySelector(".rename-input");t&&(t.focus(),t.select())})}_commitRename(){if(this._renameCommitted)return;this._renameCommitted=!0;const t=this._renamingFloorId,e=this._renameValue.trim();this._renamingFloorId=null,t&&e&&this.dispatchEvent(new CustomEvent("rename-floor",{detail:{id:t,name:e},bubbles:!0,composed:!0}))}_cancelRename(){this._renamingFloorId=null}_handleRenameKeyDown(t){"Enter"===t.key?this._commitRename():"Escape"===t.key&&this._cancelRename()}_exitEditor(){this.dispatchEvent(new CustomEvent("exit-editor",{bubbles:!0,composed:!0}))}_openImportExport(){this._floorMenuOpen=!1,this.dispatchEvent(new CustomEvent("open-import-export",{bubbles:!0,composed:!0}))}_toggleFloorMenu(){this._floorMenuOpen=!this._floorMenuOpen,this._floorMenuOpen&&(this._actionsMenuOpen=!1,this._modeMenuOpen=!1)}_toggleActionsMenu(t){t?.stopPropagation(),this._actionsMenuOpen=!this._actionsMenuOpen,this._actionsMenuOpen&&(this._floorMenuOpen=!1,this._modeMenuOpen=!1)}_toggleModeMenu(t){t?.stopPropagation(),this._modeMenuOpen=!this._modeMenuOpen,this._modeMenuOpen&&(this._floorMenuOpen=!1,this._actionsMenuOpen=!1)}_selectMode(t){!function(t){Kt.value=t,Gt.value="select",Jt.value={type:"none",ids:[]},"occupancy"!==t&&(ce.value=null,ue.value=[],fe.value=!1),"placement"!==t&&"occupancy"!==t&&(he.value=null,pe.value=null)}(t),this._modeMenuOpen=!1}_closeMenus(){this._floorMenuOpen=!1,this._actionsMenuOpen=!1,this._modeMenuOpen=!1}_runAction(t){t.disabled||(t.run(),this._actionsMenuOpen=!1)}_directActionLimit(t){return function(t,e){return 0===t||t>=900||t>=620?e:t>=520?Math.min(e,5):t>=440?Math.min(e,4):t>=360?Math.min(e,3):t>=300?Math.min(e,2):Math.min(e,1)}(this._toolbarWidth,t)}_splitActions(t){const e=this._directActionLimit(t.length);return e>=t.length?{direct:t,overflow:[]}:{direct:t.slice(0,e),overflow:t.slice(e)}}_toolAction(t,e){return{id:`tool-${t.id}`,icon:t.icon,label:t.label,active:Gt.value===t.id,accent:e.accent,variant:"wall"===t.id?"add":void 0,run:()=>this._handleToolSelect(t.id)}}_toolbarActions(t,e,i){const o=[{id:"undo",icon:"mdi:undo",label:"Undo",disabled:!Rt.value,run:()=>this._handleUndo()},{id:"redo",icon:"mdi:redo",label:"Redo",disabled:!Bt.value,run:()=>this._handleRedo()}];"occupancy"===e&&o.push({id:"simulate",icon:"mdi:target-account",label:fe.value?"Stop simulating":"Simulate positions",active:fe.value,accent:i.accent,run:()=>{const t=!fe.value;fe.value=t,t||(ue.value=[])}});const n=t.find(t=>t.id===Gt.value);n&&o.push(this._toolAction(n,i));for(const e of t)e.id!==n?.id&&o.push(this._toolAction(e,i));return o}_renderActionButton(t){return H`
       <button
-        class="tool-button ${t.active?"active":""}"
+        class="tool-button ${t.active?"active":""} ${"add"===t.variant?"add-action":""}"
         style=${t.accent?`--mode-accent: ${t.accent}`:""}
         @click=${()=>this._runAction(t)}
         ?disabled=${t.disabled}
         title=${t.label}
       >
         <ha-icon icon=${t.icon}></ha-icon>
+        ${"add"===t.variant?H`<span class="tool-button-label">${t.label}</span>`:null}
       </button>
     `}_renderOverflowItem(t){return H`
       <button

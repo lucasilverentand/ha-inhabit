@@ -41,6 +41,7 @@ interface ToolbarAction {
   active?: boolean;
   disabled?: boolean;
   accent?: string;
+  variant?: "add";
   run: () => void;
 }
 
@@ -350,6 +351,36 @@ export class FpbToolbar extends LitElement {
 
     .tool-button ha-icon {
       --mdc-icon-size: 20px;
+    }
+
+    .tool-button.add-action {
+      width: auto;
+      min-width: 112px;
+      padding: 0 14px;
+      gap: 7px;
+      background: var(--mode-accent, var(--primary-color));
+      color: #fff;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0;
+    }
+
+    .tool-button.add-action:hover {
+      background: color-mix(
+        in srgb,
+        var(--mode-accent, var(--primary-color)) 88%,
+        #000
+      );
+      color: #fff;
+    }
+
+    .tool-button.add-action ha-icon {
+      --mdc-icon-size: 22px;
+    }
+
+    .tool-button-label {
+      white-space: nowrap;
+      line-height: 1;
     }
 
     .overflow-wrapper {
@@ -728,6 +759,17 @@ export class FpbToolbar extends LitElement {
         border-radius: 12px;
       }
 
+      .tool-button.add-action {
+        width: 42px;
+        min-width: 42px;
+        padding: 0;
+        gap: 0;
+      }
+
+      .tool-button.add-action .tool-button-label {
+        display: none;
+      }
+
       .done-button {
         width: 42px;
         min-width: 42px;
@@ -752,6 +794,11 @@ export class FpbToolbar extends LitElement {
 
       .tool-button,
       .done-button {
+        width: 40px;
+        min-width: 40px;
+      }
+
+      .tool-button.add-action {
         width: 40px;
         min-width: 40px;
       }
@@ -949,6 +996,7 @@ export class FpbToolbar extends LitElement {
       label: item.label,
       active: activeTool.value === item.id,
       accent: modeDef.accent,
+      variant: item.id === "wall" ? "add" : undefined,
       run: () => this._handleToolSelect(item.id),
     };
   }
@@ -1010,13 +1058,20 @@ export class FpbToolbar extends LitElement {
   private _renderActionButton(action: ToolbarAction) {
     return html`
       <button
-        class="tool-button ${action.active ? "active" : ""}"
+        class="tool-button ${action.active ? "active" : ""} ${
+          action.variant === "add" ? "add-action" : ""
+        }"
         style=${action.accent ? `--mode-accent: ${action.accent}` : ""}
         @click=${() => this._runAction(action)}
         ?disabled=${action.disabled}
         title=${action.label}
       >
         <ha-icon icon=${action.icon}></ha-icon>
+        ${
+          action.variant === "add"
+            ? html`<span class="tool-button-label">${action.label}</span>`
+            : null
+        }
       </button>
     `;
   }
