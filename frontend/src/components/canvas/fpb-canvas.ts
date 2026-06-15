@@ -283,6 +283,12 @@ export class FpbCanvas extends LitElement {
   private _editingOpeningAfterLength: string = "";
 
   @state()
+  private _editingOpeningBeforeLocked: boolean = false;
+
+  @state()
+  private _editingOpeningAfterLocked: boolean = false;
+
+  @state()
   private _editingLengthLocked: boolean = false;
 
   @state()
@@ -1003,6 +1009,21 @@ export class FpbCanvas extends LitElement {
       letter-spacing: 0.02em;
     }
 
+    .opening-position-field-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 4px;
+      min-width: 0;
+    }
+
+    .opening-position-field-header > span {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
     .opening-position-input {
       display: flex;
       align-items: center;
@@ -1066,6 +1087,13 @@ export class FpbCanvas extends LitElement {
 
     .wall-editor .constraint-btn.lock-btn {
       padding: 7px 8px;
+    }
+
+    .wall-editor .constraint-btn.opening-position-lock {
+      flex: 0 0 auto;
+      padding: 3px 5px;
+      border-radius: 7px;
+      --mdc-icon-size: 13px;
     }
 
     .wall-editor-actions {
@@ -3258,6 +3286,12 @@ export class FpbCanvas extends LitElement {
     const openingPositionChanged =
       !!openingPositionContext &&
       (lengthChanged || openingBeforeChanged || openingAfterChanged);
+    const openingSideLockChanged =
+      !!openingPositionContext &&
+      (this._editingOpeningBeforeLocked !==
+        openingPositionContext.beforeEdge.length_locked ||
+        this._editingOpeningAfterLocked !==
+          openingPositionContext.afterEdge.length_locked);
     const edgeTypeChanged =
       isEdgeOpening && this._editingEdgeType !== edge.type;
     const partsChanged =
@@ -3290,6 +3324,19 @@ export class FpbCanvas extends LitElement {
 
       // 2. Apply length/position changes (moves nodes)
       if (openingPositionChanged && openingPositionContext) {
+        const blockedSideIds = [
+          openingBeforeChanged && this._editingOpeningBeforeLocked
+            ? openingPositionContext.beforeEdge.id
+            : null,
+          openingAfterChanged && this._editingOpeningAfterLocked
+            ? openingPositionContext.afterEdge.id
+            : null,
+        ].filter((id): id is string => id !== null);
+        if (blockedSideIds.length > 0) {
+          this._blinkEdges(blockedSideIds);
+          return;
+        }
+
         const ok = await this._updateOpeningPosition(
           edge,
           openingPositionContext,
@@ -3302,7 +3349,7 @@ export class FpbCanvas extends LitElement {
       }
 
       // 3. Validate constraint changes before persisting
-      if (anyEdgePropChanged) {
+      if (anyEdgePropChanged || openingSideLockChanged) {
         // Check feasibility of the proposed constraint combination
         const currentFloorData = currentFloor.value;
         if (currentFloorData && lengthLockChanged) {
@@ -3326,24 +3373,52 @@ export class FpbCanvas extends LitElement {
           }
         }
 
-        const edgeUpdate: Record<string, unknown> = {
-          type: "inhabit/edges/update",
-          floor_plan_id: floorPlan.id,
-          floor_id: floor.id,
-          edge_id: edge.id,
-        };
-        if (directionChanged) edgeUpdate.direction = this._editingDirection;
-        if (lengthLockChanged)
-          edgeUpdate.length_locked = this._editingLengthLocked;
-        if (edgeTypeChanged) edgeUpdate.edge_type = this._editingEdgeType;
-        if (partsChanged) edgeUpdate.opening_parts = this._editingOpeningParts;
-        if (openingTypeChanged)
-          edgeUpdate.opening_type = this._editingOpeningType;
-        if (swingChanged)
-          edgeUpdate.swing_direction = this._editingSwingDirection;
-        if (entityChanged) edgeUpdate.entity_id = this._editingEntityId || null;
+        if (anyEdgePropChanged) {
+          const edgeUpdate: Record<string, unknown> = {
+            type: "inhabit/edges/update",
+            floor_plan_id: floorPlan.id,
+            floor_id: floor.id,
+            edge_id: edge.id,
+          };
+          if (directionChanged) edgeUpdate.direction = this._editingDirection;
+          if (lengthLockChanged)
+            edgeUpdate.length_locked = this._editingLengthLocked;
+          if (edgeTypeChanged) edgeUpdate.edge_type = this._editingEdgeType;
+          if (partsChanged)
+            edgeUpdate.opening_parts = this._editingOpeningParts;
+          if (openingTypeChanged)
+            edgeUpdate.opening_type = this._editingOpeningType;
+          if (swingChanged)
+            edgeUpdate.swing_direction = this._editingSwingDirection;
+          if (entityChanged)
+            edgeUpdate.entity_id = this._editingEntityId || null;
 
-        await this.hass.callWS(edgeUpdate);
+          await this.hass.callWS(edgeUpdate);
+        }
+
+        if (openingSideLockChanged && openingPositionContext) {
+          const sideLockUpdates = [
+            {
+              edge: openingPositionContext.beforeEdge,
+              locked: this._editingOpeningBeforeLocked,
+            },
+            {
+              edge: openingPositionContext.afterEdge,
+              locked: this._editingOpeningAfterLocked,
+            },
+          ].filter(({ edge, locked }) => edge.length_locked !== locked);
+
+          for (const update of sideLockUpdates) {
+            await this.hass.callWS({
+              type: "inhabit/edges/update",
+              floor_plan_id: floorPlan.id,
+              floor_id: floor.id,
+              edge_id: update.edge.id,
+              length_locked: update.locked,
+            });
+          }
+        }
+
         await reloadFloorData();
       }
     } catch (err) {
@@ -4385,6 +4460,10 @@ export class FpbCanvas extends LitElement {
           this._editingOpeningAfterLength = openingPositionContext
             ? this._formatEditorLength(openingPositionContext.afterLength)
             : "";
+          this._editingOpeningBeforeLocked =
+            openingPositionContext?.beforeEdge.length_locked ?? false;
+          this._editingOpeningAfterLocked =
+            openingPositionContext?.afterEdge.length_locked ?? false;
           this._editingLengthLocked = edge.length_locked;
           this._editingDirection = edge.direction;
           this._editingEdgeType = edge.type === "window" ? "window" : "door";
@@ -6491,21 +6570,61 @@ export class FpbCanvas extends LitElement {
     const context = this._getOpeningPositionContext(this._edgeEditor.edge);
     if (!context) return;
 
+    const beforeLocked = this._editingOpeningBeforeLocked;
+    const afterLocked = this._editingOpeningAfterLocked;
+    const totalLength = context.totalLength;
+    const setBefore = (value: number) => {
+      this._editingOpeningBeforeLength = this._formatEditorLength(
+        Math.max(0, value),
+      );
+    };
+    const setAfter = (value: number) => {
+      this._editingOpeningAfterLength = this._formatEditorLength(
+        Math.max(0, value),
+      );
+    };
+    const setWidth = (value: number) => {
+      this._editingLength = this._formatEditorLength(Math.max(1, value));
+    };
     const width = parseFloat(this._editingLength);
-    if (!Number.isFinite(width) || width <= 0) return;
+    const before = parseFloat(this._editingOpeningBeforeLength);
+    const after = parseFloat(this._editingOpeningAfterLength);
 
-    if (changed === "after") {
-      const after = parseFloat(this._editingOpeningAfterLength);
-      if (!Number.isFinite(after)) return;
-      const before = Math.max(0, context.totalLength - width - after);
-      this._editingOpeningBeforeLength = this._formatEditorLength(before);
+    if (changed === "before") {
+      if (!Number.isFinite(before) || before < 0) return;
+      if (afterLocked) {
+        if (!Number.isFinite(after)) return;
+        setWidth(totalLength - before - after);
+      } else {
+        if (!Number.isFinite(width) || width <= 0) return;
+        setAfter(totalLength - width - before);
+      }
       return;
     }
 
-    const before = parseFloat(this._editingOpeningBeforeLength);
-    if (!Number.isFinite(before)) return;
-    const after = Math.max(0, context.totalLength - width - before);
-    this._editingOpeningAfterLength = this._formatEditorLength(after);
+    if (changed === "after") {
+      if (!Number.isFinite(after) || after < 0) return;
+      if (beforeLocked) {
+        if (!Number.isFinite(before)) return;
+        setWidth(totalLength - before - after);
+      } else {
+        if (!Number.isFinite(width) || width <= 0) return;
+        setBefore(totalLength - width - after);
+      }
+      return;
+    }
+
+    if (!Number.isFinite(width) || width <= 0) return;
+    if (beforeLocked && afterLocked) {
+      if (!Number.isFinite(before) || !Number.isFinite(after)) return;
+      setWidth(totalLength - before - after);
+    } else if (afterLocked) {
+      if (!Number.isFinite(after)) return;
+      setBefore(totalLength - width - after);
+    } else {
+      if (!Number.isFinite(before)) return;
+      setAfter(totalLength - width - before);
+    }
   }
 
   private _handleEditorLengthInput(e: InputEvent): void {
@@ -8904,13 +9023,27 @@ export class FpbCanvas extends LitElement {
           <div class="wall-editor-section">
             <span class="wall-editor-section-label">Position on wall</span>
             <div class="opening-position-grid">
-              <label class="opening-position-field">
-                <span>Before</span>
+              <div class="opening-position-field">
+                <div class="opening-position-field-header">
+                  <span>Before</span>
+                  <button
+                    class="constraint-btn opening-position-lock ${this._editingOpeningBeforeLocked ? "active" : ""}"
+                    @click=${() => {
+                      this._editingOpeningBeforeLocked =
+                        !this._editingOpeningBeforeLocked;
+                      this._syncOpeningSideLengths("width");
+                    }}
+                    title="${this._editingOpeningBeforeLocked ? "Unlock before section" : "Lock before section"}"
+                  >
+                    <ha-icon icon="${this._editingOpeningBeforeLocked ? "mdi:lock" : "mdi:lock-open-variant"}"></ha-icon>
+                  </button>
+                </div>
                 <div class="opening-position-input">
                   <input
                     type="number"
                     min="0"
                     .value=${this._editingOpeningBeforeLength}
+                    ?disabled=${this._editingOpeningBeforeLocked}
                     @input=${(e: InputEvent) => {
                       this._editingOpeningBeforeLength = (
                         e.target as HTMLInputElement
@@ -8921,28 +9054,48 @@ export class FpbCanvas extends LitElement {
                   />
                   <span>cm</span>
                 </div>
-              </label>
-              <label class="opening-position-field">
-                <span>Width</span>
+              </div>
+              <div class="opening-position-field">
+                <div class="opening-position-field-header">
+                  <span>Width</span>
+                </div>
                 <div class="opening-position-input">
                   <input
                     type="number"
                     min="1"
                     .value=${this._editingLength}
+                    ?disabled=${
+                      this._editingOpeningBeforeLocked &&
+                      this._editingOpeningAfterLocked
+                    }
                     @input=${this._handleEditorLengthInput}
                     @keydown=${this._handleEditorKeyDown}
                     autofocus
                   />
                   <span>cm</span>
                 </div>
-              </label>
-              <label class="opening-position-field">
-                <span>After</span>
+              </div>
+              <div class="opening-position-field">
+                <div class="opening-position-field-header">
+                  <span>After</span>
+                  <button
+                    class="constraint-btn opening-position-lock ${this._editingOpeningAfterLocked ? "active" : ""}"
+                    @click=${() => {
+                      this._editingOpeningAfterLocked =
+                        !this._editingOpeningAfterLocked;
+                      this._syncOpeningSideLengths("width");
+                    }}
+                    title="${this._editingOpeningAfterLocked ? "Unlock after section" : "Lock after section"}"
+                  >
+                    <ha-icon icon="${this._editingOpeningAfterLocked ? "mdi:lock" : "mdi:lock-open-variant"}"></ha-icon>
+                  </button>
+                </div>
                 <div class="opening-position-input">
                   <input
                     type="number"
                     min="0"
                     .value=${this._editingOpeningAfterLength}
+                    ?disabled=${this._editingOpeningAfterLocked}
                     @input=${(e: InputEvent) => {
                       this._editingOpeningAfterLength = (
                         e.target as HTMLInputElement
@@ -8953,7 +9106,7 @@ export class FpbCanvas extends LitElement {
                   />
                   <span>cm</span>
                 </div>
-              </label>
+              </div>
             </div>
           </div>
         `
