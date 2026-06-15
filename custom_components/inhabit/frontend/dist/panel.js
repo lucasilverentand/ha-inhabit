@@ -3545,8 +3545,9 @@ function ft(t,e){return(e,i,o)=>((t,e,i)=>(i.configurable=!0,i.enumerable=!0,Ref
         z-index: 250;
         height: auto;
         min-height: 64px;
-        grid-template-columns: 1fr;
+        grid-template-columns: minmax(0, 1fr) auto;
         grid-template-rows: auto auto;
+        align-items: center;
         padding: 8px;
         border: 1px solid var(--divider-color, rgba(0, 0, 0, 0.12));
         border-radius: 18px;
@@ -3558,6 +3559,8 @@ function ft(t,e){return(e,i,o)=>((t,e,i)=>(i.configurable=!0,i.enumerable=!0,Ref
       }
 
       .mode-selector {
+        grid-column: 1;
+        grid-row: 2;
         width: 100%;
         min-width: 0;
       }
@@ -3583,8 +3586,10 @@ function ft(t,e){return(e,i,o)=>((t,e,i)=>(i.configurable=!0,i.enumerable=!0,Ref
       }
 
       .toolbar-right {
-        width: 100%;
-        justify-self: stretch;
+        grid-column: 2;
+        grid-row: 2;
+        width: auto;
+        justify-self: end;
         justify-content: flex-end;
         gap: 6px;
         overflow: visible;
@@ -3606,10 +3611,21 @@ function ft(t,e){return(e,i,o)=>((t,e,i)=>(i.configurable=!0,i.enumerable=!0,Ref
       }
 
       .map-actions {
-        bottom: calc(88px + env(safe-area-inset-bottom));
-        max-width: calc(100vw - 20px);
+        position: static;
+        grid-column: 1 / -1;
+        grid-row: 1;
+        justify-self: center;
+        transform: none;
+        max-width: 100%;
         border-radius: 18px;
         padding: 7px;
+        margin: 0 auto 2px;
+        z-index: auto;
+      }
+
+      .map-actions .context-actions {
+        flex-wrap: nowrap;
+        justify-content: center;
       }
 
       .tool-button {
@@ -3626,11 +3642,10 @@ function ft(t,e){return(e,i,o)=>((t,e,i)=>(i.configurable=!0,i.enumerable=!0,Ref
       .done-button {
         min-height: 44px;
         border-radius: 13px;
-        margin-left: auto;
-        position: sticky;
-        right: 0;
+        margin-left: 0;
+        position: static;
         flex: 0 0 auto;
-        box-shadow: -8px 0 12px var(--card-background-color, #fff);
+        box-shadow: none;
       }
     }
 
@@ -3670,7 +3685,7 @@ function ft(t,e){return(e,i,o)=>((t,e,i)=>(i.configurable=!0,i.enumerable=!0,Ref
       }
 
       .tool-button.add-action {
-        width: auto;
+        width: 42px;
         min-width: 42px;
       }
 
