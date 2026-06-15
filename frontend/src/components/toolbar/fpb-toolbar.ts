@@ -71,6 +71,9 @@ export class FpbToolbar extends LitElement {
   private _actionsMenuOpen = false;
 
   @state()
+  private _modeMenuOpen = false;
+
+  @state()
   private _toolbarWidth = 0;
 
   @state()
@@ -460,6 +463,112 @@ export class FpbToolbar extends LitElement {
       line-height: 1;
     }
 
+    .mode-selector {
+      position: relative;
+      display: none;
+      justify-self: center;
+      min-width: 0;
+    }
+
+    .mode-trigger {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      min-width: 168px;
+      height: 38px;
+      padding: 0 12px;
+      border: none;
+      border-radius: 12px;
+      background: var(--mode-accent, var(--primary-color));
+      color: #fff;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 700;
+      white-space: nowrap;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+    }
+
+    .mode-trigger ha-icon {
+      --mdc-icon-size: 19px;
+      flex: 0 0 auto;
+    }
+
+    .mode-trigger .chevron {
+      margin-left: auto;
+      --mdc-icon-size: 18px;
+      transition: transform 0.18s ease;
+    }
+
+    .mode-trigger.open .chevron {
+      transform: rotate(180deg);
+    }
+
+    .mode-trigger-label {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .mode-dropdown {
+      position: absolute;
+      top: calc(100% + 8px);
+      left: 50%;
+      transform: translateX(-50%);
+      min-width: 220px;
+      padding: 6px;
+      border-radius: 14px;
+      background: var(--card-background-color, #fff);
+      border: 1px solid var(--divider-color, rgba(0, 0, 0, 0.12));
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.22);
+      z-index: 270;
+    }
+
+    .mode-option {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+      min-height: 42px;
+      padding: 8px 10px;
+      border: none;
+      border-radius: 10px;
+      background: transparent;
+      color: var(--primary-text-color);
+      font-size: 13px;
+      font-weight: 600;
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .mode-option:hover {
+      background: var(--secondary-background-color, #f5f5f5);
+    }
+
+    .mode-option.active {
+      background: color-mix(
+        in srgb,
+        var(--mode-accent, var(--primary-color)) 16%,
+        transparent
+      );
+      color: var(--mode-accent, var(--primary-color));
+    }
+
+    .mode-option ha-icon {
+      --mdc-icon-size: 19px;
+      flex: 0 0 auto;
+    }
+
+    @media (max-width: 1280px) {
+      .mode-group {
+        display: none;
+      }
+
+      .mode-selector {
+        display: block;
+      }
+    }
+
     @media (max-width: 900px), (hover: none) and (pointer: coarse) {
       :host {
         position: fixed;
@@ -482,31 +591,29 @@ export class FpbToolbar extends LitElement {
         display: none;
       }
 
-      .mode-group {
+      .mode-selector {
         width: 100%;
         min-width: 0;
-        background: transparent;
-        padding: 0;
-        gap: 5px;
       }
 
-      .mode-group::-webkit-scrollbar {
-        display: none;
-      }
-
-      .mode-button {
-        min-width: 64px;
+      .mode-trigger {
+        width: 100%;
+        min-width: 0;
         height: 48px;
-        flex: 1 0 auto;
-        flex-direction: column;
-        gap: 3px;
-        padding: 4px 8px;
         border-radius: 14px;
-        font-size: 11px;
       }
 
-      .mode-button ha-icon {
-        --mdc-icon-size: 20px;
+      .mode-dropdown {
+        top: auto;
+        bottom: calc(100% + 8px);
+        left: 0;
+        right: 0;
+        min-width: 0;
+        transform: none;
+      }
+
+      .mode-option {
+        min-height: 44px;
       }
 
       .toolbar-right {
@@ -571,8 +678,9 @@ export class FpbToolbar extends LitElement {
         padding: 4px;
       }
 
-      .mode-label {
-        display: none;
+      .mode-trigger {
+        height: 44px;
+        padding: 0 10px;
       }
 
       .toolbar-right {
@@ -744,6 +852,7 @@ export class FpbToolbar extends LitElement {
     this._floorMenuOpen = !this._floorMenuOpen;
     if (this._floorMenuOpen) {
       this._actionsMenuOpen = false;
+      this._modeMenuOpen = false;
     }
   }
 
@@ -752,12 +861,28 @@ export class FpbToolbar extends LitElement {
     this._actionsMenuOpen = !this._actionsMenuOpen;
     if (this._actionsMenuOpen) {
       this._floorMenuOpen = false;
+      this._modeMenuOpen = false;
     }
+  }
+
+  private _toggleModeMenu(e?: Event): void {
+    e?.stopPropagation();
+    this._modeMenuOpen = !this._modeMenuOpen;
+    if (this._modeMenuOpen) {
+      this._floorMenuOpen = false;
+      this._actionsMenuOpen = false;
+    }
+  }
+
+  private _selectMode(mode: CanvasMode): void {
+    setCanvasMode(mode);
+    this._modeMenuOpen = false;
   }
 
   private _closeMenus(): void {
     this._floorMenuOpen = false;
     this._actionsMenuOpen = false;
+    this._modeMenuOpen = false;
   }
 
   private _runAction(action: ToolbarAction): void {
@@ -927,6 +1052,7 @@ export class FpbToolbar extends LitElement {
     const mode = this._canvasMode;
     const floors = fp?.floors || [];
     const modeDef = getMapModeDefinition(mode);
+    const modeDefinitions = getMapModeDefinitions();
     const menuItems = getModeTools(mode).map((toolId) => TOOL_ITEMS[toolId]);
     const actions = this._toolbarActions(menuItems, mode, modeDef);
     const { direct, overflow } = this._splitActions(actions);
@@ -1014,12 +1140,12 @@ export class FpbToolbar extends LitElement {
 
       <!-- Center: Mode Switcher -->
       <div class="mode-group">
-        ${getMapModeDefinitions().map(
+        ${modeDefinitions.map(
           (definition) => html`
             <button
               class="mode-button ${mode === definition.mode ? "active" : ""}"
               style="--mode-accent: ${definition.accent}"
-              @click=${() => setCanvasMode(definition.mode)}
+              @click=${() => this._selectMode(definition.mode)}
               title="${definition.label} mode"
             >
               <ha-icon icon=${definition.icon}></ha-icon>
@@ -1027,6 +1153,38 @@ export class FpbToolbar extends LitElement {
             </button>
           `,
         )}
+      </div>
+      <div class="mode-selector">
+        <button
+          class="mode-trigger ${this._modeMenuOpen ? "open" : ""}"
+          style="--mode-accent: ${modeDef.accent}"
+          @click=${this._toggleModeMenu}
+          title="Switch mode"
+        >
+          <ha-icon icon=${modeDef.icon}></ha-icon>
+          <span class="mode-trigger-label">${modeDef.label}</span>
+          <ha-icon class="chevron" icon="mdi:chevron-down"></ha-icon>
+        </button>
+        ${
+          this._modeMenuOpen
+            ? html`
+              <div class="mode-dropdown">
+                ${modeDefinitions.map(
+                  (definition) => html`
+                    <button
+                      class="mode-option ${mode === definition.mode ? "active" : ""}"
+                      style="--mode-accent: ${definition.accent}"
+                      @click=${() => this._selectMode(definition.mode)}
+                    >
+                      <ha-icon icon=${definition.icon}></ha-icon>
+                      <span class="overflow-label">${definition.label}</span>
+                    </button>
+                  `,
+                )}
+              </div>
+            `
+            : null
+        }
       </div>
 
       <!-- Right: Undo/Redo + contextual tools -->
