@@ -104,6 +104,23 @@ interface OpeningPositionContext {
   runStart: Coordinates;
   runEnd: Coordinates;
 }
+
+interface OpeningDragState {
+  edge: Edge;
+  context: OpeningPositionContext;
+  originalFloor: Floor;
+  originalBeforeLength: number;
+  openingLength: number;
+  pointerOffset: number;
+  targetBeforeLength: number;
+  startClientX: number;
+  startClientY: number;
+  hasMoved: boolean;
+  blockedEdgeIds: string[];
+  blockedNotified: boolean;
+  pointerId: number;
+}
+
 /**
  * Compute arc geometry for a swing opening.
  * Returns the open-end position and cubic Bézier control points for the arc.
@@ -371,6 +388,8 @@ export class FpbCanvas extends LitElement {
     hasMoved: boolean;
     pointerId: number;
   } | null = null;
+
+  private _draggingOpening: OpeningDragState | null = null;
 
   private readonly _devicePickerTypes = [
     "light",
@@ -686,9 +705,17 @@ export class FpbCanvas extends LitElement {
       stroke-width: 0.8;
     }
 
-.opening-ghost {
+    .opening-ghost {
       opacity: 0.5;
       pointer-events: none;
+    }
+
+    svg.mode-openings.select-tool .opening-overlay {
+      cursor: grab;
+    }
+
+    svg.mode-openings.select-tool .opening-overlay:active {
+      cursor: grabbing;
     }
 
     .device-marker {
@@ -2469,6 +2496,37 @@ export class FpbCanvas extends LitElement {
       return;
     }
 
+    if (this._draggingOpening) {
+      const drag = this._draggingOpening;
+      const dx = e.clientX - drag.startClientX;
+      const dy = e.clientY - drag.startClientY;
+      if (!drag.hasMoved && (Math.abs(dx) > 3 || Math.abs(dy) > 3)) {
+        drag.hasMoved = true;
+      }
+      if (!drag.hasMoved) return;
+
+      if (drag.blockedEdgeIds.length > 0) {
+        if (!drag.blockedNotified) {
+          this._blinkEdges(drag.blockedEdgeIds);
+          drag.blockedNotified = true;
+        }
+        return;
+      }
+
+      const projected = this._projectOpeningPoint(point, drag.context);
+      const maxBefore = Math.max(
+        0,
+        drag.context.totalLength - drag.openingLength,
+      );
+      const beforeLength = Math.min(
+        maxBefore,
+        Math.max(0, projected - drag.pointerOffset),
+      );
+      drag.targetBeforeLength = beforeLength;
+      this._previewOpeningDrag(drag, beforeLength);
+      return;
+    }
+
     // Handle placement dragging (light/switch/mmwave)
     if (this._draggingPlacement) {
       const dx = point.x - this._draggingPlacement.startPoint.x;
@@ -2771,6 +2829,16 @@ export class FpbCanvas extends LitElement {
       return;
     }
 
+    if (this._draggingOpening) {
+      const drag = this._draggingOpening;
+      this._svg?.releasePointerCapture(e.pointerId);
+      this._draggingOpening = null;
+      if (drag.hasMoved && drag.blockedEdgeIds.length === 0) {
+        this._finishOpeningDrag(drag);
+      }
+      return;
+    }
+
     if (this._draggingPlacement) {
       if (this._draggingPlacement.hasMoved) {
         this._finishPlacementDrag();
@@ -2810,6 +2878,10 @@ export class FpbCanvas extends LitElement {
     if (this._pinchStartViewBox) {
       this._pinchStartViewBox = null;
       this._pinchStartDist = 0;
+    }
+    if (this._draggingOpening) {
+      currentFloor.value = this._draggingOpening.originalFloor;
+      this._draggingOpening = null;
     }
   }
 
@@ -3558,6 +3630,164 @@ export class FpbCanvas extends LitElement {
       console.error("Error moving opening:", err);
       return false;
     }
+  }
+
+  private _projectOpeningPoint(
+    point: Coordinates,
+    context: OpeningPositionContext,
+  ): number {
+    const runDx = context.runEnd.x - context.runStart.x;
+    const runDy = context.runEnd.y - context.runStart.y;
+    const runLength = Math.sqrt(runDx * runDx + runDy * runDy);
+    if (runLength <= 0) return context.beforeLength;
+    return (
+      ((point.x - context.runStart.x) * runDx +
+        (point.y - context.runStart.y) * runDy) /
+      runLength
+    );
+  }
+
+  private _openingPointsForBeforeLength(
+    context: OpeningPositionContext,
+    beforeLength: number,
+    openingLength: number,
+  ): { start: Coordinates; end: Coordinates } | null {
+    const runDx = context.runEnd.x - context.runStart.x;
+    const runDy = context.runEnd.y - context.runStart.y;
+    const runLength = Math.sqrt(runDx * runDx + runDy * runDy);
+    if (runLength <= 0) return null;
+
+    const ux = runDx / runLength;
+    const uy = runDy / runLength;
+    const start = {
+      x: context.runStart.x + ux * beforeLength,
+      y: context.runStart.y + uy * beforeLength,
+    };
+    return {
+      start,
+      end: {
+        x: start.x + ux * openingLength,
+        y: start.y + uy * openingLength,
+      },
+    };
+  }
+
+  private _previewOpeningDrag(
+    drag: OpeningDragState,
+    beforeLength: number,
+  ): void {
+    const points = this._openingPointsForBeforeLength(
+      drag.context,
+      beforeLength,
+      drag.openingLength,
+    );
+    if (!points) return;
+
+    currentFloor.value = {
+      ...drag.originalFloor,
+      nodes: drag.originalFloor.nodes.map((node) => {
+        if (node.id === drag.edge.start_node) {
+          return { ...node, x: points.start.x, y: points.start.y };
+        }
+        if (node.id === drag.edge.end_node) {
+          return { ...node, x: points.end.x, y: points.end.y };
+        }
+        return node;
+      }),
+    };
+
+    this._editingOpeningBeforeLength = this._formatEditorLength(beforeLength);
+    this._editingOpeningAfterLength = this._formatEditorLength(
+      Math.max(0, drag.context.totalLength - drag.openingLength - beforeLength),
+    );
+    if (this._edgeEditor?.edge.id === drag.edge.id) {
+      this._edgeEditor = {
+        ...this._edgeEditor,
+        position: {
+          x: (points.start.x + points.end.x) / 2,
+          y: (points.start.y + points.end.y) / 2,
+        },
+        length: drag.openingLength,
+      };
+    }
+  }
+
+  private async _finishOpeningDrag(drag: OpeningDragState): Promise<void> {
+    currentFloor.value = drag.originalFloor;
+
+    if (Math.abs(drag.targetBeforeLength - drag.originalBeforeLength) < 0.01) {
+      this._updateEdgeEditorForSelection([drag.edge.id]);
+      return;
+    }
+
+    const ok = await this._updateOpeningPosition(
+      drag.edge,
+      drag.context,
+      drag.targetBeforeLength,
+      drag.openingLength,
+    );
+    this._updateEdgeEditorForSelection([drag.edge.id]);
+    if (!ok) {
+      currentFloor.value = drag.originalFloor;
+    }
+  }
+
+  private _handleOpeningPointerDown(e: PointerEvent, edge: ResolvedEdge): void {
+    if (
+      e.button !== 0 ||
+      this._canvasMode !== "openings" ||
+      activeTool.value !== "select"
+    ) {
+      return;
+    }
+
+    const floor = currentFloor.value;
+    if (!floor) return;
+    const storedEdge = floor.edges.find(
+      (candidate) => candidate.id === edge.id,
+    );
+    if (
+      !storedEdge ||
+      (storedEdge.type !== "door" && storedEdge.type !== "window")
+    ) {
+      return;
+    }
+
+    selection.value = { type: "edge", ids: [storedEdge.id] };
+    this._updateEdgeEditorForSelection([storedEdge.id]);
+
+    const context = this._getOpeningPositionContext(storedEdge);
+    if (!context) return;
+
+    e.stopPropagation();
+    e.preventDefault();
+
+    const point = this._screenToSvg({ x: e.clientX, y: e.clientY });
+    const projected = this._projectOpeningPoint(point, context);
+    const pointerOffset = Math.min(
+      context.openingLength,
+      Math.max(0, projected - context.beforeLength),
+    );
+    const blockedEdgeIds = [context.beforeEdge, context.afterEdge]
+      .filter((candidate) => candidate.length_locked)
+      .map((candidate) => candidate.id);
+
+    this._draggingOpening = {
+      edge: storedEdge,
+      context,
+      originalFloor: structuredClone(floor),
+      originalBeforeLength: context.beforeLength,
+      openingLength: context.openingLength,
+      pointerOffset,
+      targetBeforeLength: context.beforeLength,
+      startClientX: e.clientX,
+      startClientY: e.clientY,
+      hasMoved: false,
+      blockedEdgeIds,
+      blockedNotified: false,
+      pointerId: e.pointerId,
+    };
+    this._svg?.setPointerCapture(e.pointerId);
   }
 
   private _getSnappedPointForNode(point: Coordinates): Coordinates {
@@ -5490,19 +5720,7 @@ export class FpbCanvas extends LitElement {
     const resolved = resolveFloorEdges(floor);
 
     // If dragging a node, use the solver to preview all affected node positions
-    let edgesForChains = resolved.map((re) => ({
-      id: re.id,
-      start_node: re.start_node,
-      end_node: re.end_node,
-      startPos: re.startPos,
-      endPos: re.endPos,
-      thickness: re.thickness,
-      type: re.type,
-      opening_parts: re.opening_parts,
-      opening_type: re.opening_type,
-      swing_direction: re.swing_direction,
-      entity_id: re.entity_id,
-    }));
+    let edgesForChains = resolved.map((re) => ({ ...re }));
 
     if (this._draggingNode) {
       const {
@@ -5522,17 +5740,9 @@ export class FpbCanvas extends LitElement {
       } else {
         // Apply preview positions to resolved edges
         edgesForChains = resolved.map((re) => ({
-          id: re.id,
-          start_node: re.start_node,
-          end_node: re.end_node,
+          ...re,
           startPos: preview.get(re.start_node) ?? re.startPos,
           endPos: preview.get(re.end_node) ?? re.endPos,
-          thickness: re.thickness,
-          type: re.type,
-          opening_parts: re.opening_parts,
-          opening_type: re.opening_type,
-          swing_direction: re.swing_direction,
-          entity_id: re.entity_id,
         }));
       }
     }
@@ -5684,6 +5894,8 @@ export class FpbCanvas extends LitElement {
         const oType = edge.opening_type ?? "swing";
         const cls = edge.type === "window" ? "window" : "door";
         const overlayClass = `opening-overlay ${cls}-opening`;
+        const handleOpeningPointerDown = (event: PointerEvent) =>
+          this._handleOpeningPointerDown(event, edge);
 
         // Swing-type: always render via closed-state style (posts, segment, hinge)
         // with segment rotated by swingAngle for animation.
@@ -5770,7 +5982,7 @@ export class FpbCanvas extends LitElement {
             });
 
             return svg`
-              <g class="${dimClass} ${overlayClass}">
+              <g class="${dimClass} ${overlayClass}" @pointerdown=${handleOpeningPointerDown}>
                 ${this._fadedWedge(edge.id, wedgePath_c, hX_c, hY_c, edgeLen, "rgba(120, 144, 156, 0.08)")}
                 <path class="door-swing"
                       d="M${fX_c},${fY_c} C${arc_c.cp1x},${arc_c.cp1y} ${arc_c.cp2x},${arc_c.cp2y} ${arc_c.ox},${arc_c.oy}"/>
@@ -5881,7 +6093,7 @@ export class FpbCanvas extends LitElement {
               thickness: edge.thickness,
             });
             return svg`
-              <g class="${dimClass} ${overlayClass}">
+              <g class="${dimClass} ${overlayClass}" @pointerdown=${handleOpeningPointerDown}>
                 ${this._fadedWedge(`${edge.id}-l`, wedgeL, hL_X, hL_Y, halfLen_d, "rgba(100, 181, 246, 0.06)")}
                 ${this._fadedWedge(`${edge.id}-r`, wedgeR, hR_X, hR_Y, halfLen_d, "rgba(100, 181, 246, 0.06)")}
                 <path class="door-swing"
@@ -5913,7 +6125,7 @@ export class FpbCanvas extends LitElement {
             thickness: edge.thickness,
           });
           return svg`
-            <g class="${dimClass} ${overlayClass}">
+            <g class="${dimClass} ${overlayClass}" @pointerdown=${handleOpeningPointerDown}>
               ${this._fadedWedge(edge.id, wedgePath_w, hX_w, hY_w, edgeLen, "rgba(100, 181, 246, 0.06)")}
               <path class="door-swing" d="${arcPath_w}"/>
               <path class="opening-stop" d="${postPath(edge.startPos, 1)}"/>
@@ -5934,7 +6146,7 @@ export class FpbCanvas extends LitElement {
           const a2x = edge.startPos.x - nx * offset;
           const a2y = edge.startPos.y - ny * offset;
           return svg`
-            <g class="${dimClass} ${overlayClass}">
+            <g class="${dimClass} ${overlayClass}" @pointerdown=${handleOpeningPointerDown}>
               <path class="${cls}" d="${rectPath}"/>
               <line class="door-swing"
                     x1="${edge.startPos.x + nx * offset}" y1="${edge.startPos.y + ny * offset}"
@@ -5967,7 +6179,7 @@ export class FpbCanvas extends LitElement {
           const midY = (edge.startPos.y + edge.endPos.y) / 2;
           const tiltH = edgeLen * 0.25;
           return svg`
-            <g class="${dimClass} ${overlayClass}">
+            <g class="${dimClass} ${overlayClass}" @pointerdown=${handleOpeningPointerDown}>
               <path class="${cls}" d="${rectPath}"/>
               <line class="window-pane"
                     x1="${edge.startPos.x}" y1="${edge.startPos.y}"
