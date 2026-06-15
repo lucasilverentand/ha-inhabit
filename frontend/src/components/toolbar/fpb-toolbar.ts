@@ -52,7 +52,7 @@ const TOOL_ITEMS: Record<ToolType, AddMenuItem> = {
   opening: { id: "opening", icon: "mdi:plus", label: "Add opening" },
   door: { id: "door", icon: "mdi:door", label: "Door" },
   window: { id: "window", icon: "mdi:window-closed-variant", label: "Window" },
-  zone: { id: "zone", icon: "mdi:vector-polygon", label: "Zone" },
+  zone: { id: "zone", icon: "mdi:plus", label: "Add zone" },
   device: { id: "device", icon: "mdi:plus", label: "Add device" },
   light: { id: "light", icon: "mdi:lightbulb", label: "Light" },
   switch: { id: "switch", icon: "mdi:toggle-switch", label: "Switch" },
@@ -357,10 +357,9 @@ export class FpbToolbar extends LitElement {
     }
 
     .tool-button.add-action {
-      width: auto;
+      width: 36px;
       min-width: 36px;
-      padding: 0 12px;
-      gap: 7px;
+      padding: 0;
       background: var(--mode-accent, var(--primary-color));
       color: #fff;
     }
@@ -992,7 +991,10 @@ export class FpbToolbar extends LitElement {
     modeDef: { accent: string },
   ): ToolbarAction {
     const isAddAction =
-      item.id === "wall" || item.id === "opening" || item.id === "device";
+      item.id === "wall" ||
+      item.id === "opening" ||
+      item.id === "zone" ||
+      item.id === "device";
     const isActive = activeTool.value === item.id;
     return {
       id: `tool-${item.id}`,
@@ -1003,17 +1005,11 @@ export class FpbToolbar extends LitElement {
             ? "Stop adding openings"
             : item.id === "device"
               ? "Stop adding devices"
-              : "Stop adding walls"
+              : item.id === "zone"
+                ? "Stop adding zones"
+                : "Stop adding walls"
           : item.label,
-      shortLabel: isAddAction
-        ? isActive
-          ? "Stop"
-          : item.id === "opening"
-            ? "Opening"
-            : item.id === "device"
-              ? "Device"
-              : "Wall"
-        : undefined,
+      shortLabel: undefined,
       active: isActive,
       accent: modeDef.accent,
       variant: isAddAction ? "add" : undefined,
