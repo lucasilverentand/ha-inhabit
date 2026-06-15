@@ -1463,4 +1463,6 @@ export class FpbDevicePanel extends LitElement {
   }
 }
 
-customElements.define("fpb-device-panel", FpbDevicePanel);
+if (!customElements.get("fpb-device-panel")) {
+  customElements.define("fpb-device-panel", FpbDevicePanel);
+}

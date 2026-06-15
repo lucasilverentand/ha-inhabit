@@ -976,14 +976,22 @@ export class FpbToolbar extends LitElement {
     item: AddMenuItem,
     modeDef: { accent: string },
   ): ToolbarAction {
+    const isAddAction = item.id === "wall" || item.id === "opening";
+    const isActive = activeTool.value === item.id;
     return {
       id: `tool-${item.id}`,
-      icon: item.icon,
-      label: item.label,
-      active: activeTool.value === item.id,
+      icon: isAddAction && isActive ? "mdi:close" : item.icon,
+      label:
+        isAddAction && isActive
+          ? item.id === "opening"
+            ? "Stop adding openings"
+            : "Stop adding walls"
+          : item.label,
+      active: isActive,
       accent: modeDef.accent,
-      variant: item.id === "wall" || item.id === "opening" ? "add" : undefined,
-      run: () => this._handleToolSelect(item.id),
+      variant: isAddAction ? "add" : undefined,
+      run: () =>
+        this._handleToolSelect(isAddAction && isActive ? "select" : item.id),
     };
   }
 

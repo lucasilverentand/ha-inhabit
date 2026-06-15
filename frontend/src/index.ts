@@ -5,7 +5,9 @@
 import { HaFloorplanPanel } from "./ha-floorplan-panel";
 
 // Register the custom element
-customElements.define("ha-floorplan-panel", HaFloorplanPanel);
+if (!customElements.get("ha-floorplan-panel")) {
+  customElements.define("ha-floorplan-panel", HaFloorplanPanel);
+}
 
 // Export for module usage
 export { HaFloorplanPanel };

@@ -1665,6 +1665,15 @@ export class FpbCanvas extends LitElement {
         }
       }),
       effect(() => {
+        const tool = activeTool.value;
+        if (tool !== "wall") {
+          this._wallStartPoint = null;
+        }
+        if (!this._isOpeningTool(tool)) {
+          this._openingPreview = null;
+        }
+      }),
+      effect(() => {
         void mmwaveCalibrationTarget.value;
         this.requestUpdate();
       }),

@@ -593,4 +593,6 @@ export class FpbEntityPicker extends LitElement {
   }
 }
 
-customElements.define("fpb-entity-picker", FpbEntityPicker);
+if (!customElements.get("fpb-entity-picker")) {
+  customElements.define("fpb-entity-picker", FpbEntityPicker);
+}
