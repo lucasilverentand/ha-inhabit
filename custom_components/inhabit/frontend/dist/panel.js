@@ -3734,7 +3734,7 @@ function ft(t,e){return(e,i,o)=>((t,e,i)=>(i.configurable=!0,i.enumerable=!0,Ref
         <ha-icon icon=${t.icon}></ha-icon>
         <span class="overflow-label">${t.label}</span>
       </button>
-    `}connectedCallback(){super.connectedCallback(),this._documentListenerAttached||(document.addEventListener("click",this._handleDocumentClick),this._documentListenerAttached=!0),this._cleanupEffects.push(Ot(()=>{this._canvasMode=Kt.value}))}disconnectedCallback(){super.disconnectedCallback(),document.removeEventListener("click",this._handleDocumentClick),window.removeEventListener("resize",this._boundWindowResize),this._resizeObserver?.disconnect(),this._resizeObserver=void 0,this._documentListenerAttached=!1;for(const t of this._cleanupEffects)t();this._cleanupEffects=[]}firstUpdated(){this._resizeObserver=new ResizeObserver(([t])=>{const e=Math.round(t.contentRect.width);e!==this._toolbarWidth&&(this._toolbarWidth=e),this._updateToolbarMetrics()}),this._resizeObserver.observe(this),window.addEventListener("resize",this._boundWindowResize),this._updateToolbarMetrics()}_updateToolbarMetrics(){const t=this.getBoundingClientRect(),e=Math.round(t.width),i=Math.round(t.left+t.width/2);e!==this._toolbarWidth&&(this._toolbarWidth=e),i!==this._toolbarCenterX&&(this._toolbarCenterX=i)}render(){const t=Xt.value,e=Yt.value,i=this._canvasMode,o=t?.floors||[],n=Me(i),s=[Pe.walls,Pe.furniture,Pe.openings,Pe.placement,Pe.occupancy],r=function(t){return Me(t).tools}(i).map(t=>Xi[t]),a=this._toolbarActions(r,i,n),{direct:l,overflow:d}=this._splitActions(a);return H`
+    `}connectedCallback(){super.connectedCallback(),this._documentListenerAttached||(document.addEventListener("click",this._handleDocumentClick),this._documentListenerAttached=!0),this._cleanupEffects.push(Ot(()=>{this._canvasMode=Kt.value}))}disconnectedCallback(){super.disconnectedCallback(),document.removeEventListener("click",this._handleDocumentClick),window.removeEventListener("resize",this._boundWindowResize),this._resizeObserver?.disconnect(),this._resizeObserver=void 0,this._documentListenerAttached=!1;for(const t of this._cleanupEffects)t();this._cleanupEffects=[]}firstUpdated(){this._resizeObserver=new ResizeObserver(([t])=>{const e=Math.round(t.contentRect.width);e!==this._toolbarWidth&&(this._toolbarWidth=e),this._updateToolbarMetrics()}),this._resizeObserver.observe(this),window.addEventListener("resize",this._boundWindowResize),this._updateToolbarMetrics()}_updateToolbarMetrics(){const t=this.getBoundingClientRect(),e=Math.round(t.width),i=Math.round(t.left+t.width/2);e!==this._toolbarWidth&&(this._toolbarWidth=e),i!==this._toolbarCenterX&&(this._toolbarCenterX=i)}render(){const t=Xt.value,e=Yt.value,i=this._canvasMode,o=t?.floors||[],n=Me(i),s=[Pe.walls,Pe.furniture,Pe.openings,Pe.placement,Pe.occupancy],r=function(t){return Me(t).tools}(i).map(t=>Xi[t]),a=this._toolbarActions(r,i,n),{direct:l,overflow:d}=this._splitActions(a),c="occupancy"!==i&&a.length>0;return H`
       <!-- Left: Floor Selector -->
       <div class="toolbar-left">
         ${o.length>0?H`
@@ -3852,32 +3852,34 @@ function ft(t,e){return(e,i,o)=>((t,e,i)=>(i.configurable=!0,i.enumerable=!0,Ref
         </button>
       </div>
 
-      <!-- Map overlay: Undo/Redo + contextual tools -->
-      <div
-        class="map-actions"
-        style="--map-actions-x: ${this._toolbarCenterX?`${this._toolbarCenterX}px`:"50vw"};"
-      >
-        <div class="context-actions">
-          ${l.map(t=>this._renderActionButton(t))}
-          ${d.length>0?H`
-                <div class="overflow-wrapper">
-                  <button
-                    class="tool-button ${this._actionsMenuOpen?"active":""}"
-                    style="--mode-accent: ${n.accent}"
-                    @click=${this._toggleActionsMenu}
-                    title="More tools"
-                  >
-                    <ha-icon icon="mdi:dots-horizontal"></ha-icon>
-                  </button>
-                  ${this._actionsMenuOpen?H`
-                        <div class="overflow-menu">
-                          ${d.map(t=>this._renderOverflowItem(t))}
-                        </div>
-                      `:null}
-                </div>
-              `:null}
-        </div>
-      </div>
+      ${c?H`
+            <!-- Map overlay: Undo/Redo + contextual tools -->
+            <div
+              class="map-actions"
+              style="--map-actions-x: ${this._toolbarCenterX?`${this._toolbarCenterX}px`:"50vw"};"
+            >
+              <div class="context-actions">
+                ${l.map(t=>this._renderActionButton(t))}
+                ${d.length>0?H`
+                      <div class="overflow-wrapper">
+                        <button
+                          class="tool-button ${this._actionsMenuOpen?"active":""}"
+                          style="--mode-accent: ${n.accent}"
+                          @click=${this._toggleActionsMenu}
+                          title="More tools"
+                        >
+                          <ha-icon icon="mdi:dots-horizontal"></ha-icon>
+                        </button>
+                        ${this._actionsMenuOpen?H`
+                              <div class="overflow-menu">
+                                ${d.map(t=>this._renderOverflowItem(t))}
+                              </div>
+                            `:null}
+                      </div>
+                    `:null}
+              </div>
+            </div>
+          `:null}
     `}}t([gt({attribute:!1})],Yi.prototype,"hass",void 0),t([gt({attribute:!1})],Yi.prototype,"floorPlans",void 0),t([ut()],Yi.prototype,"_floorMenuOpen",void 0),t([ut()],Yi.prototype,"_actionsMenuOpen",void 0),t([ut()],Yi.prototype,"_modeMenuOpen",void 0),t([ut()],Yi.prototype,"_toolbarWidth",void 0),t([ut()],Yi.prototype,"_toolbarCenterX",void 0),t([ut()],Yi.prototype,"_canvasMode",void 0),t([ut()],Yi.prototype,"_renamingFloorId",void 0),t([ut()],Yi.prototype,"_renameValue",void 0),customElements.get("fpb-toolbar")||customElements.define("fpb-toolbar",Yi);class Ki extends dt{constructor(){super(...arguments),this.open=!1,this._mode="export",this._exportSelection=new Set,this._importEntries=[],this._importData=[],this._importing=!1,this._exporting=!1,this._error=null}static{this.styles=r`
     :host {
       display: none;

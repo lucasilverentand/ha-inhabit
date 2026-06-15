@@ -1173,6 +1173,7 @@ export class FpbToolbar extends LitElement {
     const menuItems = getModeTools(mode).map((toolId) => TOOL_ITEMS[toolId]);
     const actions = this._toolbarActions(menuItems, mode, modeDef);
     const { direct, overflow } = this._splitActions(actions);
+    const showMapActions = mode !== "occupancy" && actions.length > 0;
 
     return html`
       <!-- Left: Floor Selector -->
@@ -1316,44 +1317,50 @@ export class FpbToolbar extends LitElement {
         </button>
       </div>
 
-      <!-- Map overlay: Undo/Redo + contextual tools -->
-      <div
-        class="map-actions"
-        style="--map-actions-x: ${
-          this._toolbarCenterX ? `${this._toolbarCenterX}px` : "50vw"
-        };"
-      >
-        <div class="context-actions">
-          ${direct.map((action) => this._renderActionButton(action))}
-          ${
-            overflow.length > 0
-              ? html`
-                <div class="overflow-wrapper">
-                  <button
-                    class="tool-button ${this._actionsMenuOpen ? "active" : ""}"
-                    style="--mode-accent: ${modeDef.accent}"
-                    @click=${this._toggleActionsMenu}
-                    title="More tools"
-                  >
-                    <ha-icon icon="mdi:dots-horizontal"></ha-icon>
-                  </button>
-                  ${
-                    this._actionsMenuOpen
-                      ? html`
-                        <div class="overflow-menu">
-                          ${overflow.map((action) =>
-                            this._renderOverflowItem(action),
-                          )}
-                        </div>
-                      `
-                      : null
-                  }
-                </div>
-              `
-              : null
-          }
-        </div>
-      </div>
+      ${
+        showMapActions
+          ? html`
+            <!-- Map overlay: Undo/Redo + contextual tools -->
+            <div
+              class="map-actions"
+              style="--map-actions-x: ${
+                this._toolbarCenterX ? `${this._toolbarCenterX}px` : "50vw"
+              };"
+            >
+              <div class="context-actions">
+                ${direct.map((action) => this._renderActionButton(action))}
+                ${
+                  overflow.length > 0
+                    ? html`
+                      <div class="overflow-wrapper">
+                        <button
+                          class="tool-button ${this._actionsMenuOpen ? "active" : ""}"
+                          style="--mode-accent: ${modeDef.accent}"
+                          @click=${this._toggleActionsMenu}
+                          title="More tools"
+                        >
+                          <ha-icon icon="mdi:dots-horizontal"></ha-icon>
+                        </button>
+                        ${
+                          this._actionsMenuOpen
+                            ? html`
+                              <div class="overflow-menu">
+                                ${overflow.map((action) =>
+                                  this._renderOverflowItem(action),
+                                )}
+                              </div>
+                            `
+                            : null
+                        }
+                      </div>
+                    `
+                    : null
+                }
+              </div>
+            </div>
+          `
+          : null
+      }
     `;
   }
 }
