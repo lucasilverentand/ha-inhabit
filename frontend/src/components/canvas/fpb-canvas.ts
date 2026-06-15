@@ -372,6 +372,14 @@ export class FpbCanvas extends LitElement {
     pointerId: number;
   } | null = null;
 
+  private readonly _devicePickerTypes = [
+    "light",
+    "switch",
+    "button",
+    "mmwave",
+    "other",
+  ] as const;
+
   // ---- Background layer dragging state ----
   private _draggingLayer: {
     layerIdx: number;
@@ -1899,7 +1907,8 @@ export class FpbCanvas extends LitElement {
     const tool = activeTool.value;
     const snappedPoint = this._getSnappedPoint(
       point,
-      tool === "light" ||
+      tool === "device" ||
+        tool === "light" ||
         tool === "switch" ||
         tool === "button" ||
         tool === "other" ||
@@ -1910,13 +1919,7 @@ export class FpbCanvas extends LitElement {
     const mode = this._canvasMode;
 
     // Close entity picker if clicking outside (but not when in device mode placing a new one)
-    if (
-      this._pendingDevice &&
-      activeTool.value !== "light" &&
-      activeTool.value !== "switch" &&
-      activeTool.value !== "button" &&
-      activeTool.value !== "other"
-    ) {
+    if (this._pendingDevice && activeTool.value !== "device") {
       this._pendingDevice = null;
       this._showEntityPickerModal = false;
     }
@@ -2149,20 +2152,10 @@ export class FpbCanvas extends LitElement {
         const wallPoint =
           this._wallStartPoint && e.shiftKey ? this._cursorPos : snappedPoint;
         this._handleWallClick(wallPoint, e.shiftKey);
-      } else if (
-        mode === "placement" &&
-        (tool === "light" ||
-          tool === "switch" ||
-          tool === "button" ||
-          tool === "other")
-      ) {
+      } else if (mode === "placement" && tool === "device") {
         this._edgeEditor = null;
         this._multiEdgeEditor = null;
         this._handleDeviceClick(snappedPoint);
-      } else if (tool === "mmwave" && mode === "placement") {
-        this._edgeEditor = null;
-        this._multiEdgeEditor = null;
-        this._placeMmwave(snappedPoint);
       } else if (mode === "openings" && this._isOpeningTool(tool)) {
         if (this._openingPreview) {
           this._edgeEditor = null;
@@ -2365,7 +2358,8 @@ export class FpbCanvas extends LitElement {
     // Enable wall segment snapping for device and wall tools
     let snapped = this._getSnappedPoint(
       point,
-      tool === "light" ||
+      tool === "device" ||
+        tool === "light" ||
         tool === "switch" ||
         tool === "button" ||
         tool === "other" ||
@@ -9392,36 +9386,38 @@ export class FpbCanvas extends LitElement {
     }
   }
 
-  private async _placeDevice(entityId: string): Promise<void> {
+  private async _placeDevice(
+    entityId: string,
+    placementType: "light" | "switch" | "button" | "other",
+  ): Promise<void> {
     if (!this.hass || !this._pendingDevice) return;
 
     const floor = currentFloor.value;
     const floorPlan = currentFloorPlan.value;
     if (!floor || !floorPlan) return;
 
-    const tool = activeTool.value;
     const wsType =
-      tool === "light"
+      placementType === "light"
         ? "inhabit/lights/place"
-        : tool === "button"
+        : placementType === "button"
           ? "inhabit/buttons/place"
-          : tool === "other"
+          : placementType === "other"
             ? "inhabit/others/place"
             : "inhabit/switches/place";
     const removeType =
-      tool === "light"
+      placementType === "light"
         ? "inhabit/lights/remove"
-        : tool === "button"
+        : placementType === "button"
           ? "inhabit/buttons/remove"
-          : tool === "other"
+          : placementType === "other"
             ? "inhabit/others/remove"
             : "inhabit/switches/remove";
     const idKey =
-      tool === "light"
+      placementType === "light"
         ? "light_id"
-        : tool === "button"
+        : placementType === "button"
           ? "button_id"
-          : tool === "other"
+          : placementType === "other"
             ? "other_id"
             : "switch_id";
 
@@ -9443,8 +9439,8 @@ export class FpbCanvas extends LitElement {
       await reloadFloorData();
 
       pushAction({
-        type: `${tool}_place`,
-        description: `Place ${tool}`,
+        type: `${placementType}_place`,
+        description: `Place ${placementType}`,
         undo: async () => {
           await hass.callWS({
             type: removeType,
@@ -9465,8 +9461,8 @@ export class FpbCanvas extends LitElement {
         },
       });
     } catch (err) {
-      console.error(`Error placing ${tool}:`, err);
-      alert(`Failed to place ${tool}: ${err}`);
+      console.error(`Error placing ${placementType}:`, err);
+      alert(`Failed to place ${placementType}: ${err}`);
     }
 
     this._pendingDevice = null;
@@ -9847,43 +9843,33 @@ export class FpbCanvas extends LitElement {
     this._showEntityPickerModal = false;
   }
 
-  private _getPickerDomains(): string[] {
-    const tool = activeTool.value;
-    if (tool === "light") return ["light"];
-    if (tool === "switch") return ["switch"];
-    if (tool === "button") return ["button"];
-    return [];
-  }
-
-  private _getPickerExcludeDomains(): string[] {
-    const tool = activeTool.value;
-    if (tool === "other") return ["light", "switch", "button"];
-    return [];
-  }
-
   private _renderEntityPicker() {
     if (!this._showEntityPickerModal || !this._pendingDevice) return null;
-
-    const tool = activeTool.value;
-    const title =
-      tool === "light"
-        ? "Select Light"
-        : tool === "switch"
-          ? "Select Switch"
-          : tool === "button"
-            ? "Select Button"
-            : tool === "other"
-              ? "Select Entity"
-              : "Select Entity";
 
     return html`
       <fpb-entity-picker
         .hass=${this.hass}
-        .domains=${this._getPickerDomains()}
-        .excludeDomains=${this._getPickerExcludeDomains()}
-        title=${title}
+        .placementTypes=${[...this._devicePickerTypes]}
+        title="Add Device"
         @entities-confirmed=${(e: CustomEvent) => {
-          this._placeDevice(e.detail.entityIds[0]);
+          const placementType = e.detail.placementType as
+            | "light"
+            | "switch"
+            | "button"
+            | "mmwave"
+            | "other";
+          if (placementType === "mmwave") {
+            const point = this._pendingDevice?.position;
+            if (point) this._placeMmwave(point);
+          } else if (
+            placementType === "light" ||
+            placementType === "switch" ||
+            placementType === "button" ||
+            placementType === "other"
+          ) {
+            const entityId = e.detail.entityIds[0];
+            if (entityId) this._placeDevice(entityId, placementType);
+          }
           this._showEntityPickerModal = false;
         }}
         @picker-closed=${() => this._cancelDevicePlacement()}
@@ -10669,33 +10655,16 @@ export class FpbCanvas extends LitElement {
 
   private _renderDevicePreview() {
     const tool = activeTool.value;
-    if (
-      (tool !== "light" &&
-        tool !== "switch" &&
-        tool !== "button" &&
-        tool !== "other" &&
-        tool !== "mmwave") ||
-      this._pendingDevice
-    )
-      return null;
+    if (tool !== "device" || this._pendingDevice) return null;
 
-    const color =
-      tool === "light"
-        ? "#ffd600"
-        : tool === "switch"
-          ? "#4caf50"
-          : tool === "button"
-            ? "#2196f3"
-            : tool === "other"
-              ? "#9c27b0"
-              : "#2196f3";
+    const color = "#1565c0";
 
     return svg`
       <g class="device-preview">
         <circle
           cx="${this._cursorPos.x}"
           cy="${this._cursorPos.y}"
-          r="${tool === "mmwave" ? 8 : 12}"
+          r="12"
           fill="${color}"
           fill-opacity="0.3"
           stroke="${color}"

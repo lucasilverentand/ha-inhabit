@@ -329,6 +329,7 @@ export type ToolType =
   | "opening"
   | "door"
   | "window"
+  | "device"
   | "light"
   | "switch"
   | "mmwave"

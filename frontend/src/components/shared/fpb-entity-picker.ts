@@ -25,6 +25,19 @@ interface EntityEntry {
   domain: string;
 }
 
+type PlacementPickerType = "light" | "switch" | "button" | "mmwave" | "other";
+
+const PLACEMENT_TYPE_OPTIONS: Record<
+  PlacementPickerType,
+  { label: string; icon: string }
+> = {
+  light: { label: "Light", icon: "mdi:lightbulb" },
+  switch: { label: "Switch", icon: "mdi:toggle-switch" },
+  button: { label: "Button", icon: "mdi:gesture-tap-button" },
+  mmwave: { label: "mmWave", icon: "mdi:access-point" },
+  other: { label: "Other", icon: "mdi:devices" },
+};
+
 export class FpbEntityPicker extends LitElement {
   @property({ attribute: false })
   hass?: HomeAssistant;
@@ -55,8 +68,14 @@ export class FpbEntityPicker extends LitElement {
   @property({ type: String })
   placeholder = "Search entities...";
 
+  @property({ type: Array })
+  placementTypes: PlacementPickerType[] = [];
+
   @state()
   private _search = "";
+
+  @state()
+  private _placementType: PlacementPickerType = "light";
 
   /** Entity IDs staged for multi-add. */
   @state()
@@ -130,6 +149,44 @@ export class FpbEntityPicker extends LitElement {
 
     .search-container {
       padding: 12px 16px 8px;
+    }
+
+    .type-selector {
+      display: flex;
+      gap: 6px;
+      padding: 12px 16px 0;
+      overflow-x: auto;
+      scrollbar-width: none;
+    }
+
+    .type-selector::-webkit-scrollbar {
+      display: none;
+    }
+
+    .type-option {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-height: 36px;
+      padding: 0 11px;
+      border: 1px solid var(--divider-color, #dedede);
+      border-radius: 999px;
+      background: var(--card-background-color, #fff);
+      color: var(--secondary-text-color);
+      font-size: 13px;
+      font-weight: 600;
+      white-space: nowrap;
+      cursor: pointer;
+    }
+
+    .type-option.active {
+      border-color: var(--primary-color);
+      background: color-mix(in srgb, var(--primary-color) 14%, transparent);
+      color: var(--primary-color);
+    }
+
+    .type-option ha-icon {
+      --mdc-icon-size: 17px;
     }
 
     .search-input {
@@ -233,6 +290,34 @@ export class FpbEntityPicker extends LitElement {
       color: var(--secondary-text-color);
     }
 
+    .mmwave-choice {
+      padding: 18px 12px 24px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+      text-align: center;
+      color: var(--secondary-text-color);
+      font-size: 13px;
+    }
+
+    .mmwave-choice ha-icon {
+      --mdc-icon-size: 32px;
+      color: var(--primary-color);
+    }
+
+    .mmwave-choice button {
+      min-height: 40px;
+      padding: 0 18px;
+      border: none;
+      border-radius: 10px;
+      background: var(--primary-color);
+      color: var(--text-primary-color, #fff);
+      font-size: 13px;
+      font-weight: 650;
+      cursor: pointer;
+    }
+
     .dialog-footer {
       display: flex;
       justify-content: flex-end;
@@ -300,6 +385,15 @@ export class FpbEntityPicker extends LitElement {
         padding: 10px 16px;
       }
 
+      .type-selector {
+        padding: 12px 16px 0;
+      }
+
+      .type-option {
+        min-height: 44px;
+        padding: 0 14px;
+      }
+
       .search-input {
         min-height: 44px;
         font-size: 16px;
@@ -332,6 +426,9 @@ export class FpbEntityPicker extends LitElement {
   }
 
   override updated(changedProps: Map<string, unknown>): void {
+    if (changedProps.has("placementTypes")) {
+      this._ensurePlacementType();
+    }
     if (
       changedProps.has("hass") &&
       this.hass &&
@@ -340,6 +437,30 @@ export class FpbEntityPicker extends LitElement {
     ) {
       this._loadIntegrationEntities();
     }
+  }
+
+  private _ensurePlacementType(): void {
+    if (
+      this.placementTypes.length > 0 &&
+      !this.placementTypes.includes(this._placementType)
+    ) {
+      this._placementType = this.placementTypes[0];
+    }
+  }
+
+  private _activePlacementType(): PlacementPickerType | null {
+    if (this.placementTypes.length === 0) return null;
+    if (this.placementTypes.includes(this._placementType)) {
+      return this._placementType;
+    }
+    return this.placementTypes[0] ?? null;
+  }
+
+  private _selectPlacementType(type: PlacementPickerType): void {
+    if (type === this._placementType) return;
+    this._placementType = type;
+    this._search = "";
+    this._staged = new Set();
   }
 
   private async _loadIntegrationEntities(): Promise<void> {
@@ -410,8 +531,22 @@ export class FpbEntityPicker extends LitElement {
   private _getFilteredEntities(): EntityEntry[] {
     if (!this.hass) return [];
     const excludeSet = new Set(this.exclude);
-    const domainSet = new Set(this.domains);
-    const excludeDomainSet = new Set(this.excludeDomains);
+    const placementType = this._activePlacementType();
+    if (placementType === "mmwave") return [];
+    const pickerDomains =
+      placementType === "light"
+        ? ["light"]
+        : placementType === "switch"
+          ? ["switch"]
+          : placementType === "button"
+            ? ["button"]
+            : this.domains;
+    const pickerExcludeDomains =
+      placementType === "other"
+        ? [...this.excludeDomains, "light", "switch", "button"]
+        : this.excludeDomains;
+    const domainSet = new Set(pickerDomains);
+    const excludeDomainSet = new Set(pickerExcludeDomains);
     const terms = this._search.toLowerCase().split(/\s+/).filter(Boolean);
 
     const entries: Array<EntityEntry & { score: number }> = [];
@@ -476,7 +611,7 @@ export class FpbEntityPicker extends LitElement {
   private _confirm(entityIds: string[]): void {
     this.dispatchEvent(
       new CustomEvent("entities-confirmed", {
-        detail: { entityIds },
+        detail: { entityIds, placementType: this._activePlacementType() },
         bubbles: true,
         composed: true,
       }),
@@ -501,6 +636,7 @@ export class FpbEntityPicker extends LitElement {
   override render() {
     const results = this._getFilteredEntities();
     const stagedCount = this._staged.size;
+    const placementType = this._activePlacementType();
 
     return html`
       <div class="overlay" @click=${this._onOverlayClick} @keydown=${(
@@ -516,30 +652,67 @@ export class FpbEntityPicker extends LitElement {
             </button>
           </div>
 
-          <div class="search-container">
-            <input
-              class="search-input"
-              type="text"
-              .placeholder=${this.placeholder}
-              .value=${this._search}
-              @input=${(e: Event) => {
-                this._search = (e.target as HTMLInputElement).value;
-              }}
-              @keydown=${(e: KeyboardEvent) => {
-                if (e.key === "Escape") this._close();
-              }}
-            />
-          </div>
+          ${
+            this.placementTypes.length > 0
+              ? html`
+            <div class="type-selector" aria-label="Device type">
+              ${this.placementTypes.map((type) => {
+                const option = PLACEMENT_TYPE_OPTIONS[type];
+                return html`
+                  <button
+                    class="type-option ${placementType === type ? "active" : ""}"
+                    @click=${() => this._selectPlacementType(type)}
+                  >
+                    <ha-icon icon=${option.icon}></ha-icon>
+                    <span>${option.label}</span>
+                  </button>
+                `;
+              })}
+            </div>
+          `
+              : nothing
+          }
+
+          ${
+            placementType !== "mmwave"
+              ? html`
+            <div class="search-container">
+              <input
+                class="search-input"
+                type="text"
+                .placeholder=${this.placeholder}
+                .value=${this._search}
+                @input=${(e: Event) => {
+                  this._search = (e.target as HTMLInputElement).value;
+                }}
+                @keydown=${(e: KeyboardEvent) => {
+                  if (e.key === "Escape") this._close();
+                }}
+              />
+            </div>
+          `
+              : nothing
+          }
 
           <div class="result-list">
             ${
-              results.length > 0
-                ? repeat(
-                    results,
-                    (ent) => ent.entity_id,
-                    (ent) => {
-                      const isStaged = this._staged.has(ent.entity_id);
-                      return html`
+              placementType === "mmwave"
+                ? html`
+              <div class="mmwave-choice">
+                <ha-icon icon="mdi:access-point"></ha-icon>
+                <div>mmWave sensor</div>
+                <button @click=${() => this._confirm([])}>
+                  Place mmWave sensor
+                </button>
+              </div>
+            `
+                : results.length > 0
+                  ? repeat(
+                      results,
+                      (ent) => ent.entity_id,
+                      (ent) => {
+                        const isStaged = this._staged.has(ent.entity_id);
+                        return html`
                 <button
                   class="result-item ${isStaged ? "selected" : ""}"
                   @click=${() => this._onItemClick(ent.entity_id)}
@@ -561,9 +734,9 @@ export class FpbEntityPicker extends LitElement {
                   </div>
                 </button>
               `;
-                    },
-                  )
-                : html`
+                      },
+                    )
+                  : html`
               <div class="empty-state">
                 ${this._search ? "No matching entities" : "No entities available"}
               </div>

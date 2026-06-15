@@ -82,7 +82,7 @@ export const MAP_MODE_DEFINITIONS: Record<CanvasMode, MapModeDefinition> = {
     label: "Devices",
     icon: "mdi:devices",
     accent: "#1565c0",
-    tools: ["light", "switch", "button", "mmwave", "other"],
+    tools: ["device"],
     layers: ["background", "structure", "devices", "coverage", "labels"],
     showNormalDevices: true,
     showMmwave: true,

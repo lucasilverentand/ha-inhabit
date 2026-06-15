@@ -33,13 +33,7 @@ describe("map mode policy", () => {
     expect(getModeTools("walls")).to.deep.equal(["wall"]);
     expect(getModeTools("openings")).to.deep.equal(["opening"]);
     expect(getModeTools("furniture")).to.deep.equal(["zone"]);
-    expect(getModeTools("placement")).to.deep.equal([
-      "light",
-      "switch",
-      "button",
-      "mmwave",
-      "other",
-    ]);
+    expect(getModeTools("placement")).to.deep.equal(["device"]);
     expect(getModeTools("occupancy")).to.deep.equal([]);
   });
 
