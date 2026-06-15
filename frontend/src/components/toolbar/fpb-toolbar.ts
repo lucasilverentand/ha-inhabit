@@ -38,6 +38,7 @@ interface ToolbarAction {
   id: string;
   icon: string;
   label: string;
+  shortLabel?: string;
   active?: boolean;
   disabled?: boolean;
   accent?: string;
@@ -355,9 +356,10 @@ export class FpbToolbar extends LitElement {
     }
 
     .tool-button.add-action {
-      width: 36px;
+      width: auto;
       min-width: 36px;
-      padding: 0;
+      padding: 0 12px;
+      gap: 7px;
       background: var(--mode-accent, var(--primary-color));
       color: #fff;
     }
@@ -373,6 +375,13 @@ export class FpbToolbar extends LitElement {
 
     .tool-button.add-action ha-icon {
       --mdc-icon-size: 22px;
+    }
+
+    .tool-button-label {
+      font-size: 13px;
+      font-weight: 650;
+      line-height: 1;
+      white-space: nowrap;
     }
 
     .overflow-wrapper {
@@ -752,7 +761,7 @@ export class FpbToolbar extends LitElement {
       }
 
       .tool-button.add-action {
-        width: 42px;
+        width: auto;
         min-width: 42px;
       }
 
@@ -787,6 +796,11 @@ export class FpbToolbar extends LitElement {
       .tool-button.add-action {
         width: 40px;
         min-width: 40px;
+        padding: 0;
+      }
+
+      .tool-button-label {
+        display: none;
       }
     }
 
@@ -987,6 +1001,13 @@ export class FpbToolbar extends LitElement {
             ? "Stop adding openings"
             : "Stop adding walls"
           : item.label,
+      shortLabel: isAddAction
+        ? isActive
+          ? "Stop"
+          : item.id === "opening"
+            ? "Opening"
+            : "Wall"
+        : undefined,
       active: isActive,
       accent: modeDef.accent,
       variant: isAddAction ? "add" : undefined,
@@ -1061,6 +1082,11 @@ export class FpbToolbar extends LitElement {
         title=${action.label}
       >
         <ha-icon icon=${action.icon}></ha-icon>
+        ${
+          action.shortLabel
+            ? html`<span class="tool-button-label">${action.shortLabel}</span>`
+            : null
+        }
       </button>
     `;
   }
