@@ -4350,7 +4350,9 @@ export class FpbCanvas extends LitElement {
         );
         if (dist < 15) {
           selection.value = { type: "mmwave", ids: [mw.id] };
-          devicePanelTarget.value = null;
+          if (mode === "placement") {
+            devicePanelTarget.value = { id: mw.id, type: "mmwave" };
+          }
           return true;
         }
       }
