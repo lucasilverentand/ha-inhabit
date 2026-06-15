@@ -10,7 +10,7 @@ import {
 describe("map mode policy", () => {
   it("maps current canvas modes to task labels", () => {
     expect(getMapModeDefinition("viewing").label).to.equal("View");
-    expect(getMapModeDefinition("walls").label).to.equal("Rooms / Walls");
+    expect(getMapModeDefinition("walls").label).to.equal("Walls");
     expect(getMapModeDefinition("openings").label).to.equal("Doors & Windows");
     expect(getMapModeDefinition("furniture").label).to.equal("Zones");
     expect(getMapModeDefinition("placement").label).to.equal("Devices");
@@ -21,7 +21,7 @@ describe("map mode policy", () => {
     expect(
       getMapModeDefinitions().map((definition) => definition.label),
     ).to.deep.equal([
-      "Rooms / Walls",
+      "Walls",
       "Zones",
       "Doors & Windows",
       "Devices",

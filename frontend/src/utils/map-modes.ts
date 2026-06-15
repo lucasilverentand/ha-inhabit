@@ -34,7 +34,7 @@ export const MAP_MODE_DEFINITIONS: Record<CanvasMode, MapModeDefinition> = {
   },
   walls: {
     mode: "walls",
-    label: "Rooms / Walls",
+    label: "Walls",
     icon: "mdi:wall",
     accent: "#455a64",
     tools: ["wall"],
