@@ -59,6 +59,10 @@ import {
   summarizeIssues,
 } from "../../utils/device-issues";
 import {
+  getPlacedDeviceEntityIds,
+  isDeviceEntityAlreadyPlaced,
+} from "../../utils/device-placements";
+import {
   arePointsCollinear,
   snapToGrid as snapPoint,
 } from "../../utils/geometry";
@@ -9804,6 +9808,21 @@ export class FpbCanvas extends LitElement {
     const floor = currentFloor.value;
     const floorPlan = currentFloorPlan.value;
     if (!floor || !floorPlan) return;
+    if (
+      isDeviceEntityAlreadyPlaced(
+        {
+          lights: lightPlacements.value,
+          switches: switchPlacements.value,
+          buttons: buttonPlacements.value,
+          others: otherPlacements.value,
+        },
+        entityId,
+      )
+    ) {
+      alert(`${entityId} is already placed on this floor plan.`);
+      this._pendingDevice = null;
+      return;
+    }
 
     const wsType =
       placementType === "light"
@@ -10259,6 +10278,12 @@ export class FpbCanvas extends LitElement {
       <fpb-entity-picker
         .hass=${this.hass}
         .placementTypes=${[...this._devicePickerTypes]}
+        .exclude=${getPlacedDeviceEntityIds({
+          lights: lightPlacements.value,
+          switches: switchPlacements.value,
+          buttons: buttonPlacements.value,
+          others: otherPlacements.value,
+        })}
         title="Add Device"
         @entities-confirmed=${(e: CustomEvent) => {
           const placementType = e.detail.placementType as

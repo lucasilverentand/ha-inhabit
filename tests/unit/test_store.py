@@ -10,7 +10,10 @@ from custom_components.inhabit.models.automation_rule import (
     RuleAction,
     VisualRule,
 )
-from custom_components.inhabit.models.device_placement import LightPlacement
+from custom_components.inhabit.models.device_placement import (
+    LightPlacement,
+    SwitchPlacement,
+)
 from custom_components.inhabit.models.floor_plan import (
     Coordinates,
     Edge,
@@ -572,6 +575,49 @@ class TestLightPlacementOperations:
 
             removed = store.remove_light_placement(light.id)
             assert removed is True
+
+    @pytest.mark.asyncio
+    async def test_device_entity_placement_checks_across_types(self, mock_hass):
+        """Test detecting a placed entity across normal device placement types."""
+        with patch(
+            "custom_components.inhabit.store.floor_plan_store.Store",
+            return_value=create_mock_store(),
+        ):
+            store = FloorPlanStore(mock_hass)
+            await store.async_load()
+
+            fp = store.create_floor_plan(FloorPlan(name="House"))
+            other_fp = store.create_floor_plan(FloorPlan(name="Other House"))
+            floor = store.add_floor(fp.id, Floor(name="Ground", level=0))
+            other_floor = store.add_floor(other_fp.id, Floor(name="Ground", level=0))
+            light = store.place_light(
+                fp.id,
+                LightPlacement(
+                    entity_id="switch.shared",
+                    floor_id=floor.id,
+                    position=Coordinates(0, 0),
+                ),
+            )
+            store.place_switch(
+                other_fp.id,
+                SwitchPlacement(
+                    entity_id="switch.shared",
+                    floor_id=other_floor.id,
+                    position=Coordinates(0, 0),
+                ),
+            )
+
+            assert store.is_device_entity_placed(fp.id, "switch.shared") is True
+            assert (
+                store.is_device_entity_placed(
+                    fp.id,
+                    "switch.shared",
+                    exclude_placement_id=light.id,
+                )
+                is False
+            )
+            assert store.is_device_entity_placed(fp.id, "switch.unused") is False
+            assert store.get_device_placement_floor_plan_id(light.id) == fp.id
 
 
 class TestSensorConfigOperations:

@@ -29,6 +29,10 @@ import {
   getMmwavePlacementIssues,
   getNormalDeviceIssues,
 } from "../../utils/device-issues";
+import {
+  getPlacedDeviceEntityIds,
+  isDeviceEntityAlreadyPlaced,
+} from "../../utils/device-placements";
 import "../shared/fpb-entity-picker";
 
 interface CalibrationDraftPoint {
@@ -599,27 +603,34 @@ export class FpbDevicePanel extends LitElement {
   }
 
   private _getExcludedEntityIds(): string[] {
-    if (this.deviceType === "light") {
-      return lightPlacements.value
-        .filter((p) => p.id !== this.placementId)
-        .map((p) => p.entity_id);
-    } else if (this.deviceType === "switch") {
-      return switchPlacements.value
-        .filter((p) => p.id !== this.placementId)
-        .map((p) => p.entity_id);
-    } else if (this.deviceType === "button") {
-      return buttonPlacements.value
-        .filter((p) => p.id !== this.placementId)
-        .map((p) => p.entity_id);
-    } else {
-      return otherPlacements.value
-        .filter((p) => p.id !== this.placementId)
-        .map((p) => p.entity_id);
-    }
+    return getPlacedDeviceEntityIds(
+      {
+        lights: lightPlacements.value,
+        switches: switchPlacements.value,
+        buttons: buttonPlacements.value,
+        others: otherPlacements.value,
+      },
+      this.placementId,
+    );
   }
 
   private async _rebindEntity(newEntityId: string): Promise<void> {
     if (!this.hass) return;
+    if (
+      isDeviceEntityAlreadyPlaced(
+        {
+          lights: lightPlacements.value,
+          switches: switchPlacements.value,
+          buttons: buttonPlacements.value,
+          others: otherPlacements.value,
+        },
+        newEntityId,
+        this.placementId,
+      )
+    ) {
+      alert(`${newEntityId} is already placed on this floor plan.`);
+      return;
+    }
     try {
       if (this.deviceType === "light") {
         await this.hass.callWS({
