@@ -1025,18 +1025,18 @@ function ft(t,e){return(e,i,o)=>((t,e,i)=>(i.configurable=!0,i.enumerable=!0,Ref
     @media (max-width: 900px), (hover: none) and (pointer: coarse) {
       .wall-editor {
         position: fixed;
-        left: 10px;
-        right: 10px;
-        bottom: calc(88px + env(safe-area-inset-bottom));
+        left: 0;
+        right: 0;
+        bottom: 0;
         width: auto;
-        max-height: min(34vh, 300px);
-        padding: 14px;
-        border-radius: 18px;
+        max-height: min(76vh, 620px);
+        padding: 14px 14px calc(14px + env(safe-area-inset-bottom));
+        border-radius: 20px 20px 0 0;
         gap: 10px;
         overflow-y: auto;
         overscroll-behavior: contain;
         box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.22);
-        z-index: 260;
+        z-index: 320;
       }
 
       .wall-editor::before {
@@ -1090,10 +1090,10 @@ function ft(t,e){return(e,i,o)=>((t,e,i)=>(i.configurable=!0,i.enumerable=!0,Ref
 
       .wall-editor-actions {
         position: sticky;
-        bottom: -14px;
+        bottom: calc(-14px - env(safe-area-inset-bottom));
         z-index: 2;
-        margin: 0 -14px -14px;
-        padding: 10px 14px 14px;
+        margin: 0 -14px calc(-14px - env(safe-area-inset-bottom));
+        padding: 10px 14px calc(14px + env(safe-area-inset-bottom));
         background: var(--card-background-color, white);
       }
 
