@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.14.0](https://github.com/lucasilverentand/ha-inhabit/compare/v0.13.2...v0.14.0) (2026-06-17)
+
+
+### Features
+
+* add mmwave target calibration ([#51](https://github.com/lucasilverentand/ha-inhabit/issues/51)) ([64dc25d](https://github.com/lucasilverentand/ha-inhabit/commit/64dc25da28a19e72d7602c3b2f7d2035ab21b4db))
+
+
+### Bug Fixes
+
+* stabilize entity picker results ([#49](https://github.com/lucasilverentand/ha-inhabit/issues/49)) ([bd215e6](https://github.com/lucasilverentand/ha-inhabit/commit/bd215e643474ce57ae34d3c5a9a3346868ab4d3d))
+
 ## [0.13.2](https://github.com/lucasilverentand/ha-inhabit/compare/v0.13.1...v0.13.2) (2026-06-03)
 
 
