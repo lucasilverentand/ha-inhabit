@@ -3,6 +3,7 @@ import type { MmwavePlacement } from "../types.js";
 import {
   correctedRawTarget,
   filterJitter,
+  isCalibrationCaptureRunActive,
   rawTargetToWorld,
 } from "./mmwave-calibration.js";
 
@@ -21,6 +22,50 @@ function placement(overrides: Partial<MmwavePlacement> = {}): MmwavePlacement {
 }
 
 describe("mmWave calibration helpers", () => {
+  it("checks active calibration capture runs", () => {
+    const target = { placementId: "p1", targetIndex: 0 };
+
+    expect(
+      isCalibrationCaptureRunActive(
+        2,
+        2,
+        true,
+        "mmwave",
+        "p1",
+        "p1",
+        0,
+        target,
+      ),
+    ).to.equal(true);
+    expect(
+      isCalibrationCaptureRunActive(
+        1,
+        2,
+        true,
+        "mmwave",
+        "p1",
+        "p1",
+        0,
+        target,
+      ),
+    ).to.equal(false);
+    expect(
+      isCalibrationCaptureRunActive(
+        2,
+        2,
+        false,
+        "mmwave",
+        "p1",
+        "p1",
+        0,
+        target,
+      ),
+    ).to.equal(false);
+    expect(
+      isCalibrationCaptureRunActive(2, 2, true, "mmwave", "p1", "p1", 0, null),
+    ).to.equal(false);
+  });
+
   it("subtracts raw calibration bias", () => {
     const p = placement({
       calibration: {

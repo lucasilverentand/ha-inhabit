@@ -2,6 +2,31 @@ import type { Coordinates, FloorPlan, MmwavePlacement } from "../types";
 
 export type FloorPlanUnit = FloorPlan["unit"];
 
+export interface CalibrationCaptureTarget {
+  placementId: string;
+  targetIndex: number;
+}
+
+export function isCalibrationCaptureRunActive(
+  runId: number,
+  currentRunId: number,
+  isConnected: boolean,
+  deviceType: string,
+  panelPlacementId: string,
+  placementId: string,
+  targetIndex: number,
+  target: CalibrationCaptureTarget | null | undefined,
+): boolean {
+  return (
+    isConnected &&
+    deviceType === "mmwave" &&
+    panelPlacementId === placementId &&
+    currentRunId === runId &&
+    target?.placementId === placementId &&
+    target.targetIndex === targetIndex
+  );
+}
+
 export function mmToUnitScale(unit: FloorPlanUnit = "cm"): number {
   switch (unit) {
     case "m":

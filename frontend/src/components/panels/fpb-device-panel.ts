@@ -33,6 +33,7 @@ import {
   getPlacedDeviceEntityIds,
   isDeviceEntityAlreadyPlaced,
 } from "../../utils/device-placements";
+import { isCalibrationCaptureRunActive } from "../../utils/mmwave-calibration";
 import "../shared/fpb-entity-picker";
 
 interface CalibrationDraftPoint {
@@ -80,6 +81,8 @@ export class FpbDevicePanel extends LitElement {
 
   @state()
   private _calibrationDraftPoints: CalibrationDraftPoint[] = [];
+
+  private _calibrationRunId = 0;
 
   private _calibrationPointHandler = (event: Event) => {
     this._handleCalibrationPoint(event as CustomEvent);
@@ -518,9 +521,7 @@ export class FpbDevicePanel extends LitElement {
       "inhabit-mmwave-calibration-point",
       this._calibrationPointHandler,
     );
-    if (mmwaveCalibrationTarget.value?.placementId === this.placementId) {
-      mmwaveCalibrationTarget.value = null;
-    }
+    this._cancelCalibrationCapture();
     super.disconnectedCallback();
   }
 
@@ -1184,6 +1185,7 @@ export class FpbDevicePanel extends LitElement {
     const target = p.targets?.[targetIndex];
     if (!target?.x_entity_id || !target.y_entity_id) return;
 
+    this._calibrationRunId += 1;
     this._calibrating = true;
     this._calibrationSampleCount = 0;
     this._calibrationStatus = "Click the target location on the map";
@@ -1218,6 +1220,7 @@ export class FpbDevicePanel extends LitElement {
     const placement = this._getPlacement() as MmwavePlacement | null;
     if (!placement) return;
 
+    const runId = ++this._calibrationRunId;
     mmwaveCalibrationTarget.value = {
       placementId: placement.id,
       targetIndex: detail.targetIndex,
@@ -1235,6 +1238,7 @@ export class FpbDevicePanel extends LitElement {
       placement,
       detail.targetIndex,
       detail.point,
+      runId,
     );
   }
 
@@ -1242,6 +1246,7 @@ export class FpbDevicePanel extends LitElement {
     placement: MmwavePlacement,
     targetIndex: number,
     mapPoint: { x: number; y: number },
+    runId: number,
   ): Promise<void> {
     if (!this.hass) return;
 
@@ -1259,6 +1264,9 @@ export class FpbDevicePanel extends LitElement {
     const sampleGoal = 25;
 
     for (let i = 0; i < sampleGoal; i++) {
+      if (!this._isCalibrationRunActive(runId, placement.id, targetIndex)) {
+        return;
+      }
       const sample = this._readTargetSample(
         target.x_entity_id,
         target.y_entity_id,
@@ -1281,6 +1289,13 @@ export class FpbDevicePanel extends LitElement {
         sampling: true,
       };
       await new Promise((resolve) => window.setTimeout(resolve, 200));
+      if (!this._isCalibrationRunActive(runId, placement.id, targetIndex)) {
+        return;
+      }
+    }
+
+    if (!this._isCalibrationRunActive(runId, placement.id, targetIndex)) {
+      return;
     }
 
     if (samples.length < 10) {
@@ -1298,6 +1313,10 @@ export class FpbDevicePanel extends LitElement {
         sampleProgress: 1,
         status: "Needs 10 samples",
       };
+      return;
+    }
+
+    if (!this._isCalibrationRunActive(runId, placement.id, targetIndex)) {
       return;
     }
 
@@ -1330,6 +1349,7 @@ export class FpbDevicePanel extends LitElement {
     window.setTimeout(() => {
       const current = mmwaveCalibrationTarget.value;
       if (
+        this._calibrationRunId === runId &&
         current?.placementId === placement.id &&
         current.targetIndex === targetIndex &&
         current.status === "Captured"
@@ -1338,6 +1358,33 @@ export class FpbDevicePanel extends LitElement {
       }
     }, 900);
     this.requestUpdate();
+  }
+
+  private _cancelCalibrationCapture(): void {
+    this._calibrationRunId += 1;
+    this._calibrating = false;
+    this._calibrationSampleCount = 0;
+    if (mmwaveCalibrationTarget.value?.placementId === this.placementId) {
+      mmwaveCalibrationTarget.value = null;
+    }
+  }
+
+  private _isCalibrationRunActive(
+    runId: number,
+    placementId: string,
+    targetIndex: number,
+  ): boolean {
+    const target = mmwaveCalibrationTarget.value;
+    return isCalibrationCaptureRunActive(
+      runId,
+      this._calibrationRunId,
+      this.isConnected,
+      this.deviceType,
+      this.placementId,
+      placementId,
+      targetIndex,
+      target,
+    );
   }
 
   private _readTargetSample(

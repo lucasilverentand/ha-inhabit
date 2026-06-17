@@ -3209,6 +3209,7 @@ export class FpbCanvas extends LitElement {
     this._zonePolyPoints = [];
     this._pendingZonePolygon = null;
     selection.value = { type: "none", ids: [] };
+    mmwaveCalibrationTarget.value = null;
     devicePanelTarget.value = null;
     activeTool.value = "select";
   }
