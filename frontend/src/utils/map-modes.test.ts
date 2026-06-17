@@ -66,7 +66,20 @@ describe("map mode policy", () => {
     expect(shouldShowLayer("walls", "devices")).to.equal(false);
     expect(shouldShowLayer("placement", "devices")).to.equal(true);
     expect(shouldShowLayer("occupancy", "furniture")).to.equal(true);
+    expect(shouldShowLayer("occupancy", "devices")).to.equal(true);
+    expect(shouldShowLayer("occupancy", "coverage")).to.equal(true);
     expect(shouldShowLayer("viewing", "furniture")).to.equal(false);
+  });
+
+  it("keeps full mmwave visibility in occupancy mode", () => {
+    const policy = getCanvasModePolicy("occupancy");
+
+    expect(policy.showNormalDevices).to.equal(false);
+    expect(policy.showMmwave).to.equal(true);
+    expect(policy.showMmwaveCoverage).to.equal(true);
+    expect(policy.showWallEditing).to.equal(false);
+    expect(policy.showOpeningEditing).to.equal(false);
+    expect(policy.showZoneEditing).to.equal(false);
   });
 
   it("uses a focused calibration policy", () => {
