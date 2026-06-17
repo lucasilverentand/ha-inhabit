@@ -9,6 +9,7 @@ import {
   buttonPlacements,
   devicePanelTarget,
   lightPlacements,
+  mmwaveCalibrationTarget,
   mmwavePlacements,
   otherPlacements,
   selection,
@@ -16,13 +17,33 @@ import {
 } from "../../stores/signals";
 import type {
   ButtonPlacement,
+  Coordinates,
   HomeAssistant,
   LightPlacement,
   MmwavePlacement,
   OtherPlacement,
   SwitchPlacement,
 } from "../../types";
+import {
+  type DeviceIssue,
+  getMmwavePlacementIssues,
+  getNormalDeviceIssues,
+} from "../../utils/device-issues";
+import {
+  getPlacedDeviceEntityIds,
+  isDeviceEntityAlreadyPlaced,
+} from "../../utils/device-placements";
+import { isCalibrationCaptureRunActive } from "../../utils/mmwave-calibration";
 import "../shared/fpb-entity-picker";
+
+interface CalibrationDraftPoint {
+  target_index: number;
+  map_point: Coordinates;
+  raw_mean: Coordinates;
+  raw_stddev: Coordinates;
+  raw_bias?: Coordinates;
+  sample_count: number;
+}
 
 export class FpbDevicePanel extends LitElement {
   @property({ attribute: false })
@@ -42,6 +63,30 @@ export class FpbDevicePanel extends LitElement {
 
   @state()
   private _editingTargetAxis: "x" | "y" | null = null;
+
+  @state()
+  private _selectedCalibrationTarget = 0;
+
+  @state()
+  private _calibrating = false;
+
+  @state()
+  private _calibrationStatus = "";
+
+  @state()
+  private _calibrationSampleCount = 0;
+
+  @state()
+  private _calibrationDraftPlacementId: string | null = null;
+
+  @state()
+  private _calibrationDraftPoints: CalibrationDraftPoint[] = [];
+
+  private _calibrationRunId = 0;
+
+  private _calibrationPointHandler = (event: Event) => {
+    this._handleCalibrationPoint(event as CustomEvent);
+  };
 
   static override styles = css`
     :host {
@@ -75,6 +120,8 @@ export class FpbDevicePanel extends LitElement {
       background: none;
       border: none;
       cursor: pointer;
+      min-width: 32px;
+      min-height: 32px;
       padding: 4px;
       border-radius: 8px;
       color: var(--secondary-text-color, #999);
@@ -109,6 +156,31 @@ export class FpbDevicePanel extends LitElement {
       color: var(--secondary-text-color);
     }
 
+    .issue-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      background: rgba(255, 179, 0, 0.12);
+      border: 1px solid rgba(255, 179, 0, 0.45);
+    }
+
+    .issue-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      color: var(--primary-text-color);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    .issue-item ha-icon {
+      color: #f9a825;
+      flex: 0 0 auto;
+      --mdc-icon-size: 16px;
+    }
+
     .entity-row {
       display: flex;
       align-items: center;
@@ -127,6 +199,7 @@ export class FpbDevicePanel extends LitElement {
     }
 
     .rebind-btn {
+      min-height: 32px;
       padding: 4px 10px;
       border: 1px solid var(--divider-color, #e0e0e0);
       border-radius: 6px;
@@ -163,6 +236,7 @@ export class FpbDevicePanel extends LitElement {
     }
 
     .delete-btn {
+      min-height: 36px;
       padding: 8px 16px;
       background: var(--error-color, #f44336);
       color: #fff;
@@ -198,6 +272,8 @@ export class FpbDevicePanel extends LitElement {
       background: none;
       border: none;
       cursor: pointer;
+      min-width: 32px;
+      min-height: 32px;
       padding: 4px;
       border-radius: 6px;
       color: var(--secondary-text-color, #999);
@@ -239,6 +315,7 @@ export class FpbDevicePanel extends LitElement {
     }
 
     .add-target-btn {
+      min-height: 36px;
       padding: 6px 12px;
       background: var(--primary-color);
       color: var(--text-primary-color);
@@ -253,7 +330,200 @@ export class FpbDevicePanel extends LitElement {
     .add-target-btn:hover {
       opacity: 0.9;
     }
+
+    .calibration-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .calibration-row select {
+      flex: 1;
+      min-width: 0;
+      padding: 8px 10px;
+      border: 1px solid var(--divider-color, #e0e0e0);
+      border-radius: 8px;
+      background: var(--card-background-color, #fff);
+      color: var(--primary-text-color);
+      font-size: 13px;
+    }
+
+    .secondary-btn {
+      min-height: 36px;
+      padding: 8px 12px;
+      border: 1px solid var(--divider-color, #e0e0e0);
+      border-radius: 8px;
+      background: var(--card-background-color, #fff);
+      color: var(--primary-text-color);
+      cursor: pointer;
+      font-size: 13px;
+      white-space: nowrap;
+    }
+
+    .primary-btn {
+      min-height: 36px;
+      padding: 8px 12px;
+      border: none;
+      border-radius: 8px;
+      background: var(--primary-color);
+      color: var(--text-primary-color);
+      cursor: pointer;
+      font-size: 13px;
+      white-space: nowrap;
+    }
+
+    .primary-btn:disabled,
+    .secondary-btn:disabled {
+      cursor: not-allowed;
+      opacity: 0.55;
+    }
+
+    .calibration-status {
+      padding: 8px 10px;
+      border-radius: 8px;
+      background: var(--primary-background-color, #fafafa);
+      color: var(--secondary-text-color);
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    .calibration-metrics {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+    }
+
+    .calibration-points {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .calibration-point {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px;
+      border-radius: 8px;
+      background: var(--primary-background-color, #fafafa);
+      font-size: 12px;
+    }
+
+    .calibration-point-main {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .calibration-point-title {
+      font-weight: 600;
+      color: var(--primary-text-color);
+    }
+
+    .calibration-point-meta {
+      color: var(--secondary-text-color);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .calibration-point-remove {
+      width: 28px;
+      height: 28px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: none;
+      border-radius: 7px;
+      background: transparent;
+      color: var(--secondary-text-color);
+      cursor: pointer;
+      --mdc-icon-size: 16px;
+    }
+
+    .calibration-point-remove:hover {
+      color: var(--error-color, #f44336);
+      background: var(--card-background-color, #fff);
+    }
+
+    .metric {
+      padding: 8px 10px;
+      border-radius: 8px;
+      background: var(--primary-background-color, #fafafa);
+      font-size: 12px;
+      color: var(--secondary-text-color);
+    }
+
+    .metric strong {
+      display: block;
+      color: var(--primary-text-color);
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    @media (max-width: 900px), (hover: none) and (pointer: coarse) {
+      :host {
+        border-radius: 20px 20px 0 0;
+      }
+
+      .panel-header {
+        padding: 14px 16px 10px;
+      }
+
+      .panel-body {
+        max-height: calc(76vh - 56px);
+        overflow-y: auto;
+        padding: 14px 16px calc(18px + env(safe-area-inset-bottom));
+      }
+
+      .close-btn,
+      .rebind-btn,
+      .delete-btn,
+      .add-target-btn,
+      .primary-btn,
+      .secondary-btn,
+      .calibration-point-remove,
+      .target-card-header .remove-btn {
+        min-height: 44px;
+      }
+
+      .close-btn,
+      .calibration-point-remove,
+      .target-card-header .remove-btn {
+        min-width: 44px;
+      }
+
+      .entity-row,
+      .target-axis-row,
+      .calibration-point {
+        min-height: 44px;
+      }
+
+      .calibration-row {
+        align-items: stretch;
+      }
+
+      .calibration-row select {
+        min-height: 44px;
+      }
+    }
   `;
+
+  override connectedCallback(): void {
+    super.connectedCallback();
+    window.addEventListener(
+      "inhabit-mmwave-calibration-point",
+      this._calibrationPointHandler,
+    );
+  }
+
+  override disconnectedCallback(): void {
+    window.removeEventListener(
+      "inhabit-mmwave-calibration-point",
+      this._calibrationPointHandler,
+    );
+    this._cancelCalibrationCapture();
+    super.disconnectedCallback();
+  }
 
   private _getPlacement():
     | LightPlacement
@@ -295,28 +565,73 @@ export class FpbDevicePanel extends LitElement {
     return [];
   }
 
-  private _getExcludedEntityIds(): string[] {
-    if (this.deviceType === "light") {
-      return lightPlacements.value
-        .filter((p) => p.id !== this.placementId)
-        .map((p) => p.entity_id);
-    } else if (this.deviceType === "switch") {
-      return switchPlacements.value
-        .filter((p) => p.id !== this.placementId)
-        .map((p) => p.entity_id);
-    } else if (this.deviceType === "button") {
-      return buttonPlacements.value
-        .filter((p) => p.id !== this.placementId)
-        .map((p) => p.entity_id);
-    } else {
-      return otherPlacements.value
-        .filter((p) => p.id !== this.placementId)
-        .map((p) => p.entity_id);
+  private _getPlacementIssues(
+    placement:
+      | LightPlacement
+      | SwitchPlacement
+      | ButtonPlacement
+      | OtherPlacement
+      | MmwavePlacement,
+  ): DeviceIssue[] {
+    const states = this.hass?.states ?? {};
+    if (this.deviceType === "mmwave") {
+      return getMmwavePlacementIssues(placement as MmwavePlacement, states);
     }
+    return getNormalDeviceIssues(
+      placement as
+        | LightPlacement
+        | SwitchPlacement
+        | ButtonPlacement
+        | OtherPlacement,
+      states,
+    );
+  }
+
+  private _renderIssues(issues: DeviceIssue[]) {
+    if (issues.length === 0) return nothing;
+    return html`
+      <div class="issue-list" role="status">
+        ${issues.map(
+          (issue) => html`
+            <div class="issue-item">
+              <ha-icon icon="mdi:alert-circle"></ha-icon>
+              <span>${issue.message}</span>
+            </div>
+          `,
+        )}
+      </div>
+    `;
+  }
+
+  private _getExcludedEntityIds(): string[] {
+    return getPlacedDeviceEntityIds(
+      {
+        lights: lightPlacements.value,
+        switches: switchPlacements.value,
+        buttons: buttonPlacements.value,
+        others: otherPlacements.value,
+      },
+      this.placementId,
+    );
   }
 
   private async _rebindEntity(newEntityId: string): Promise<void> {
     if (!this.hass) return;
+    if (
+      isDeviceEntityAlreadyPlaced(
+        {
+          lights: lightPlacements.value,
+          switches: switchPlacements.value,
+          buttons: buttonPlacements.value,
+          others: otherPlacements.value,
+        },
+        newEntityId,
+        this.placementId,
+      )
+    ) {
+      alert(`${newEntityId} is already placed on this floor plan.`);
+      return;
+    }
     try {
       if (this.deviceType === "light") {
         await this.hass.callWS({
@@ -472,6 +787,7 @@ export class FpbDevicePanel extends LitElement {
       entityId && this.hass?.states[entityId]
         ? (this.hass.states[entityId].attributes?.friendly_name ?? entityId)
         : (entityId ?? "No entity");
+    const issues = this._getPlacementIssues(placement);
 
     return html`
       <div class="panel-header">
@@ -484,6 +800,7 @@ export class FpbDevicePanel extends LitElement {
         </button>
       </div>
       <div class="panel-body">
+        ${this._renderIssues(issues)}
         <!-- Entity binding (not shown for mmwave) -->
         ${
           this.deviceType !== "mmwave"
@@ -586,6 +903,7 @@ export class FpbDevicePanel extends LitElement {
       </div>
 
       ${this._renderTrackingTargets(p)}
+      ${this._renderCalibration(p)}
     `;
   }
 
@@ -693,6 +1011,516 @@ export class FpbDevicePanel extends LitElement {
     this._editingTargetAxis = null;
     await this._updateMmwave({ targets: newTargets });
   }
+
+  private _renderCalibration(p: MmwavePlacement) {
+    const targets = p.targets ?? [];
+    const selectedIndex =
+      this._selectedCalibrationTarget < targets.length
+        ? this._selectedCalibrationTarget
+        : 0;
+    const selectedTarget = targets[selectedIndex];
+    const canCalibrate = Boolean(
+      selectedTarget?.x_entity_id && selectedTarget?.y_entity_id,
+    );
+    const calibration = p.calibration;
+    const draftPoints = this._getCalibrationDraftPoints(p);
+    const pointCount =
+      calibration?.points?.length ?? (calibration?.enabled ? 1 : 0);
+    const transform = calibration?.world_transform;
+
+    return html`
+      <div class="section">
+        <div class="section-title">Calibration</div>
+        <div class="calibration-row">
+          <select
+            .value=${String(selectedIndex)}
+            ?disabled=${this._calibrating || targets.length === 0}
+            @change=${(e: Event) => {
+              this._selectedCalibrationTarget = Number(
+                (e.target as HTMLSelectElement).value,
+              );
+            }}
+          >
+            ${targets.map(
+              (_target, index) => html`
+                <option value=${String(index)}>Target ${index + 1}</option>
+              `,
+            )}
+          </select>
+          <button
+            class="primary-btn"
+            ?disabled=${!canCalibrate || this._calibrating}
+            @click=${() => this._armCalibration(p, selectedIndex)}
+          >
+            Capture point
+          </button>
+        </div>
+
+        ${
+          draftPoints.length > 0
+            ? html`
+              <div class="calibration-points">
+                ${draftPoints.map(
+                  (point, index) => html`
+                    <div class="calibration-point">
+                      <div class="calibration-point-main">
+                        <div class="calibration-point-title">
+                          Point ${index + 1} · Target ${point.target_index + 1}
+                        </div>
+                        <div class="calibration-point-meta">
+                          Map ${point.map_point.x.toFixed(1)}, ${point.map_point.y.toFixed(1)}
+                          · Raw ${point.raw_mean.x.toFixed(1)}, ${point.raw_mean.y.toFixed(1)}
+                          · ${point.sample_count} samples
+                        </div>
+                      </div>
+                      <button
+                        class="calibration-point-remove"
+                        title="Remove point"
+                        ?disabled=${this._calibrating}
+                        @click=${() => this._removeCalibrationPoint(index)}
+                      >
+                        <ha-icon icon="mdi:close"></ha-icon>
+                      </button>
+                    </div>
+                  `,
+                )}
+              </div>
+              <button
+                class="primary-btn"
+                ?disabled=${this._calibrating}
+                @click=${() => this._saveCalibration(p)}
+              >
+                Save calibration
+              </button>
+            `
+            : html`
+              <div class="calibration-status">
+                Capture one or more known target points.
+              </div>
+            `
+        }
+
+        ${
+          this._calibrationStatus
+            ? html`
+              <div class="calibration-status">
+                ${this._calibrationStatus}
+                ${
+                  this._calibrationSampleCount
+                    ? html` (${this._calibrationSampleCount} samples)`
+                    : nothing
+                }
+              </div>
+            `
+            : nothing
+        }
+
+        ${
+          calibration?.enabled
+            ? html`
+              <div class="calibration-metrics">
+                <div class="metric">
+                  <strong>${pointCount}</strong>
+                  Points
+                </div>
+                <div class="metric">
+                  <strong>${calibration.sample_count}</strong>
+                  Samples
+                </div>
+                <div class="metric">
+                  <strong>${calibration.jitter_radius.toFixed(2)}</strong>
+                  Jitter radius
+                </div>
+                <div class="metric">
+                  <strong>${calibration.raw_bias.x.toFixed(1)}</strong>
+                  X offset
+                </div>
+                <div class="metric">
+                  <strong>${calibration.raw_bias.y.toFixed(1)}</strong>
+                  Y offset
+                </div>
+                ${
+                  transform
+                    ? html`
+                      <div class="metric">
+                        <strong>${transform.residual_error.toFixed(2)}</strong>
+                        Fit error
+                      </div>
+                    `
+                    : nothing
+                }
+              </div>
+              <div class="calibration-status">
+                ${
+                  calibration.calibrated_at
+                    ? new Date(calibration.calibrated_at).toLocaleString()
+                    : "Calibration saved"
+                }
+              </div>
+              <button
+                class="secondary-btn"
+                ?disabled=${this._calibrating}
+                @click=${this._clearCalibration}
+              >
+                Clear calibration
+              </button>
+            `
+            : html`
+              ${
+                draftPoints.length > 0
+                  ? nothing
+                  : html`
+                <div class="calibration-status">
+                  No calibration saved.
+                </div>
+              `
+              }
+            `
+        }
+      </div>
+    `;
+  }
+
+  private _armCalibration(p: MmwavePlacement, targetIndex: number): void {
+    const target = p.targets?.[targetIndex];
+    if (!target?.x_entity_id || !target.y_entity_id) return;
+
+    this._calibrationRunId += 1;
+    this._calibrating = true;
+    this._calibrationSampleCount = 0;
+    this._calibrationStatus = "Click the target location on the map";
+    mmwaveCalibrationTarget.value = {
+      placementId: p.id,
+      targetIndex,
+      points: this._getCalibrationDraftPoints(p).map(
+        (point) => point.map_point,
+      ),
+      sampleCount: 0,
+      sampleGoal: 25,
+      sampleProgress: 0,
+      status: "Tap target point",
+    };
+  }
+
+  private async _handleCalibrationPoint(event: CustomEvent): Promise<void> {
+    const detail = event.detail as {
+      placementId?: string;
+      targetIndex?: number;
+      point?: { x: number; y: number };
+    };
+    if (
+      this.deviceType !== "mmwave" ||
+      detail.placementId !== this.placementId ||
+      detail.targetIndex === undefined ||
+      !detail.point
+    ) {
+      return;
+    }
+
+    const placement = this._getPlacement() as MmwavePlacement | null;
+    if (!placement) return;
+
+    const runId = ++this._calibrationRunId;
+    mmwaveCalibrationTarget.value = {
+      placementId: placement.id,
+      targetIndex: detail.targetIndex,
+      points: this._getCalibrationDraftPoints(placement).map(
+        (point) => point.map_point,
+      ),
+      activePoint: detail.point,
+      sampleCount: 0,
+      sampleGoal: 25,
+      sampleProgress: 0,
+      status: "Sampling",
+      sampling: true,
+    };
+    await this._sampleAndAddCalibrationPoint(
+      placement,
+      detail.targetIndex,
+      detail.point,
+      runId,
+    );
+  }
+
+  private async _sampleAndAddCalibrationPoint(
+    placement: MmwavePlacement,
+    targetIndex: number,
+    mapPoint: { x: number; y: number },
+    runId: number,
+  ): Promise<void> {
+    if (!this.hass) return;
+
+    const target = placement.targets?.[targetIndex];
+    if (!target?.x_entity_id || !target.y_entity_id) {
+      this._calibrating = false;
+      this._calibrationStatus = "Target needs both X and Y entities";
+      mmwaveCalibrationTarget.value = null;
+      return;
+    }
+
+    const samples: Array<{ x: number; y: number }> = [];
+    this._calibrationStatus = "Sampling target";
+    this._calibrationSampleCount = 0;
+    const sampleGoal = 25;
+
+    for (let i = 0; i < sampleGoal; i++) {
+      if (!this._isCalibrationRunActive(runId, placement.id, targetIndex)) {
+        return;
+      }
+      const sample = this._readTargetSample(
+        target.x_entity_id,
+        target.y_entity_id,
+      );
+      if (sample) {
+        samples.push(sample);
+        this._calibrationSampleCount = samples.length;
+      }
+      mmwaveCalibrationTarget.value = {
+        placementId: placement.id,
+        targetIndex,
+        points: this._getCalibrationDraftPoints(placement).map(
+          (point) => point.map_point,
+        ),
+        activePoint: mapPoint,
+        sampleCount: samples.length,
+        sampleGoal,
+        sampleProgress: (i + 1) / sampleGoal,
+        status: "Sampling",
+        sampling: true,
+      };
+      await new Promise((resolve) => window.setTimeout(resolve, 200));
+      if (!this._isCalibrationRunActive(runId, placement.id, targetIndex)) {
+        return;
+      }
+    }
+
+    if (!this._isCalibrationRunActive(runId, placement.id, targetIndex)) {
+      return;
+    }
+
+    if (samples.length < 10) {
+      this._calibrating = false;
+      this._calibrationStatus = "Calibration needs at least 10 valid samples";
+      mmwaveCalibrationTarget.value = {
+        placementId: placement.id,
+        targetIndex,
+        points: this._getCalibrationDraftPoints(placement).map(
+          (point) => point.map_point,
+        ),
+        activePoint: mapPoint,
+        sampleCount: samples.length,
+        sampleGoal,
+        sampleProgress: 1,
+        status: "Needs 10 samples",
+      };
+      return;
+    }
+
+    if (!this._isCalibrationRunActive(runId, placement.id, targetIndex)) {
+      return;
+    }
+
+    const rawMean = this._meanSamples(samples);
+    const rawStddev = this._stddevSamples(samples, rawMean);
+    const nextPoints = [
+      ...this._getCalibrationDraftPoints(placement),
+      {
+        target_index: targetIndex,
+        map_point: mapPoint,
+        raw_mean: rawMean,
+        raw_stddev: rawStddev,
+        sample_count: samples.length,
+      },
+    ];
+    this._calibrationDraftPlacementId = placement.id;
+    this._calibrationDraftPoints = nextPoints;
+    this._calibrating = false;
+    this._calibrationStatus = `Point ${nextPoints.length} captured`;
+    mmwaveCalibrationTarget.value = {
+      placementId: placement.id,
+      targetIndex,
+      points: nextPoints.map((point) => point.map_point),
+      activePoint: mapPoint,
+      sampleCount: samples.length,
+      sampleGoal,
+      sampleProgress: 1,
+      status: "Captured",
+    };
+    window.setTimeout(() => {
+      const current = mmwaveCalibrationTarget.value;
+      if (
+        this._calibrationRunId === runId &&
+        current?.placementId === placement.id &&
+        current.targetIndex === targetIndex &&
+        current.status === "Captured"
+      ) {
+        mmwaveCalibrationTarget.value = null;
+      }
+    }, 900);
+    this.requestUpdate();
+  }
+
+  private _cancelCalibrationCapture(): void {
+    this._calibrationRunId += 1;
+    this._calibrating = false;
+    this._calibrationSampleCount = 0;
+    if (mmwaveCalibrationTarget.value?.placementId === this.placementId) {
+      mmwaveCalibrationTarget.value = null;
+    }
+  }
+
+  private _isCalibrationRunActive(
+    runId: number,
+    placementId: string,
+    targetIndex: number,
+  ): boolean {
+    const target = mmwaveCalibrationTarget.value;
+    return isCalibrationCaptureRunActive(
+      runId,
+      this._calibrationRunId,
+      this.isConnected,
+      this.deviceType,
+      this.placementId,
+      placementId,
+      targetIndex,
+      target,
+    );
+  }
+
+  private _readTargetSample(
+    xEntityId: string,
+    yEntityId: string,
+  ): { x: number; y: number } | null {
+    const xState = this.hass?.states[xEntityId];
+    const yState = this.hass?.states[yEntityId];
+    if (!xState || !yState) return null;
+
+    const x = Number.parseFloat(xState.state);
+    const y = Number.parseFloat(yState.state);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+    if (x === 0 && y === 0) return null;
+    return { x, y };
+  }
+
+  private async _clearCalibration(): Promise<void> {
+    if (!this.hass || this.deviceType !== "mmwave") return;
+    this._calibrationStatus = "Clearing calibration";
+    try {
+      const result = await this.hass.callWS<MmwavePlacement>({
+        type: "inhabit/mmwave/clear_calibration",
+        placement_id: this.placementId,
+      });
+      mmwavePlacements.value = mmwavePlacements.value.map((p) =>
+        p.id === result.id ? result : p,
+      );
+      this._calibrationDraftPlacementId = this.placementId;
+      this._calibrationDraftPoints = [];
+      this._calibrationStatus = "Calibration cleared";
+    } catch (err) {
+      console.error("Failed to clear mmWave calibration:", err);
+      this._calibrationStatus = "Clear calibration failed";
+    }
+  }
+
+  private _getCalibrationDraftPoints(
+    placement: MmwavePlacement,
+  ): CalibrationDraftPoint[] {
+    if (this._calibrationDraftPlacementId === placement.id) {
+      return this._calibrationDraftPoints;
+    }
+
+    const points = this._pointsFromCalibration(placement);
+    this._calibrationDraftPlacementId = placement.id;
+    this._calibrationDraftPoints = points;
+    return points;
+  }
+
+  private _pointsFromCalibration(
+    placement: MmwavePlacement,
+  ): CalibrationDraftPoint[] {
+    const calibration = placement.calibration;
+    if (!calibration?.enabled) return [];
+    if (calibration.points?.length) {
+      return calibration.points.map((point) => ({ ...point }));
+    }
+    return [
+      {
+        target_index: calibration.target_index,
+        map_point: calibration.map_point,
+        raw_mean: calibration.raw_mean,
+        raw_stddev: calibration.raw_stddev,
+        raw_bias: calibration.raw_bias,
+        sample_count: calibration.sample_count,
+      },
+    ];
+  }
+
+  private _removeCalibrationPoint(index: number): void {
+    if (!this._calibrationDraftPlacementId) return;
+    this._calibrationDraftPoints = this._calibrationDraftPoints.filter(
+      (_point, pointIndex) => pointIndex !== index,
+    );
+    this._calibrationStatus =
+      this._calibrationDraftPoints.length > 0
+        ? "Point removed. Save calibration to apply."
+        : "No calibration points in draft";
+  }
+
+  private async _saveCalibration(placement: MmwavePlacement): Promise<void> {
+    if (!this.hass || this.deviceType !== "mmwave") return;
+    const points = this._getCalibrationDraftPoints(placement);
+    if (points.length === 0) {
+      this._calibrationStatus = "Capture at least one point";
+      return;
+    }
+
+    this._calibrating = true;
+    this._calibrationStatus = "Saving calibration";
+    try {
+      const result = await this.hass.callWS<MmwavePlacement>({
+        type: "inhabit/mmwave/calibrate",
+        placement_id: placement.id,
+        points,
+      });
+      mmwavePlacements.value = mmwavePlacements.value.map((p) =>
+        p.id === result.id ? result : p,
+      );
+      this._calibrationDraftPlacementId = result.id;
+      this._calibrationDraftPoints = this._pointsFromCalibration(result);
+      this._calibrationStatus = "Calibration saved";
+    } catch (err) {
+      console.error("Failed to calibrate mmWave placement:", err);
+      this._calibrationStatus = "Calibration failed";
+    } finally {
+      this._calibrating = false;
+      this.requestUpdate();
+    }
+  }
+
+  private _meanSamples(samples: Array<{ x: number; y: number }>): Coordinates {
+    return {
+      x: samples.reduce((sum, sample) => sum + sample.x, 0) / samples.length,
+      y: samples.reduce((sum, sample) => sum + sample.y, 0) / samples.length,
+    };
+  }
+
+  private _stddevSamples(
+    samples: Array<{ x: number; y: number }>,
+    mean: Coordinates,
+  ): Coordinates {
+    return {
+      x: Math.sqrt(
+        samples.reduce((sum, sample) => sum + (sample.x - mean.x) ** 2, 0) /
+          samples.length,
+      ),
+      y: Math.sqrt(
+        samples.reduce((sum, sample) => sum + (sample.y - mean.y) ** 2, 0) /
+          samples.length,
+      ),
+    };
+  }
 }
 
-customElements.define("fpb-device-panel", FpbDevicePanel);
+if (!customElements.get("fpb-device-panel")) {
+  customElements.define("fpb-device-panel", FpbDevicePanel);
+}

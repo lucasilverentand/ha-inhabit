@@ -28,6 +28,7 @@ from .engine.mmwave_target_processor import MmwaveTargetProcessor
 from .engine.simulated_target_processor import SimulatedTargetProcessor
 from .engine.virtual_sensor_engine import VirtualSensorEngine
 from .entities import ENTITY_PREFIX, SUFFIX_OCCUPANCY, SUFFIX_OVERRIDE
+from .frontend_cache import panel_module_url
 from .store import FloorPlanStore, ImageStore
 
 _LOGGER = logging.getLogger(__name__)
@@ -163,6 +164,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Register panel static path
     panel_path = hass.config.path("custom_components/inhabit/frontend/dist/panel.js")
+    module_url = panel_module_url(panel_path)
     if HAS_STATIC_PATH_CONFIG:
         await hass.http.async_register_static_paths(
             [
@@ -188,7 +190,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             config={
                 "_panel_custom": {
                     "name": "ha-floorplan-panel",
-                    "module_url": "/inhabit/panel.js",
+                    "module_url": module_url,
                 }
             },
         )

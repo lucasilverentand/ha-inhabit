@@ -218,4 +218,6 @@ export class FpbMmwavePanel extends LitElement {
   }
 }
 
-customElements.define("fpb-mmwave-panel", FpbMmwavePanel);
+if (!customElements.get("fpb-mmwave-panel")) {
+  customElements.define("fpb-mmwave-panel", FpbMmwavePanel);
+}

@@ -24,6 +24,13 @@ from ..models.zone import Zone
 
 _LOGGER = logging.getLogger(__name__)
 
+DEVICE_PLACEMENT_KEYS = (
+    "light_placements",
+    "switch_placements",
+    "button_placements",
+    "other_placements",
+)
+
 
 class FloorPlanStore:
     """Manages floor plan data persistence."""
@@ -430,6 +437,34 @@ class FloorPlanStore:
         if data:
             return LightPlacement.from_dict(data)
         return None
+
+    def get_device_placement_floor_plan_id(self, placement_id: str) -> str | None:
+        """Get the floor plan ID for a normal device placement."""
+        for key in DEVICE_PLACEMENT_KEYS:
+            data = self._data.get(key, {}).get(placement_id)
+            if data:
+                return data.get("floor_plan_id")
+        return None
+
+    def is_device_entity_placed(
+        self,
+        floor_plan_id: str,
+        entity_id: str,
+        exclude_placement_id: str | None = None,
+    ) -> bool:
+        """Return whether a normal device entity is already placed on a floor plan."""
+        if not entity_id:
+            return False
+
+        for key in DEVICE_PLACEMENT_KEYS:
+            for placement_id, data in self._data.get(key, {}).items():
+                if placement_id == exclude_placement_id:
+                    continue
+                if data.get("floor_plan_id") != floor_plan_id:
+                    continue
+                if data.get("entity_id") == entity_id:
+                    return True
+        return False
 
     # ==================== Switch Placements ====================
 

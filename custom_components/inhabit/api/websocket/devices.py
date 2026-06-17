@@ -39,6 +39,25 @@ def register(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_others_list)
 
 
+def _reject_duplicate_device_entity(
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+    store: Any,
+    floor_plan_id: str,
+    entity_id: str,
+    exclude_placement_id: str | None = None,
+) -> bool:
+    """Reject reusing the same entity as another normal device placement."""
+    if store.is_device_entity_placed(floor_plan_id, entity_id, exclude_placement_id):
+        connection.send_error(
+            msg["id"],
+            "duplicate_entity",
+            f"{entity_id} is already placed on this floor plan",
+        )
+        return True
+    return False
+
+
 # ==================== Light Placements ====================
 
 
@@ -64,6 +83,14 @@ def ws_lights_place(
         return
     store = hass.data[DOMAIN]["store"]
     if not _validate_placement_location(connection, msg, store):
+        return
+    if _reject_duplicate_device_entity(
+        connection,
+        msg,
+        store,
+        msg["floor_plan_id"],
+        msg["entity_id"],
+    ):
         return
     light = LightPlacement(
         entity_id=msg["entity_id"],
@@ -102,6 +129,16 @@ def ws_lights_update(
         return
 
     if "entity_id" in msg:
+        floor_plan_id = store.get_device_placement_floor_plan_id(msg["light_id"])
+        if floor_plan_id and _reject_duplicate_device_entity(
+            connection,
+            msg,
+            store,
+            floor_plan_id,
+            msg["entity_id"],
+            msg["light_id"],
+        ):
+            return
         light.entity_id = msg["entity_id"]
     if "position" in msg:
         light.position = Coordinates.from_dict(msg["position"])
@@ -183,6 +220,14 @@ def ws_switches_place(
     store = hass.data[DOMAIN]["store"]
     if not _validate_placement_location(connection, msg, store):
         return
+    if _reject_duplicate_device_entity(
+        connection,
+        msg,
+        store,
+        msg["floor_plan_id"],
+        msg["entity_id"],
+    ):
+        return
     switch = SwitchPlacement(
         entity_id=msg["entity_id"],
         floor_id=msg["floor_id"],
@@ -220,6 +265,16 @@ def ws_switches_update(
         return
 
     if "entity_id" in msg:
+        floor_plan_id = store.get_device_placement_floor_plan_id(msg["switch_id"])
+        if floor_plan_id and _reject_duplicate_device_entity(
+            connection,
+            msg,
+            store,
+            floor_plan_id,
+            msg["entity_id"],
+            msg["switch_id"],
+        ):
+            return
         switch.entity_id = msg["entity_id"]
     if "position" in msg:
         switch.position = Coordinates.from_dict(msg["position"])
@@ -301,6 +356,14 @@ def ws_buttons_place(
     store = hass.data[DOMAIN]["store"]
     if not _validate_placement_location(connection, msg, store):
         return
+    if _reject_duplicate_device_entity(
+        connection,
+        msg,
+        store,
+        msg["floor_plan_id"],
+        msg["entity_id"],
+    ):
+        return
     button = ButtonPlacement(
         entity_id=msg["entity_id"],
         floor_id=msg["floor_id"],
@@ -338,6 +401,16 @@ def ws_buttons_update(
         return
 
     if "entity_id" in msg:
+        floor_plan_id = store.get_device_placement_floor_plan_id(msg["button_id"])
+        if floor_plan_id and _reject_duplicate_device_entity(
+            connection,
+            msg,
+            store,
+            floor_plan_id,
+            msg["entity_id"],
+            msg["button_id"],
+        ):
+            return
         button.entity_id = msg["entity_id"]
     if "position" in msg:
         button.position = Coordinates.from_dict(msg["position"])
@@ -419,6 +492,14 @@ def ws_others_place(
     store = hass.data[DOMAIN]["store"]
     if not _validate_placement_location(connection, msg, store):
         return
+    if _reject_duplicate_device_entity(
+        connection,
+        msg,
+        store,
+        msg["floor_plan_id"],
+        msg["entity_id"],
+    ):
+        return
     other = OtherPlacement(
         entity_id=msg["entity_id"],
         floor_id=msg["floor_id"],
@@ -456,6 +537,16 @@ def ws_others_update(
         return
 
     if "entity_id" in msg:
+        floor_plan_id = store.get_device_placement_floor_plan_id(msg["other_id"])
+        if floor_plan_id and _reject_duplicate_device_entity(
+            connection,
+            msg,
+            store,
+            floor_plan_id,
+            msg["entity_id"],
+            msg["other_id"],
+        ):
+            return
         other.entity_id = msg["entity_id"]
     if "position" in msg:
         other.position = Coordinates.from_dict(msg["position"])
