@@ -1,5 +1,43 @@
 # Changelog
 
+## [0.14.0](https://github.com/lucasilverentand/ha-inhabit/compare/v0.13.2...v0.14.0) (2026-06-17)
+
+
+### Features
+
+* add mmwave target calibration ([#51](https://github.com/lucasilverentand/ha-inhabit/issues/51)) ([64dc25d](https://github.com/lucasilverentand/ha-inhabit/commit/64dc25da28a19e72d7602c3b2f7d2035ab21b4db))
+* support multipoint mmwave calibration ([#51](https://github.com/lucasilverentand/ha-inhabit/issues/51)) ([64dc25d](https://github.com/lucasilverentand/ha-inhabit/commit/64dc25da28a19e72d7602c3b2f7d2035ab21b4db))
+* refine map task modes ([#51](https://github.com/lucasilverentand/ha-inhabit/issues/51)) ([64dc25d](https://github.com/lucasilverentand/ha-inhabit/commit/64dc25da28a19e72d7602c3b2f7d2035ab21b4db))
+* collapse mobile toolbar actions ([#51](https://github.com/lucasilverentand/ha-inhabit/issues/51)) ([64dc25d](https://github.com/lucasilverentand/ha-inhabit/commit/64dc25da28a19e72d7602c3b2f7d2035ab21b4db))
+* show mmwave calibration progress on map ([#51](https://github.com/lucasilverentand/ha-inhabit/issues/51)) ([64dc25d](https://github.com/lucasilverentand/ha-inhabit/commit/64dc25da28a19e72d7602c3b2f7d2035ab21b4db))
+* isolate map editing layers ([#51](https://github.com/lucasilverentand/ha-inhabit/issues/51)) ([64dc25d](https://github.com/lucasilverentand/ha-inhabit/commit/64dc25da28a19e72d7602c3b2f7d2035ab21b4db))
+* add opening alignment controls ([#51](https://github.com/lucasilverentand/ha-inhabit/issues/51)) ([64dc25d](https://github.com/lucasilverentand/ha-inhabit/commit/64dc25da28a19e72d7602c3b2f7d2035ab21b4db))
+
+
+### Bug Fixes
+
+* stabilize entity picker results ([#49](https://github.com/lucasilverentand/ha-inhabit/issues/49)) ([bd215e6](https://github.com/lucasilverentand/ha-inhabit/commit/bd215e643474ce57ae34d3c5a9a3346868ab4d3d))
+* keep mobile editors off the map ([#51](https://github.com/lucasilverentand/ha-inhabit/issues/51)) ([64dc25d](https://github.com/lucasilverentand/ha-inhabit/commit/64dc25da28a19e72d7602c3b2f7d2035ab21b4db))
+* dock mobile editor sheets ([#51](https://github.com/lucasilverentand/ha-inhabit/issues/51)) ([64dc25d](https://github.com/lucasilverentand/ha-inhabit/commit/64dc25da28a19e72d7602c3b2f7d2035ab21b4db))
+* collapse mode switcher on constrained toolbars ([#51](https://github.com/lucasilverentand/ha-inhabit/issues/51)) ([64dc25d](https://github.com/lucasilverentand/ha-inhabit/commit/64dc25da28a19e72d7602c3b2f7d2035ab21b4db))
+* name editor layers clearly ([#51](https://github.com/lucasilverentand/ha-inhabit/issues/51)) ([64dc25d](https://github.com/lucasilverentand/ha-inhabit/commit/64dc25da28a19e72d7602c3b2f7d2035ab21b4db))
+* move tool actions onto map ([#51](https://github.com/lucasilverentand/ha-inhabit/issues/51)) ([64dc25d](https://github.com/lucasilverentand/ha-inhabit/commit/64dc25da28a19e72d7602c3b2f7d2035ab21b4db))
+* cache-bust inhabit panel module ([#51](https://github.com/lucasilverentand/ha-inhabit/issues/51)) ([64dc25d](https://github.com/lucasilverentand/ha-inhabit/commit/64dc25da28a19e72d7602c3b2f7d2035ab21b4db))
+* simplify map add controls for walls, zones, devices, and openings ([#51](https://github.com/lucasilverentand/ha-inhabit/issues/51)) ([64dc25d](https://github.com/lucasilverentand/ha-inhabit/commit/64dc25da28a19e72d7602c3b2f7d2035ab21b4db))
+* make active add tools cancelable ([#51](https://github.com/lucasilverentand/ha-inhabit/issues/51)) ([64dc25d](https://github.com/lucasilverentand/ha-inhabit/commit/64dc25da28a19e72d7602c3b2f7d2035ab21b4db))
+* drag openings along walls and respect locked side lengths ([#51](https://github.com/lucasilverentand/ha-inhabit/issues/51)) ([64dc25d](https://github.com/lucasilverentand/ha-inhabit/commit/64dc25da28a19e72d7602c3b2f7d2035ab21b4db))
+* stop device add mode reliably ([#51](https://github.com/lucasilverentand/ha-inhabit/issues/51)) ([64dc25d](https://github.com/lucasilverentand/ha-inhabit/commit/64dc25da28a19e72d7602c3b2f7d2035ab21b4db))
+* hide occupancy map actions ([#51](https://github.com/lucasilverentand/ha-inhabit/issues/51)) ([64dc25d](https://github.com/lucasilverentand/ha-inhabit/commit/64dc25da28a19e72d7602c3b2f7d2035ab21b4db))
+* open mmwave card from marker ([#51](https://github.com/lucasilverentand/ha-inhabit/issues/51)) ([64dc25d](https://github.com/lucasilverentand/ha-inhabit/commit/64dc25da28a19e72d7602c3b2f7d2035ab21b4db))
+* stack mobile map controls ([#51](https://github.com/lucasilverentand/ha-inhabit/issues/51)) ([64dc25d](https://github.com/lucasilverentand/ha-inhabit/commit/64dc25da28a19e72d7602c3b2f7d2035ab21b4db))
+* prevent duplicate device placements ([#51](https://github.com/lucasilverentand/ha-inhabit/issues/51)) ([64dc25d](https://github.com/lucasilverentand/ha-inhabit/commit/64dc25da28a19e72d7602c3b2f7d2035ab21b4db))
+* cancel stale mmwave calibration captures ([#51](https://github.com/lucasilverentand/ha-inhabit/issues/51)) ([64dc25d](https://github.com/lucasilverentand/ha-inhabit/commit/64dc25da28a19e72d7602c3b2f7d2035ab21b4db))
+
+
+### Dependencies
+
+* bump aiohttp in the uv group across one directory ([#48](https://github.com/lucasilverentand/ha-inhabit/issues/48)) ([1312408](https://github.com/lucasilverentand/ha-inhabit/commit/13124087c2446c3aacd0d9315fdc342affff28c2))
+
 ## [0.13.2](https://github.com/lucasilverentand/ha-inhabit/compare/v0.13.1...v0.13.2) (2026-06-03)
 
 
