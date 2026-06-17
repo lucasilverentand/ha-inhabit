@@ -15,6 +15,7 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.restore_state import RestoreEntity
 
 from ..const import (
     ATTR_CONFIDENCE,
@@ -34,6 +35,30 @@ from ..models.virtual_sensor import OccupancyStateData
 from .const import ENTITY_PREFIX, SUFFIX_OCCUPANCY
 
 _LOGGER = logging.getLogger(__name__)
+
+_VALID_OCCUPANCY_STATES = {
+    OccupancyState.VACANT,
+    OccupancyState.OCCUPIED,
+    OccupancyState.CHECKING,
+}
+
+
+def _restored_occupancy_state_data(restored_state: Any) -> OccupancyStateData | None:
+    """Convert a restored HA state into occupancy state data."""
+    attributes = dict(restored_state.attributes or {})
+    state = attributes.get(ATTR_STATE_MACHINE_STATE)
+    if state not in _VALID_OCCUPANCY_STATES:
+        state = (
+            OccupancyState.OCCUPIED
+            if restored_state.state == "on"
+            else OccupancyState.VACANT
+        )
+
+    attributes["state"] = state
+    try:
+        return OccupancyStateData.from_dict(attributes)
+    except (TypeError, ValueError):
+        return OccupancyStateData(state=state)
 
 
 @callback
@@ -161,7 +186,7 @@ async def async_setup_entry(
     )
 
 
-class VirtualOccupancySensor(BinarySensorEntity):
+class VirtualOccupancySensor(RestoreEntity, BinarySensorEntity):
     """Virtual occupancy sensor for a room."""
 
     _attr_device_class = BinarySensorDeviceClass.OCCUPANCY
@@ -234,10 +259,20 @@ class VirtualOccupancySensor(BinarySensorEntity):
         """Run when entity about to be added to hass."""
         await super().async_added_to_hass()
 
-        # Get initial state from engine
+        restored_state = await self.async_get_last_state()
+        restored_state_data = None
+        if restored_state:
+            restored_state_data = _restored_occupancy_state_data(restored_state)
+            if restored_state_data:
+                self._state_data = restored_state_data
+
+        # Get initial state from engine. Keep restored occupied/checking states
+        # until the startup settle reconciliation republishes current engine state.
         sensor_engine = self.hass.data[DOMAIN]["sensor_engine"]
         state = sensor_engine.get_state(self._room_id)
-        if state:
+        if state and (
+            restored_state_data is None or state.state != OccupancyState.VACANT
+        ):
             self._state_data = state
 
         # Subscribe to state changes

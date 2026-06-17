@@ -328,6 +328,16 @@ class VirtualSensorEngine:
             room_id: machine.state for room_id, machine in self._state_machines.items()
         }
 
+    def republish_current_states(self) -> None:
+        """Dispatch current state for every managed room or zone."""
+        for room_id, state in self.get_all_states().items():
+            async_dispatcher_send(
+                self.hass,
+                SIGNAL_OCCUPANCY_STATE_CHANGED,
+                room_id,
+                state,
+            )
+
     def set_room_occupancy(self, room_id: str, state: str) -> bool:
         """Manually set a room's occupancy state."""
         machine = self._state_machines.get(room_id)

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from unittest.mock import ANY, MagicMock, call, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 
 from custom_components.inhabit.const import (
     ATTR_CONFIDENCE,
@@ -212,6 +212,89 @@ class TestSensorStateChange:
 
         assert current_state.state == OccupancyState.OCCUPIED
         assert current_state.confidence == 0.95
+
+
+class TestSensorRestoreState:
+    """Test virtual occupancy sensor restore behavior."""
+
+    async def test_added_restores_checking_state_from_last_state(self, mock_hass):
+        """A restored CHECKING state should report occupied immediately."""
+        sensor_engine = MagicMock()
+        sensor_engine.get_state.return_value = None
+        mock_hass.data = {DOMAIN: {"sensor_engine": sensor_engine}}
+        restored_state = MagicMock(
+            state="on",
+            attributes={
+                ATTR_STATE_MACHINE_STATE: OccupancyState.CHECKING,
+                ATTR_CONFIDENCE: 0.4,
+                ATTR_CONTRIBUTING_SENSORS: ["_spatial_mmwave_room_1"],
+            },
+        )
+        entity = binary_sensor.VirtualOccupancySensor(
+            mock_hass, "fp_1", "Home", "room_1", "Living Room"
+        )
+        entity.async_get_last_state = AsyncMock(return_value=restored_state)
+        entity.async_on_remove = MagicMock()
+
+        with patch(
+            "custom_components.inhabit.entities.binary_sensor.async_dispatcher_connect",
+            return_value=MagicMock(),
+        ):
+            await entity.async_added_to_hass()
+
+        assert entity.is_on is True
+        assert entity._state_data.state == OccupancyState.CHECKING
+        assert entity._state_data.confidence == 0.4
+        assert "_spatial_mmwave_room_1" in entity._state_data.contributing_sensors
+
+    async def test_added_falls_back_to_binary_on_for_old_restored_state(
+        self, mock_hass
+    ):
+        """Older restored states without attributes should restore as occupied."""
+        sensor_engine = MagicMock()
+        sensor_engine.get_state.return_value = None
+        mock_hass.data = {DOMAIN: {"sensor_engine": sensor_engine}}
+        restored_state = MagicMock(state="on", attributes={})
+        entity = binary_sensor.VirtualOccupancySensor(
+            mock_hass, "fp_1", "Home", "room_1", "Living Room"
+        )
+        entity.async_get_last_state = AsyncMock(return_value=restored_state)
+        entity.async_on_remove = MagicMock()
+
+        with patch(
+            "custom_components.inhabit.entities.binary_sensor.async_dispatcher_connect",
+            return_value=MagicMock(),
+        ):
+            await entity.async_added_to_hass()
+
+        assert entity.is_on is True
+        assert entity._state_data.state == OccupancyState.OCCUPIED
+
+    async def test_added_keeps_restored_occupied_until_reconcile(self, mock_hass):
+        """A startup VACANT engine state should not clear restored occupancy."""
+        sensor_engine = MagicMock()
+        sensor_engine.get_state.return_value = OccupancyStateData(
+            state=OccupancyState.VACANT
+        )
+        mock_hass.data = {DOMAIN: {"sensor_engine": sensor_engine}}
+        restored_state = MagicMock(
+            state="on",
+            attributes={ATTR_STATE_MACHINE_STATE: OccupancyState.OCCUPIED},
+        )
+        entity = binary_sensor.VirtualOccupancySensor(
+            mock_hass, "fp_1", "Home", "room_1", "Living Room"
+        )
+        entity.async_get_last_state = AsyncMock(return_value=restored_state)
+        entity.async_on_remove = MagicMock()
+
+        with patch(
+            "custom_components.inhabit.entities.binary_sensor.async_dispatcher_connect",
+            return_value=MagicMock(),
+        ):
+            await entity.async_added_to_hass()
+
+        assert entity.is_on is True
+        assert entity._state_data.state == OccupancyState.OCCUPIED
 
 
 class TestSensorDeviceInfo:
