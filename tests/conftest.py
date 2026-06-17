@@ -39,12 +39,40 @@ if "homeassistant" not in sys.modules:
     sys.modules["homeassistant.helpers.dispatcher"] = MagicMock()
     sys.modules["homeassistant.helpers.entity"] = MagicMock()
     sys.modules["homeassistant.helpers.entity_platform"] = MagicMock()
+    _restore_state_mock = MagicMock()
+
+    class _RestoreEntity:
+        async def async_added_to_hass(self) -> None:
+            pass
+
+        async def async_get_last_state(self) -> None:
+            return None
+
+    _restore_state_mock.RestoreEntity = _RestoreEntity
+    sys.modules["homeassistant.helpers.restore_state"] = _restore_state_mock
     sys.modules["homeassistant.helpers.typing"] = MagicMock()
     sys.modules["homeassistant.components"] = MagicMock()
     sys.modules["homeassistant.components.frontend"] = MagicMock()
     sys.modules["homeassistant.components.websocket_api"] = MagicMock()
     sys.modules["homeassistant.components.http"] = MagicMock()
-    sys.modules["homeassistant.components.binary_sensor"] = MagicMock()
+    _binary_sensor_mock = MagicMock()
+
+    class _BinarySensorDeviceClass:
+        OCCUPANCY = "occupancy"
+
+    class _BinarySensorEntity:
+        async def async_added_to_hass(self) -> None:
+            pass
+
+        def async_on_remove(self, *_args, **_kwargs) -> None:
+            pass
+
+        def async_write_ha_state(self) -> None:
+            pass
+
+    _binary_sensor_mock.BinarySensorDeviceClass = _BinarySensorDeviceClass
+    _binary_sensor_mock.BinarySensorEntity = _BinarySensorEntity
+    sys.modules["homeassistant.components.binary_sensor"] = _binary_sensor_mock
     sys.modules["homeassistant.components.button"] = MagicMock()
     sys.modules["homeassistant.helpers.entity_registry"] = MagicMock()
 

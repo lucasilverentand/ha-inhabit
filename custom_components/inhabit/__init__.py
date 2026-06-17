@@ -15,9 +15,10 @@ except ImportError:
     # Home Assistant < 2024.7
     HAS_STATIC_PATH_CONFIG = False
 from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.typing import ConfigType
 
 from .api import http as http_api
@@ -34,6 +35,7 @@ from .store import FloorPlanStore, ImageStore
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS_LIST: list[Platform] = [Platform.BINARY_SENSOR, Platform.BUTTON]
+RESTORED_OCCUPANCY_RECONCILE_DELAY = 60
 
 
 def _sync_all_devices(
@@ -206,6 +208,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Start mmWave target processor (after sensor engine, so subscriptions are ready)
     await mmwave_processor.async_start()
+
+    @callback
+    def _reconcile_restored_occupancy(_now) -> None:
+        """Republish current occupancy after startup entities have settled."""
+        sensor_engine.republish_current_states()
+
+    entry.async_on_unload(
+        async_call_later(
+            hass,
+            RESTORED_OCCUPANCY_RECONCILE_DELAY,
+            _reconcile_restored_occupancy,
+        )
+    )
 
     _LOGGER.info("Inhabit Floor Plan Builder setup complete")
     return True

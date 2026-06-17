@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sys
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
@@ -722,3 +722,44 @@ class TestConfigSync:
         engine = await _build_engine(mock_hass, store, patched_ha)
 
         assert engine.get_state("room_nonexistent") is None
+
+    @pytest.mark.asyncio
+    async def test_republish_current_states_dispatches_vacant_states(
+        self, mock_hass, patched_ha
+    ):
+        """republish_current_states should send current state for every machine."""
+        from custom_components.inhabit.engine.virtual_sensor_engine import (
+            SIGNAL_OCCUPANCY_STATE_CHANGED,
+        )
+
+        store = _mock_store()
+        engine = await _build_engine(mock_hass, store, patched_ha)
+        vacant_state = OccupancyStateData(state=OccupancyState.VACANT)
+        occupied_state = OccupancyStateData(state=OccupancyState.OCCUPIED)
+        engine._state_machines = {
+            "room_vacant": MagicMock(state=vacant_state),
+            "room_occupied": MagicMock(state=occupied_state),
+        }
+
+        with patch(
+            "custom_components.inhabit.engine.virtual_sensor_engine.async_dispatcher_send"
+        ) as dispatch:
+            engine.republish_current_states()
+
+        dispatch.assert_has_calls(
+            [
+                call(
+                    mock_hass,
+                    SIGNAL_OCCUPANCY_STATE_CHANGED,
+                    "room_vacant",
+                    vacant_state,
+                ),
+                call(
+                    mock_hass,
+                    SIGNAL_OCCUPANCY_STATE_CHANGED,
+                    "room_occupied",
+                    occupied_state,
+                ),
+            ],
+            any_order=True,
+        )
