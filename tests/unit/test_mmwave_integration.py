@@ -353,6 +353,32 @@ class TestVirtualSensorEngineRouting:
 
         mock_machine.update_spatial_presence.assert_not_called()
 
+    def test_reconcile_applies_existing_target_after_presence_affects_enabled(
+        self, mock_hass, mock_store, spatial_config_disabled
+    ):
+        """Existing target hits apply as soon as presence_affects is enabled."""
+        from custom_components.inhabit.engine.virtual_sensor_engine import (
+            VirtualSensorEngine,
+        )
+
+        engine = VirtualSensorEngine(mock_hass, mock_store)
+
+        mock_machine = MagicMock()
+        engine._state_machines["no_spatial_room"] = mock_machine
+
+        engine._handle_mmwave_target_update(
+            placement_id="sensor1",
+            target_index=0,
+            world_pos=MagicMock(x=100, y=100),
+            region_ids=["no_spatial_room"],
+        )
+        mock_machine.update_spatial_presence.assert_not_called()
+
+        spatial_config_disabled.presence_affects = True
+        engine._reconcile_spatial_presence_for_region("no_spatial_room")
+
+        mock_machine.update_spatial_presence.assert_called_once_with(1)
+
     def test_tracks_multiple_targets_per_region(self, mock_hass, mock_store):
         """Engine correctly tracks multiple targets in one region."""
         from custom_components.inhabit.engine.virtual_sensor_engine import (
