@@ -1643,10 +1643,22 @@ export class FpbCanvas extends LitElement {
       fill-opacity: 0.55;
     }
 
+    svg.mode-occupancy .zone-shape {
+      fill-opacity: 0.08;
+    }
+
+    svg.mode-occupancy .zone-shape:hover {
+      fill-opacity: 0.16;
+    }
+
     .zone-shape.selected {
       stroke: var(--primary-color, #03a9f4);
       stroke-width: 3;
       stroke-dasharray: none;
+    }
+
+    svg.mode-occupancy .zone-shape.selected {
+      stroke-width: 1;
     }
 
     .zone-midpoint-handle {
@@ -1684,6 +1696,16 @@ export class FpbCanvas extends LitElement {
       stroke: var(--primary-color, #03a9f4);
       stroke-width: 3;
       stroke-dasharray: none;
+    }
+
+    svg.mode-occupancy .zone-area-shape.selected {
+      stroke-width: 1;
+    }
+
+    svg.mode-occupancy .zone-border {
+      opacity: 0.55;
+      stroke-width: 0.45;
+      stroke-dasharray: 3,4;
     }
 
     .zone-label {
