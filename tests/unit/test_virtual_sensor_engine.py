@@ -316,6 +316,30 @@ class TestRoomManagement:
         assert new_machine.config.checking_timeout == 60
 
     @pytest.mark.asyncio
+    async def test_update_room_reconciles_current_spatial_presence(
+        self, mock_hass, patched_ha
+    ):
+        """async_update_room should apply existing mmWave hits to updated config."""
+        cfg = _make_config("room_spatial")
+        store = _mock_store(configs=[cfg])
+
+        engine = await _build_engine(mock_hass, store, patched_ha)
+        engine._mmwave_target_keys_per_region["room_spatial"] = {"sensor1:0"}
+
+        updated_cfg = _make_config("room_spatial")
+        updated_cfg.presence_affects = True
+        store.get_sensor_config.side_effect = lambda room_id: (
+            updated_cfg if room_id == "room_spatial" else None
+        )
+
+        await engine.async_update_room(updated_cfg)
+
+        assert (
+            engine._state_machines["room_spatial"].state.state
+            == OccupancyState.OCCUPIED
+        )
+
+    @pytest.mark.asyncio
     async def test_set_room_occupancy(self, mock_hass, patched_ha):
         """set_room_occupancy should call set_state on the machine."""
         cfg = _make_config("room_occ")

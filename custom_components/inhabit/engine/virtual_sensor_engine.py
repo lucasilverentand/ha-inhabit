@@ -561,6 +561,11 @@ class VirtualSensorEngine:
             "Routed spatial presence to %s: %d targets", region_id, target_count
         )
 
+    def _reconcile_spatial_presence_for_region(self, region_id: str) -> None:
+        """Reapply the current spatial target count for a region."""
+        target_count = len(self._mmwave_target_keys_per_region.get(region_id, set()))
+        self._route_spatial_presence(region_id, target_count)
+
     # Sensor reliability persistence
     # ------------------------------------------------------------------
 
@@ -670,6 +675,7 @@ class VirtualSensorEngine:
 
         self._state_machines[config.room_id] = machine
         await machine.async_start()
+        self._reconcile_spatial_presence_for_region(config.room_id)
 
         # Notify that a new sensor is available
         async_dispatcher_send(
