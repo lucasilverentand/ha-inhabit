@@ -39,6 +39,10 @@ import {
 import { isCalibrationCaptureRunActive } from "../../utils/mmwave-calibration";
 import "../shared/fpb-entity-picker";
 
+const DYSON_MIN_ANGLE = 5;
+const DYSON_MAX_ANGLE = 355;
+const DYSON_MIN_ANGLE_SPAN = 30;
+
 interface CalibrationDraftPoint {
   target_index: number;
   map_point: Coordinates;
@@ -745,6 +749,64 @@ export class FpbDevicePanel extends LitElement {
     return 75;
   }
 
+  private _normalizeFanAngle(angle: number): number {
+    return ((Math.round(angle) % 360) + 360) % 360;
+  }
+
+  private _clampDysonFanAngle(angle: number): number {
+    return Math.max(
+      DYSON_MIN_ANGLE,
+      Math.min(DYSON_MAX_ANGLE, this._normalizeFanAngle(angle)),
+    );
+  }
+
+  private _fanOscillationStart(fan: FanPlacement): number {
+    return this._clampDysonFanAngle(
+      fan.oscillation_start ?? fan.orientation - 30,
+    );
+  }
+
+  private _fanOscillationEnd(fan: FanPlacement): number {
+    const start = this._fanOscillationStart(fan);
+    const fallbackEnd = this._clampDysonFanAngle(
+      fan.oscillation_end ?? fan.orientation + 30,
+    );
+    if (fallbackEnd === start || fallbackEnd - start >= DYSON_MIN_ANGLE_SPAN) {
+      return fallbackEnd;
+    }
+    return start + DYSON_MIN_ANGLE_SPAN <= DYSON_MAX_ANGLE
+      ? start + DYSON_MIN_ANGLE_SPAN
+      : start;
+  }
+
+  private _fanAngleBoundsUpdate(
+    fan: FanPlacement,
+    field: "oscillation_start" | "oscillation_end",
+    angle: number,
+  ): Partial<FanPlacement> {
+    const value = this._clampDysonFanAngle(angle);
+    const currentStart = this._fanOscillationStart(fan);
+    const currentEnd = this._fanOscillationEnd(fan);
+
+    if (field === "oscillation_start") {
+      const nextEnd =
+        currentEnd === value || currentEnd - value >= DYSON_MIN_ANGLE_SPAN
+          ? currentEnd
+          : value + DYSON_MIN_ANGLE_SPAN <= DYSON_MAX_ANGLE
+            ? value + DYSON_MIN_ANGLE_SPAN
+            : value;
+      return { oscillation_start: value, oscillation_end: nextEnd };
+    }
+
+    const nextStart =
+      value === currentStart || value - currentStart >= DYSON_MIN_ANGLE_SPAN
+        ? currentStart
+        : value - DYSON_MIN_ANGLE_SPAN >= DYSON_MIN_ANGLE
+          ? value - DYSON_MIN_ANGLE_SPAN
+          : value;
+    return { oscillation_start: nextStart, oscillation_end: value };
+  }
+
   private _fanBlowFactor(fan: FanPlacement): number {
     const state = this.hass?.states[fan.entity_id];
     if (!state || state.state !== "on") return 0;
@@ -986,8 +1048,9 @@ export class FpbDevicePanel extends LitElement {
   }
 
   private _renderFanSettings(p: FanPlacement) {
-    const oscillationStart = p.oscillation_start ?? p.orientation;
-    const oscillationEnd = p.oscillation_end ?? p.orientation;
+    const orientation = this._clampDysonFanAngle(p.orientation);
+    const oscillationStart = this._fanOscillationStart(p);
+    const oscillationEnd = this._fanOscillationEnd(p);
     const deadzoneRange = this._fanDeadzoneControlRange();
     const deadzoneEnabled = p.deadzone_enabled !== false;
     const deadzoneDynamic = p.deadzone_dynamic !== false;
@@ -1002,49 +1065,87 @@ export class FpbDevicePanel extends LitElement {
         <div class="section-title">Map Settings</div>
 
         <div class="slider-row">
-          <label>Orientation <span>${p.orientation.toFixed(0)}&deg;</span></label>
-          <input type="range" min="0" max="359" step="1"
-            .value=${String(p.orientation)}
+          <label>Facing Direction <span>${orientation.toFixed(0)}&deg;</span></label>
+          <input type="range" min=${DYSON_MIN_ANGLE} max=${DYSON_MAX_ANGLE} step="1"
+            .value=${String(orientation)}
             @input=${(e: Event) => {
-              const val = Number((e.target as HTMLInputElement).value);
+              const val = this._clampDysonFanAngle(
+                Number((e.target as HTMLInputElement).value),
+              );
               fanPlacements.value = fanPlacements.value.map((fan) =>
                 fan.id === p.id ? { ...fan, orientation: val } : fan,
               );
               this.requestUpdate();
             }}
-            @change=${(e: Event) => this._updateFan({ orientation: Number((e.target as HTMLInputElement).value) })}
+            @change=${(e: Event) => this._updateFan({ orientation: this._clampDysonFanAngle(Number((e.target as HTMLInputElement).value)) })}
           />
         </div>
 
         <div class="slider-row">
-          <label>Oscillation Begin <span>${oscillationStart.toFixed(0)}&deg;</span></label>
-          <input type="range" min="0" max="359" step="1"
+          <label>Angle Begin <span>${oscillationStart.toFixed(0)}&deg;</span></label>
+          <input type="range" min=${DYSON_MIN_ANGLE} max=${DYSON_MAX_ANGLE} step="1"
             .value=${String(oscillationStart)}
             @input=${(e: Event) => {
-              const val = Number((e.target as HTMLInputElement).value);
+              const updates = this._fanAngleBoundsUpdate(
+                p,
+                "oscillation_start",
+                Number((e.target as HTMLInputElement).value),
+              );
               fanPlacements.value = fanPlacements.value.map((fan) =>
-                fan.id === p.id ? { ...fan, oscillation_start: val } : fan,
+                fan.id === p.id ? { ...fan, ...updates } : fan,
               );
               this.requestUpdate();
             }}
-            @change=${(e: Event) => this._updateFan({ oscillation_start: Number((e.target as HTMLInputElement).value) })}
+            @change=${(e: Event) =>
+              this._updateFan(
+                this._fanAngleBoundsUpdate(
+                  p,
+                  "oscillation_start",
+                  Number((e.target as HTMLInputElement).value),
+                ),
+              )}
           />
         </div>
 
         <div class="slider-row">
-          <label>Oscillation End <span>${oscillationEnd.toFixed(0)}&deg;</span></label>
-          <input type="range" min="0" max="359" step="1"
+          <label>Angle End <span>${oscillationEnd.toFixed(0)}&deg;</span></label>
+          <input type="range" min=${DYSON_MIN_ANGLE} max=${DYSON_MAX_ANGLE} step="1"
             .value=${String(oscillationEnd)}
             @input=${(e: Event) => {
-              const val = Number((e.target as HTMLInputElement).value);
+              const updates = this._fanAngleBoundsUpdate(
+                p,
+                "oscillation_end",
+                Number((e.target as HTMLInputElement).value),
+              );
               fanPlacements.value = fanPlacements.value.map((fan) =>
-                fan.id === p.id ? { ...fan, oscillation_end: val } : fan,
+                fan.id === p.id ? { ...fan, ...updates } : fan,
               );
               this.requestUpdate();
             }}
-            @change=${(e: Event) => this._updateFan({ oscillation_end: Number((e.target as HTMLInputElement).value) })}
+            @change=${(e: Event) =>
+              this._updateFan(
+                this._fanAngleBoundsUpdate(
+                  p,
+                  "oscillation_end",
+                  Number((e.target as HTMLInputElement).value),
+                ),
+              )}
           />
         </div>
+
+        <label class="toggle-row">
+          <span>Always Movable</span>
+          <input type="checkbox"
+            .checked=${p.draggable_always === true}
+            @change=${(e: Event) => {
+              const val = (e.target as HTMLInputElement).checked;
+              fanPlacements.value = fanPlacements.value.map((fan) =>
+                fan.id === p.id ? { ...fan, draggable_always: val } : fan,
+              );
+              this._updateFan({ draggable_always: val });
+            }}
+          />
+        </label>
 
         <label class="toggle-row">
           <span>Automatic Deadzone</span>
@@ -1076,7 +1177,7 @@ export class FpbDevicePanel extends LitElement {
         </label>
 
         <div class="slider-row">
-          <label>Deadzone Max <span>${formatDeadzone(deadzoneRadius)}</span></label>
+          <label>Range <span>${formatDeadzone(deadzoneRadius)}</span></label>
           <input type="range" min="0" max=${deadzoneRange.max} step=${deadzoneRange.step}
             .value=${String(deadzoneRadius)}
             ?disabled=${!deadzoneEnabled}
@@ -1095,7 +1196,7 @@ export class FpbDevicePanel extends LitElement {
           deadzoneDynamic
             ? html`
         <div class="slider-row">
-          <label>Deadzone Min <span>${formatDeadzone(Math.min(deadzoneRadius, deadzoneMinRadius))}</span></label>
+          <label>Minimum Range <span>${formatDeadzone(Math.min(deadzoneRadius, deadzoneMinRadius))}</span></label>
           <input type="range" min="0" max=${deadzoneRange.max} step=${deadzoneRange.step}
             .value=${String(Math.min(deadzoneRadius, deadzoneMinRadius))}
             ?disabled=${!deadzoneEnabled}
@@ -1114,7 +1215,7 @@ export class FpbDevicePanel extends LitElement {
         }
 
         <div class="metric-row">
-          <span>Current Deadzone</span>
+          <span>Current Range</span>
           <span>${formatDeadzone(effectiveDeadzoneRadius)}</span>
         </div>
       </div>

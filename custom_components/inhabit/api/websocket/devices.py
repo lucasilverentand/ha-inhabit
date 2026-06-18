@@ -19,6 +19,10 @@ from ...models.device_placement import (
 from ...models.floor_plan import Coordinates
 from ._helpers import _require_admin, _validate_placement_location
 
+DYSON_MIN_ANGLE = 5
+DYSON_MAX_ANGLE = 355
+DYSON_MIN_ANGLE_SPAN = 30
+
 
 def register(hass: HomeAssistant) -> None:
     """Register device placement WebSocket commands."""
@@ -79,6 +83,8 @@ def _apply_fan_map_fields(fan: FanPlacement, msg: dict[str, Any]) -> None:
         fan.deadzone_enabled = msg["deadzone_enabled"]
     if "deadzone_dynamic" in msg:
         fan.deadzone_dynamic = msg["deadzone_dynamic"]
+    if "draggable_always" in msg:
+        fan.draggable_always = msg["draggable_always"]
 
 
 def _refresh_fan_deadzones(hass: HomeAssistant) -> None:
@@ -87,6 +93,51 @@ def _refresh_fan_deadzones(hass: HomeAssistant) -> None:
     refresh = getattr(processor, "refresh_fan_deadzones", None)
     if callable(refresh):
         refresh()
+
+
+def _dyson_angle_payload(fan: FanPlacement) -> dict[str, Any] | None:
+    """Return a dyson_local.set_angle payload for valid saved fan angles."""
+    if fan.oscillation_start is None or fan.oscillation_end is None:
+        return None
+
+    angle_low = round(max(DYSON_MIN_ANGLE, min(DYSON_MAX_ANGLE, fan.oscillation_start)))
+    angle_high = round(max(DYSON_MIN_ANGLE, min(DYSON_MAX_ANGLE, fan.oscillation_end)))
+    if angle_low != angle_high and angle_low + DYSON_MIN_ANGLE_SPAN > angle_high:
+        return None
+
+    return {
+        "entity_id": fan.entity_id,
+        "angle_low": angle_low,
+        "angle_high": angle_high,
+    }
+
+
+def _sync_dyson_fan_angles(hass: HomeAssistant, fan: FanPlacement) -> None:
+    """Apply saved map angle bounds to dyson_local when this is a Dyson fan."""
+    if not fan.entity_id.startswith("fan."):
+        return
+    components = getattr(getattr(hass, "config", None), "components", set())
+    if "dyson_local" not in components:
+        return
+    state = hass.states.get(fan.entity_id)
+    if not state or not {
+        "angle_low",
+        "angle_high",
+    }.issubset(state.attributes):
+        return
+
+    payload = _dyson_angle_payload(fan)
+    if payload is None:
+        return
+
+    hass.async_create_task(
+        hass.services.async_call(
+            "dyson_local",
+            "set_angle",
+            payload,
+            blocking=False,
+        )
+    )
 
 
 # ==================== Light Placements ====================
@@ -380,6 +431,7 @@ def ws_switches_list(
         vol.Optional("deadzone_min_radius"): vol.Any(vol.Coerce(float), None),
         vol.Optional("deadzone_enabled"): bool,
         vol.Optional("deadzone_dynamic"): bool,
+        vol.Optional("draggable_always"): bool,
     }
 )
 @callback
@@ -415,6 +467,7 @@ def ws_fans_place(
         deadzone_min_radius=msg.get("deadzone_min_radius"),
         deadzone_enabled=msg.get("deadzone_enabled", True),
         deadzone_dynamic=msg.get("deadzone_dynamic", True),
+        draggable_always=msg.get("draggable_always", False),
     )
     result = store.place_fan(msg["floor_plan_id"], fan)
     _refresh_fan_deadzones(hass)
@@ -436,6 +489,7 @@ def ws_fans_place(
         vol.Optional("deadzone_min_radius"): vol.Any(vol.Coerce(float), None),
         vol.Optional("deadzone_enabled"): bool,
         vol.Optional("deadzone_dynamic"): bool,
+        vol.Optional("draggable_always"): bool,
     }
 )
 @callback
@@ -476,6 +530,8 @@ def ws_fans_update(
     result = store.update_fan_placement(fan)
     if result:
         _refresh_fan_deadzones(hass)
+        if "oscillation_start" in msg or "oscillation_end" in msg:
+            _sync_dyson_fan_angles(hass, result)
         connection.send_result(msg["id"], result.to_dict())
     else:
         connection.send_error(msg["id"], "update_failed", "Failed to update fan")

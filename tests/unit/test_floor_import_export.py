@@ -141,6 +141,7 @@ async def test_floor_export_import_round_trips_all_placement_and_config_types(
             deadzone_min_radius=20,
             deadzone_enabled=False,
             deadzone_dynamic=False,
+            draggable_always=True,
         ),
     )
     store.place_button(
@@ -249,6 +250,7 @@ async def test_floor_export_import_round_trips_all_placement_and_config_types(
     assert imported_fan.deadzone_min_radius == 20
     assert imported_fan.deadzone_enabled is False
     assert imported_fan.deadzone_dynamic is False
+    assert imported_fan.draggable_always is True
     assert store.get_button_placements("fp_target")[0].room_id == imported_zone_id
     assert store.get_other_placements("fp_target")[0].room_id == imported_room_id
 

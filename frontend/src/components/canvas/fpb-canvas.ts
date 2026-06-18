@@ -173,6 +173,9 @@ const LINK_COLORS = [
   "#673ab7",
 ];
 const MIN_RENDER_SEGMENT_LENGTH = 0.5;
+const DYSON_MIN_ANGLE = 5;
+const DYSON_MAX_ANGLE = 355;
+const DYSON_MIN_ANGLE_SPAN = 30;
 
 function linkGroupColor(group: string): string {
   let hash = 0;
@@ -400,6 +403,7 @@ export class FpbCanvas extends LitElement {
     originalPosition: Coordinates;
     hasMoved: boolean;
     pointerId: number;
+    openPanelOnClick?: boolean;
   } | null = null;
 
   private _draggingOpening: OpeningDragState | null = null;
@@ -440,6 +444,17 @@ export class FpbCanvas extends LitElement {
   private _rotatingMmwave: {
     id: string;
     originalAngle: number;
+    pointerId: number;
+  } | null = null;
+
+  // ---- Fan angle handle drag state ----
+  @state()
+  private _draggingFanAngle: {
+    id: string;
+    field: "orientation" | "oscillation_start" | "oscillation_end";
+    originalOrientation: number;
+    originalStart?: number | null;
+    originalEnd?: number | null;
     pointerId: number;
   } | null = null;
 
@@ -796,6 +811,29 @@ export class FpbCanvas extends LitElement {
       stroke: var(--primary-color, #03a9f4);
       stroke-width: 1.5;
       stroke-dasharray: 3 2;
+    }
+
+    .fan-angle-handle {
+      cursor: grab;
+      pointer-events: auto;
+    }
+
+    .fan-angle-handle:active {
+      cursor: grabbing;
+    }
+
+    .fan-angle-handle-dot {
+      fill: #009688;
+      stroke: #fff;
+      stroke-width: 1.5;
+    }
+
+    .fan-angle-handle-dot.start {
+      fill: #26a69a;
+    }
+
+    .fan-angle-handle-dot.end {
+      fill: #00796b;
     }
 
     .device-marker.on circle {
@@ -2043,6 +2081,22 @@ export class FpbCanvas extends LitElement {
     if (mode === "viewing" && e.button === 0) {
       const floor = currentFloor.value;
       if (floor) {
+        const movableFan = this._hitTestAlwaysMovableFan(point, floor);
+        if (movableFan) {
+          selection.value = { type: "fan", ids: [movableFan.id] };
+          this._draggingPlacement = {
+            type: "fan",
+            id: movableFan.id,
+            startPoint: point,
+            originalPosition: { ...movableFan.position },
+            hasMoved: false,
+            pointerId: e.pointerId,
+            openPanelOnClick: true,
+          };
+          this._svg?.setPointerCapture(e.pointerId);
+          return;
+        }
+
         const hit = this._hitTestDevice(point, floor);
         if (hit) {
           this._viewingClickedDevice = hit;
@@ -2654,6 +2708,12 @@ export class FpbCanvas extends LitElement {
       return;
     }
 
+    // Handle fan map-angle drag
+    if (this._draggingFanAngle) {
+      this._handleFanAngleMove(point);
+      return;
+    }
+
     // Handle zone vertex dragging
     if (this._draggingZoneVertex) {
       const zone = this._draggingZoneVertex.zone;
@@ -2895,6 +2955,12 @@ export class FpbCanvas extends LitElement {
       return;
     }
 
+    if (this._draggingFanAngle) {
+      this._finishFanAngleDrag();
+      this._svg?.releasePointerCapture(e.pointerId);
+      return;
+    }
+
     if (this._draggingCorner) {
       this._svg?.releasePointerCapture(e.pointerId);
       this._draggingCorner = null;
@@ -2920,6 +2986,11 @@ export class FpbCanvas extends LitElement {
     if (this._draggingPlacement) {
       if (this._draggingPlacement.hasMoved) {
         this._finishPlacementDrag();
+      } else if (this._draggingPlacement.openPanelOnClick) {
+        devicePanelTarget.value = {
+          type: "fan",
+          id: this._draggingPlacement.id,
+        };
       }
       this._svg?.releasePointerCapture(e.pointerId);
       this._draggingPlacement = null;
@@ -7204,12 +7275,88 @@ export class FpbCanvas extends LitElement {
     };
   }
 
+  private _normalizeFanAngle(angle: number): number {
+    return ((Math.round(angle) % 360) + 360) % 360;
+  }
+
+  private _clampDysonFanAngle(angle: number): number {
+    return Math.max(
+      DYSON_MIN_ANGLE,
+      Math.min(DYSON_MAX_ANGLE, this._normalizeFanAngle(angle)),
+    );
+  }
+
+  private _angleFromFanPoint(fan: FanPlacement, point: Coordinates): number {
+    const dx = point.x - fan.position.x;
+    const dy = point.y - fan.position.y;
+    return this._clampDysonFanAngle((Math.atan2(dy, dx) * 180) / Math.PI + 90);
+  }
+
+  private _fanOscillationStart(fan: FanPlacement): number {
+    return this._clampDysonFanAngle(
+      fan.oscillation_start ?? fan.orientation - 30,
+    );
+  }
+
+  private _fanOscillationEnd(fan: FanPlacement): number {
+    const start = this._fanOscillationStart(fan);
+    const fallbackEnd = this._clampDysonFanAngle(
+      fan.oscillation_end ?? fan.orientation + 30,
+    );
+    if (fallbackEnd === start || fallbackEnd - start >= DYSON_MIN_ANGLE_SPAN) {
+      return fallbackEnd;
+    }
+    return start + DYSON_MIN_ANGLE_SPAN <= DYSON_MAX_ANGLE
+      ? start + DYSON_MIN_ANGLE_SPAN
+      : start;
+  }
+
+  private _fanAngleUpdate(
+    fan: FanPlacement,
+    field: "orientation" | "oscillation_start" | "oscillation_end",
+    angle: number,
+  ): Partial<FanPlacement> {
+    const value = this._clampDysonFanAngle(angle);
+    const currentStart = this._fanOscillationStart(fan);
+    const currentEnd = this._fanOscillationEnd(fan);
+
+    if (field === "orientation") {
+      return {
+        orientation: value,
+        oscillation_start: currentStart,
+        oscillation_end: currentEnd,
+      };
+    }
+
+    if (field === "oscillation_start") {
+      const nextEnd =
+        currentEnd === value || currentEnd - value >= DYSON_MIN_ANGLE_SPAN
+          ? currentEnd
+          : value + DYSON_MIN_ANGLE_SPAN <= DYSON_MAX_ANGLE
+            ? value + DYSON_MIN_ANGLE_SPAN
+            : value;
+      return { oscillation_start: value, oscillation_end: nextEnd };
+    }
+
+    const nextStart =
+      value === currentStart || value - currentStart >= DYSON_MIN_ANGLE_SPAN
+        ? currentStart
+        : value - DYSON_MIN_ANGLE_SPAN >= DYSON_MIN_ANGLE
+          ? value - DYSON_MIN_ANGLE_SPAN
+          : value;
+    return { oscillation_start: nextStart, oscillation_end: value };
+  }
+
   private _defaultFanDeadzoneRadius(): number {
     const unit = currentFloorPlan.value?.unit ?? "cm";
     if (unit === "m") return 0.75;
     if (unit === "in") return 75 / 2.54;
     if (unit === "ft") return 75 / 30.48;
     return 75;
+  }
+
+  private _configuredFanDeadzoneRadius(fan: FanPlacement): number {
+    return Math.max(0, fan.deadzone_radius ?? this._defaultFanDeadzoneRadius());
   }
 
   private _fanBlowFactor(fan: FanPlacement): number {
@@ -7252,18 +7399,11 @@ export class FpbCanvas extends LitElement {
   }
 
   private _renderFanArc(fan: FanPlacement) {
-    if (
-      fan.oscillation_start === null ||
-      fan.oscillation_start === undefined ||
-      fan.oscillation_end === null ||
-      fan.oscillation_end === undefined
-    ) {
-      return null;
-    }
+    if (fan.deadzone_enabled === false) return null;
     const center = fan.position;
-    const radius = this._canvasMode === "viewing" ? 34 : 32;
-    const start = ((fan.oscillation_start % 360) + 360) % 360;
-    const end = ((fan.oscillation_end % 360) + 360) % 360;
+    const radius = Math.max(this._configuredFanDeadzoneRadius(fan), 32);
+    const start = this._fanOscillationStart(fan);
+    const end = this._fanOscillationEnd(fan);
     const sweep = (end - start + 360) % 360;
     if (sweep === 0) return null;
 
@@ -7281,6 +7421,53 @@ export class FpbCanvas extends LitElement {
     `;
   }
 
+  private _canUseFanAngleHandles(fan: FanPlacement): boolean {
+    if (this._canvasMode === "placement") {
+      return (
+        selection.value.type === "fan" && selection.value.ids.includes(fan.id)
+      );
+    }
+    return this._canvasMode === "viewing" && fan.draggable_always === true;
+  }
+
+  private _renderFanAngleHandles(fan: FanPlacement, radius: number) {
+    if (!this._canUseFanAngleHandles(fan)) {
+      return null;
+    }
+
+    const start = this._fanOscillationStart(fan);
+    const end = this._fanOscillationEnd(fan);
+    const orientation = this._normalizeFanAngle(fan.orientation);
+    const startPoint = this._fanAnglePoint(fan.position, start, radius);
+    const endPoint = this._fanAnglePoint(fan.position, end, radius);
+    const orientationPoint = this._fanAnglePoint(fan.position, orientation, 30);
+
+    return svg`
+      <g class="fan-angle-handles">
+        <g class="rotation-handle"
+           @pointerdown=${(e: PointerEvent) => this._startFanAngleDrag(e, fan, "orientation")}>
+          <line class="rotation-handle-line"
+            x1="${fan.position.x}" y1="${fan.position.y}"
+            x2="${orientationPoint.x}" y2="${orientationPoint.y}" />
+          <circle class="rotation-handle-dot"
+            cx="${orientationPoint.x}" cy="${orientationPoint.y}" r="4.5" />
+        </g>
+        <g class="fan-angle-handle"
+           @pointerdown=${(e: PointerEvent) => this._startFanAngleDrag(e, fan, "oscillation_start")}>
+          <circle class="fan-angle-handle-dot start"
+            cx="${startPoint.x}" cy="${startPoint.y}" r="5.5" />
+          <title>Angle begin</title>
+        </g>
+        <g class="fan-angle-handle"
+           @pointerdown=${(e: PointerEvent) => this._startFanAngleDrag(e, fan, "oscillation_end")}>
+          <circle class="fan-angle-handle-dot end"
+            cx="${endPoint.x}" cy="${endPoint.y}" r="5.5" />
+          <title>Angle end</title>
+        </g>
+      </g>
+    `;
+  }
+
   private _renderFan(fan: FanPlacement) {
     const state = this.hass?.states[fan.entity_id];
     const isOn = state?.state === "on";
@@ -7290,6 +7477,10 @@ export class FpbCanvas extends LitElement {
     const iconData = this._getEntityIconData(state, "mdi:fan");
     const issues = getNormalDeviceIssues(fan, this.hass?.states ?? {});
     const deadzoneRadius = this._effectiveFanDeadzoneRadius(fan);
+    const configuredRadius = Math.max(
+      this._configuredFanDeadzoneRadius(fan),
+      32,
+    );
     const orientationEnd = this._fanAnglePoint(
       fan.position,
       fan.orientation,
@@ -7314,6 +7505,7 @@ export class FpbCanvas extends LitElement {
             : null
         }
         ${this._renderFanArc(fan)}
+        ${this._renderFanAngleHandles(fan, configuredRadius)}
         <line
           x1="${fan.position.x}"
           y1="${fan.position.y}"
@@ -9826,6 +10018,20 @@ export class FpbCanvas extends LitElement {
     return null;
   }
 
+  private _hitTestAlwaysMovableFan(
+    point: Coordinates,
+    floor: Floor,
+  ): FanPlacement | null {
+    for (const fan of fanPlacements.value.filter(
+      (d) => d.floor_id === floor.id && d.draggable_always === true,
+    )) {
+      if (Math.hypot(point.x - fan.position.x, point.y - fan.position.y) < 18) {
+        return fan;
+      }
+    }
+    return null;
+  }
+
   private _getStateIconCacheKey(entity: HassEntity): string {
     const deviceClass = entity.attributes.device_class as string | undefined;
     return `${entity.entity_id}:${entity.state}:${deviceClass ?? ""}`;
@@ -10092,6 +10298,8 @@ export class FpbCanvas extends LitElement {
     const fpId = floorPlan.id;
     const fId = floor.id;
     const position = { ...this._pendingDevice.position };
+    const placementDefaults =
+      placementType === "fan" ? this._fanPlacementDefaults(entityId) : {};
     const placementRef = { id: "" };
 
     try {
@@ -10101,6 +10309,7 @@ export class FpbCanvas extends LitElement {
         floor_id: fId,
         entity_id: entityId,
         position,
+        ...placementDefaults,
       });
       placementRef.id = result.id;
       await reloadFloorData();
@@ -10122,6 +10331,7 @@ export class FpbCanvas extends LitElement {
             floor_id: fId,
             entity_id: entityId,
             position,
+            ...placementDefaults,
           });
           placementRef.id = r.id;
           await reloadFloorData();
@@ -10133,6 +10343,34 @@ export class FpbCanvas extends LitElement {
     }
 
     this._pendingDevice = null;
+  }
+
+  private _fanPlacementDefaults(entityId: string): Partial<FanPlacement> {
+    const state = this.hass?.states[entityId];
+    const low = Number(state?.attributes?.angle_low);
+    const high = Number(state?.attributes?.angle_high);
+    if (Number.isFinite(low) && Number.isFinite(high)) {
+      const start = this._clampDysonFanAngle(low);
+      const proposedEnd =
+        high === low
+          ? start
+          : Math.max(
+              start + DYSON_MIN_ANGLE_SPAN,
+              this._clampDysonFanAngle(high),
+            );
+      const end = Math.min(DYSON_MAX_ANGLE, proposedEnd);
+      return {
+        orientation: (start + end) / 2,
+        oscillation_start: start,
+        oscillation_end: end,
+      };
+    }
+
+    return {
+      orientation: 180,
+      oscillation_start: 165,
+      oscillation_end: 195,
+    };
   }
 
   private async _placeMmwave(point: Coordinates): Promise<void> {
@@ -10483,6 +10721,83 @@ export class FpbCanvas extends LitElement {
       );
     }
     this._rotatingMmwave = null;
+  }
+
+  private _startFanAngleDrag(
+    e: PointerEvent,
+    fan: FanPlacement,
+    field: "orientation" | "oscillation_start" | "oscillation_end",
+  ): void {
+    e.stopPropagation();
+    e.preventDefault();
+    this._draggingFanAngle = {
+      id: fan.id,
+      field,
+      originalOrientation: fan.orientation,
+      originalStart: fan.oscillation_start,
+      originalEnd: fan.oscillation_end,
+      pointerId: e.pointerId,
+    };
+    this._svg?.setPointerCapture(e.pointerId);
+  }
+
+  private _handleFanAngleMove(point: Coordinates): void {
+    if (!this._draggingFanAngle) return;
+    const drag = this._draggingFanAngle;
+    const fan = fanPlacements.value.find((p) => p.id === drag.id);
+    if (!fan) return;
+
+    const angle = this._angleFromFanPoint(fan, point);
+    fanPlacements.value = fanPlacements.value.map((p) => {
+      if (p.id !== drag.id) return p;
+      return { ...p, ...this._fanAngleUpdate(p, drag.field, angle) };
+    });
+    this.requestUpdate();
+  }
+
+  private async _finishFanAngleDrag(): Promise<void> {
+    if (!this._draggingFanAngle || !this.hass) return;
+    const drag = this._draggingFanAngle;
+    const fan = fanPlacements.value.find((p) => p.id === drag.id);
+    if (!fan) {
+      this._draggingFanAngle = null;
+      return;
+    }
+
+    const updates = {
+      orientation: fan.orientation,
+      oscillation_start: fan.oscillation_start,
+      oscillation_end: fan.oscillation_end,
+    };
+    const unchanged =
+      updates.orientation === drag.originalOrientation &&
+      updates.oscillation_start === drag.originalStart &&
+      updates.oscillation_end === drag.originalEnd;
+    if (unchanged) {
+      this._draggingFanAngle = null;
+      return;
+    }
+
+    try {
+      await this.hass.callWS({
+        type: "inhabit/fans/update",
+        fan_id: drag.id,
+        ...updates,
+      });
+    } catch (err) {
+      console.error("Error committing fan map angles:", err);
+      fanPlacements.value = fanPlacements.value.map((p) =>
+        p.id === drag.id
+          ? {
+              ...p,
+              orientation: drag.originalOrientation,
+              oscillation_start: drag.originalStart,
+              oscillation_end: drag.originalEnd,
+            }
+          : p,
+      );
+    }
+    this._draggingFanAngle = null;
   }
 
   /** Drive interpolation + fade-out animation for mmWave targets via rAF. */

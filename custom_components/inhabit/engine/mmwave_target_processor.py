@@ -445,9 +445,29 @@ class MmwaveTargetProcessor:
             if radius <= 0:
                 continue
             distance = math.hypot(point.x - fan.position.x, point.y - fan.position.y)
-            if distance <= radius:
+            if distance <= radius and self._fan_deadzone_covers_point(fan, point):
                 return True
         return False
+
+    @staticmethod
+    def _fan_deadzone_covers_point(fan: FanPlacement, point: Coordinates) -> bool:
+        """Return whether a point falls inside the fan's configured angle sector."""
+        if fan.oscillation_start is None or fan.oscillation_end is None:
+            return True
+
+        dx = point.x - fan.position.x
+        dy = point.y - fan.position.y
+        if dx == 0 and dy == 0:
+            return True
+
+        point_angle = (math.degrees(math.atan2(dy, dx)) + 90.0) % 360.0
+        start = fan.oscillation_start % 360.0
+        end = fan.oscillation_end % 360.0
+        sweep = (end - start) % 360.0
+        if sweep == 0:
+            return abs(((point_angle - start + 180.0) % 360.0) - 180.0) <= 1.0
+
+        return ((point_angle - start) % 360.0) <= sweep
 
     def _fan_deadzone_radius(self, floor_plan_id: str, fan: FanPlacement) -> float:
         """Return the fan deadzone radius in the floor plan's unit."""
