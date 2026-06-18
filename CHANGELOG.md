@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.14.4](https://github.com/lucasilverentand/ha-inhabit/compare/v0.14.3...v0.14.4) (2026-06-18)
+
+
+### Features
+
+* add fan map orientation controls ([#70](https://github.com/lucasilverentand/ha-inhabit/issues/70)) ([82cb4bd](https://github.com/lucasilverentand/ha-inhabit/commit/82cb4bdbfcc6d63531ef9ad80d50917a98ff2ea9))
+
+
+### Bug Fixes
+
+* clear child zones with room override ([#69](https://github.com/lucasilverentand/ha-inhabit/issues/69)) ([dda582f](https://github.com/lucasilverentand/ha-inhabit/commit/dda582f7e5f3aa705e1f4686b402e08cb1a463a5))
+
 ## [0.14.3](https://github.com/lucasilverentand/ha-inhabit/compare/v0.14.2...v0.14.3) (2026-06-18)
 
 
