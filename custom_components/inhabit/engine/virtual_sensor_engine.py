@@ -102,7 +102,10 @@ class VirtualSensorEngine:
         # Tracks when each room last transitioned (for duration calculation)
         self._last_transition_time: dict[str, datetime] = {}
 
-        # Parent-child zone mapping: parent_room_id → set of zone_ids
+        # Parent-child zone mappings.
+        # _room_zones tracks every zone inside a room; _parent_zones tracks only
+        # zones that should promote their occupancy up to the parent.
+        self._room_zones: dict[str, set[str]] = {}
         self._parent_zones: dict[str, set[str]] = {}
 
         # Pattern priors per room
@@ -256,6 +259,7 @@ class VirtualSensorEngine:
             await machine.async_stop()
 
         self._state_machines.clear()
+        self._room_zones.clear()
         self._parent_zones.clear()
         self._last_transition_time.clear()
 
@@ -366,6 +370,8 @@ class VirtualSensorEngine:
             return False
 
         machine.set_state(state, "manual override")
+        if state == OccupancyState.VACANT:
+            self._clear_child_zones(room_id)
         return True
 
     # ------------------------------------------------------------------
@@ -374,12 +380,18 @@ class VirtualSensorEngine:
 
     def _resolve_zone_parents(self) -> None:
         """Build the parent_room_id → zone_ids mapping from floor plan data."""
+        self._room_zones.clear()
         self._parent_zones.clear()
 
         for fp in self._store.get_floor_plans():
             for floor in fp.floors:
                 for zone in floor.zones:
-                    if not zone.occupies_parent or not zone.room_id:
+                    if not zone.room_id:
+                        continue
+
+                    self._room_zones.setdefault(zone.room_id, set()).add(zone.id)
+
+                    if not zone.occupies_parent:
                         continue
 
                     # Update the sensor config's parent_room_id
@@ -394,6 +406,23 @@ class VirtualSensorEngine:
             _LOGGER.debug(
                 "Zone parent mapping: %s",
                 {k: list(v) for k, v in self._parent_zones.items()},
+            )
+
+    def _clear_child_zones(self, room_id: str) -> None:
+        """Set every zone inside a manually cleared room to VACANT."""
+        for zone_id in self._room_zones.get(room_id, set()):
+            machine = self._state_machines.get(zone_id)
+            if not machine:
+                continue
+
+            _LOGGER.info(
+                "Clearing child zone %s because parent room %s was manually cleared",
+                zone_id,
+                room_id,
+            )
+            machine.set_state(
+                OccupancyState.VACANT,
+                f"parent room {room_id} manually cleared",
             )
 
     def _is_occupied_by_children(self, room_id: str) -> bool:
