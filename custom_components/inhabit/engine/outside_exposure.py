@@ -30,7 +30,9 @@ SIGNAL_OUTSIDE_EXPOSURE_ROOM_REMOVED = f"{DOMAIN}_outside_exposure_room_removed"
 OPENING_EDGE_TYPES = {"door", "window"}
 OPEN_STATES = {STATE_ON, "on", "open", "detected", "true", "1"}
 UNKNOWN_STATES = {STATE_UNAVAILABLE, STATE_UNKNOWN}
-SAMPLE_OFFSET = 20.0
+MIN_SAMPLE_OFFSET = 1.0
+MAX_NEAR_SAMPLE_OFFSET = 8.0
+FALLBACK_SAMPLE_OFFSETS = (12.0, 20.0)
 
 
 @dataclass(frozen=True)
@@ -66,6 +68,35 @@ def _is_open_state(state: State | None) -> bool:
     return state.state in OPEN_STATES
 
 
+def _sample_offsets(edge: Edge) -> tuple[float, ...]:
+    """Return near-to-far room probes for an opening edge."""
+    near_offset = max(
+        MIN_SAMPLE_OFFSET,
+        min(edge.thickness / 2.0 + 1.0, MAX_NEAR_SAMPLE_OFFSET),
+    )
+    offsets = (near_offset, *FALLBACK_SAMPLE_OFFSETS)
+    return tuple(dict.fromkeys(offsets))
+
+
+def _find_room_along_normal(
+    floor: Floor,
+    mid_x: float,
+    mid_y: float,
+    nx: float,
+    ny: float,
+    edge: Edge,
+) -> str | None:
+    """Find the nearest room from an opening midpoint along one normal."""
+    for offset in _sample_offsets(edge):
+        room_id = _find_room_at_point(
+            floor,
+            Coordinates(x=mid_x + nx * offset, y=mid_y + ny * offset),
+        )
+        if room_id:
+            return room_id
+    return None
+
+
 def _rooms_on_sides(floor: Floor, edge: Edge) -> tuple[str | None, str | None]:
     """Find rooms on both sides of an edge by sampling across its normal."""
     node_map = {node.id: node for node in floor.nodes}
@@ -84,12 +115,9 @@ def _rooms_on_sides(floor: Floor, edge: Edge) -> tuple[str | None, str | None]:
 
     nx = -dy / length
     ny = dx / length
-    point_a = Coordinates(x=mid_x + nx * SAMPLE_OFFSET, y=mid_y + ny * SAMPLE_OFFSET)
-    point_b = Coordinates(x=mid_x - nx * SAMPLE_OFFSET, y=mid_y - ny * SAMPLE_OFFSET)
-
     return (
-        _find_room_at_point(floor, point_a),
-        _find_room_at_point(floor, point_b),
+        _find_room_along_normal(floor, mid_x, mid_y, nx, ny, edge),
+        _find_room_along_normal(floor, mid_x, mid_y, -nx, -ny, edge),
     )
 
 
@@ -107,8 +135,9 @@ def find_rooms_exposed_to_outside(
 ) -> dict[str, OutsideExposureState]:
     """Find rooms exposed to outside through open exterior/interior openings.
 
-    A room is exposed when an exterior door/window is open into it. Exposure
-    then propagates through open interior doors/windows to connected rooms.
+    A room is exposed when any open path through adjacent rooms reaches an
+    open exterior door/window. The path may cross any number of open interior
+    doors/windows.
     Openings without an entity state are treated as closed because their live
     open/closed condition is unknown.
     """
