@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.14.3](https://github.com/lucasilverentand/ha-inhabit/compare/v0.14.2...v0.14.3) (2026-06-18)
+
+
+### Bug Fixes
+
+* recalculate virtual sensors after startup ([#68](https://github.com/lucasilverentand/ha-inhabit/issues/68)) ([b48472d](https://github.com/lucasilverentand/ha-inhabit/commit/b48472d5044800a1ea0ffe1bd0c42e6f2e6adb19))
+* stabilize outside exposure room detection ([#66](https://github.com/lucasilverentand/ha-inhabit/issues/66)) ([9e1f9c1](https://github.com/lucasilverentand/ha-inhabit/commit/9e1f9c17f5d40ba7bf9dae944b25b8296abaf272))
+
 ## [0.14.2](https://github.com/lucasilverentand/ha-inhabit/compare/v0.14.1...v0.14.2) (2026-06-18)
 
 
