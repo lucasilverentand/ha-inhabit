@@ -18,6 +18,17 @@ def _float_or_none(value: Any) -> float | None:
         return None
 
 
+def _bool_or_default(value: Any, default: bool) -> bool:
+    """Return a boolean from stored placement data."""
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.lower() in {"1", "true", "yes", "on"}
+    return bool(value)
+
+
 @dataclass
 class _BasePlacement:
     """Base dataclass for all device placements on a floor plan."""
@@ -75,6 +86,9 @@ class FanPlacement(_BasePlacement):
     oscillation_start: float | None = None
     oscillation_end: float | None = None
     deadzone_radius: float | None = None
+    deadzone_min_radius: float | None = None
+    deadzone_enabled: bool = True
+    deadzone_dynamic: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
@@ -85,6 +99,9 @@ class FanPlacement(_BasePlacement):
                 "oscillation_start": self.oscillation_start,
                 "oscillation_end": self.oscillation_end,
                 "deadzone_radius": self.deadzone_radius,
+                "deadzone_min_radius": self.deadzone_min_radius,
+                "deadzone_enabled": self.deadzone_enabled,
+                "deadzone_dynamic": self.deadzone_dynamic,
             }
         )
         return data
@@ -104,6 +121,9 @@ class FanPlacement(_BasePlacement):
             oscillation_start=_float_or_none(data.get("oscillation_start")),
             oscillation_end=_float_or_none(data.get("oscillation_end")),
             deadzone_radius=_float_or_none(data.get("deadzone_radius")),
+            deadzone_min_radius=_float_or_none(data.get("deadzone_min_radius")),
+            deadzone_enabled=_bool_or_default(data.get("deadzone_enabled"), True),
+            deadzone_dynamic=_bool_or_default(data.get("deadzone_dynamic"), True),
         )
 
 

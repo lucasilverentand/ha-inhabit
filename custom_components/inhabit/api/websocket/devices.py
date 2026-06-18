@@ -73,6 +73,20 @@ def _apply_fan_map_fields(fan: FanPlacement, msg: dict[str, Any]) -> None:
         fan.oscillation_end = msg["oscillation_end"]
     if "deadzone_radius" in msg:
         fan.deadzone_radius = msg["deadzone_radius"]
+    if "deadzone_min_radius" in msg:
+        fan.deadzone_min_radius = msg["deadzone_min_radius"]
+    if "deadzone_enabled" in msg:
+        fan.deadzone_enabled = msg["deadzone_enabled"]
+    if "deadzone_dynamic" in msg:
+        fan.deadzone_dynamic = msg["deadzone_dynamic"]
+
+
+def _refresh_fan_deadzones(hass: HomeAssistant) -> None:
+    """Refresh mmWave region hits after fan placement/deadzone changes."""
+    processor = hass.data.get(DOMAIN, {}).get("mmwave_processor")
+    refresh = getattr(processor, "refresh_fan_deadzones", None)
+    if callable(refresh):
+        refresh()
 
 
 # ==================== Light Placements ====================
@@ -363,6 +377,9 @@ def ws_switches_list(
         vol.Optional("oscillation_start"): vol.Any(vol.Coerce(float), None),
         vol.Optional("oscillation_end"): vol.Any(vol.Coerce(float), None),
         vol.Optional("deadzone_radius"): vol.Any(vol.Coerce(float), None),
+        vol.Optional("deadzone_min_radius"): vol.Any(vol.Coerce(float), None),
+        vol.Optional("deadzone_enabled"): bool,
+        vol.Optional("deadzone_dynamic"): bool,
     }
 )
 @callback
@@ -395,8 +412,12 @@ def ws_fans_place(
         oscillation_start=msg.get("oscillation_start"),
         oscillation_end=msg.get("oscillation_end"),
         deadzone_radius=msg.get("deadzone_radius"),
+        deadzone_min_radius=msg.get("deadzone_min_radius"),
+        deadzone_enabled=msg.get("deadzone_enabled", True),
+        deadzone_dynamic=msg.get("deadzone_dynamic", True),
     )
     result = store.place_fan(msg["floor_plan_id"], fan)
+    _refresh_fan_deadzones(hass)
     connection.send_result(msg["id"], result.to_dict())
 
 
@@ -412,6 +433,9 @@ def ws_fans_place(
         vol.Optional("oscillation_start"): vol.Any(vol.Coerce(float), None),
         vol.Optional("oscillation_end"): vol.Any(vol.Coerce(float), None),
         vol.Optional("deadzone_radius"): vol.Any(vol.Coerce(float), None),
+        vol.Optional("deadzone_min_radius"): vol.Any(vol.Coerce(float), None),
+        vol.Optional("deadzone_enabled"): bool,
+        vol.Optional("deadzone_dynamic"): bool,
     }
 )
 @callback
@@ -451,6 +475,7 @@ def ws_fans_update(
 
     result = store.update_fan_placement(fan)
     if result:
+        _refresh_fan_deadzones(hass)
         connection.send_result(msg["id"], result.to_dict())
     else:
         connection.send_error(msg["id"], "update_failed", "Failed to update fan")
@@ -473,6 +498,7 @@ def ws_fans_remove(
         return
     store = hass.data[DOMAIN]["store"]
     if store.remove_fan_placement(msg["fan_id"]):
+        _refresh_fan_deadzones(hass)
         connection.send_result(msg["id"], {"success": True})
     else:
         connection.send_error(msg["id"], "not_found", "Fan not found")

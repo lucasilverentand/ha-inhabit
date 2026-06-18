@@ -7212,8 +7212,43 @@ export class FpbCanvas extends LitElement {
     return 75;
   }
 
+  private _fanBlowFactor(fan: FanPlacement): number {
+    const state = this.hass?.states[fan.entity_id];
+    if (!state || state.state !== "on") return 0;
+
+    const percentage = this._numericFanAttribute(state.attributes.percentage);
+    if (percentage !== null) return Math.max(0, Math.min(1, percentage / 100));
+
+    const speed =
+      this._numericFanAttribute(state.attributes.speed) ??
+      this._numericFanAttribute(state.attributes.fan_speed);
+    if (speed !== null) return Math.max(0, Math.min(1, speed / 100));
+
+    return 1;
+  }
+
+  private _numericFanAttribute(value: unknown): number | null {
+    if (value === null || value === undefined) return null;
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : null;
+  }
+
   private _effectiveFanDeadzoneRadius(fan: FanPlacement): number {
-    return Math.max(0, fan.deadzone_radius ?? this._defaultFanDeadzoneRadius());
+    if (fan.deadzone_enabled === false) return 0;
+
+    const maxRadius = Math.max(
+      0,
+      fan.deadzone_radius ?? this._defaultFanDeadzoneRadius(),
+    );
+    const blowFactor = this._fanBlowFactor(fan);
+    if (blowFactor <= 0) return 0;
+    if (fan.deadzone_dynamic === false) return maxRadius;
+
+    const minRadius = Math.min(
+      maxRadius,
+      Math.max(0, fan.deadzone_min_radius ?? 0),
+    );
+    return minRadius + (maxRadius - minRadius) * blowFactor;
   }
 
   private _renderFanArc(fan: FanPlacement) {

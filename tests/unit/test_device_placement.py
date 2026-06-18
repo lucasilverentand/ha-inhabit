@@ -126,6 +126,9 @@ class TestFanPlacement:
             oscillation_start=315,
             oscillation_end=90,
             deadzone_radius=80,
+            deadzone_min_radius=20,
+            deadzone_enabled=False,
+            deadzone_dynamic=False,
         )
         data = fan.to_dict()
         restored = FanPlacement.from_dict(data)
@@ -137,6 +140,9 @@ class TestFanPlacement:
         assert restored.oscillation_start == 315
         assert restored.oscillation_end == 90
         assert restored.deadzone_radius == 80
+        assert restored.deadzone_min_radius == 20
+        assert restored.deadzone_enabled is False
+        assert restored.deadzone_dynamic is False
 
     def test_from_dict_defaults_map_settings(self):
         """Test deserialization defaults for old/minimal data."""
@@ -146,6 +152,9 @@ class TestFanPlacement:
         assert fan.oscillation_start is None
         assert fan.oscillation_end is None
         assert fan.deadzone_radius is None
+        assert fan.deadzone_min_radius is None
+        assert fan.deadzone_enabled is True
+        assert fan.deadzone_dynamic is True
 
 
 class TestButtonPlacement:

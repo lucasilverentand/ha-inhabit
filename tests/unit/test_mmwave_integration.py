@@ -1120,12 +1120,37 @@ class TestMmwaveTargetProcessor:
                 floor_id="floor1",
                 position=Coordinates(x=500, y=500),
                 deadzone_radius=80,
+                deadzone_min_radius=20,
             )
         ]
+        mock_hass.states.get.side_effect = lambda entity_id: MagicMock(
+            state="on", attributes={"percentage": "50"}
+        )
         assert (
-            processor._find_containing_regions(placement, Coordinates(x=500, y=500))
+            processor._find_containing_regions(placement, Coordinates(x=545, y=500))
             == []
         )
         assert processor._find_containing_regions(
-            placement, Coordinates(x=700, y=500)
+            placement, Coordinates(x=560, y=500)
+        ) == ["zone1", "room1"]
+
+        mock_hass.states.get.side_effect = lambda entity_id: MagicMock(
+            state="off", attributes={"percentage": "100"}
+        )
+        assert processor._find_containing_regions(
+            placement, Coordinates(x=500, y=500)
+        ) == ["zone1", "room1"]
+
+        store.get_fan_placements.return_value[0].deadzone_dynamic = False
+        mock_hass.states.get.side_effect = lambda entity_id: MagicMock(
+            state="on", attributes={"percentage": "10"}
+        )
+        assert (
+            processor._find_containing_regions(placement, Coordinates(x=570, y=500))
+            == []
+        )
+
+        store.get_fan_placements.return_value[0].deadzone_enabled = False
+        assert processor._find_containing_regions(
+            placement, Coordinates(x=500, y=500)
         ) == ["zone1", "room1"]

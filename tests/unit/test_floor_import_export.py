@@ -138,6 +138,9 @@ async def test_floor_export_import_round_trips_all_placement_and_config_types(
             oscillation_start=315,
             oscillation_end=90,
             deadzone_radius=80,
+            deadzone_min_radius=20,
+            deadzone_enabled=False,
+            deadzone_dynamic=False,
         ),
     )
     store.place_button(
@@ -243,6 +246,9 @@ async def test_floor_export_import_round_trips_all_placement_and_config_types(
     assert imported_fan.oscillation_start == 315
     assert imported_fan.oscillation_end == 90
     assert imported_fan.deadzone_radius == 80
+    assert imported_fan.deadzone_min_radius == 20
+    assert imported_fan.deadzone_enabled is False
+    assert imported_fan.deadzone_dynamic is False
     assert store.get_button_placements("fp_target")[0].room_id == imported_zone_id
     assert store.get_other_placements("fp_target")[0].room_id == imported_room_id
 

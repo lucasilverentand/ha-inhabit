@@ -239,6 +239,28 @@ export class FpbDevicePanel extends LitElement {
       accent-color: var(--primary-color);
     }
 
+    .toggle-row,
+    .metric-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      min-height: 28px;
+      font-size: 13px;
+    }
+
+    .toggle-row input[type="checkbox"] {
+      width: 18px;
+      height: 18px;
+      accent-color: var(--primary-color);
+      flex: 0 0 auto;
+    }
+
+    .metric-row span:last-child {
+      color: var(--secondary-text-color);
+      white-space: nowrap;
+    }
+
     .delete-btn {
       min-height: 36px;
       padding: 8px 16px;
@@ -723,6 +745,45 @@ export class FpbDevicePanel extends LitElement {
     return 75;
   }
 
+  private _fanBlowFactor(fan: FanPlacement): number {
+    const state = this.hass?.states[fan.entity_id];
+    if (!state || state.state !== "on") return 0;
+
+    const percentage = this._numericFanAttribute(state.attributes.percentage);
+    if (percentage !== null) return Math.max(0, Math.min(1, percentage / 100));
+
+    const speed =
+      this._numericFanAttribute(state.attributes.speed) ??
+      this._numericFanAttribute(state.attributes.fan_speed);
+    if (speed !== null) return Math.max(0, Math.min(1, speed / 100));
+
+    return 1;
+  }
+
+  private _numericFanAttribute(value: unknown): number | null {
+    if (value === null || value === undefined) return null;
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : null;
+  }
+
+  private _effectiveFanDeadzoneRadius(fan: FanPlacement): number {
+    if (fan.deadzone_enabled === false) return 0;
+
+    const maxRadius = Math.max(
+      0,
+      fan.deadzone_radius ?? this._defaultFanDeadzoneRadius(),
+    );
+    const blowFactor = this._fanBlowFactor(fan);
+    if (blowFactor <= 0) return 0;
+    if (fan.deadzone_dynamic === false) return maxRadius;
+
+    const minRadius = Math.min(
+      maxRadius,
+      Math.max(0, fan.deadzone_min_radius ?? 0),
+    );
+    return minRadius + (maxRadius - minRadius) * blowFactor;
+  }
+
   private _fanDeadzoneControlRange(): {
     max: number;
     step: number;
@@ -733,6 +794,10 @@ export class FpbDevicePanel extends LitElement {
     if (unit === "in") return { max: 100, step: 2, unit };
     if (unit === "ft") return { max: 8, step: 0.25, unit };
     return { max: 250, step: 5, unit: "cm" };
+  }
+
+  private _formatFanDeadzone(value: number, step: number): string {
+    return value.toFixed(step < 1 ? 2 : 0);
   }
 
   private async _updateMmwave(updates: Record<string, unknown>): Promise<void> {
@@ -923,9 +988,15 @@ export class FpbDevicePanel extends LitElement {
   private _renderFanSettings(p: FanPlacement) {
     const oscillationStart = p.oscillation_start ?? p.orientation;
     const oscillationEnd = p.oscillation_end ?? p.orientation;
+    const deadzoneRange = this._fanDeadzoneControlRange();
+    const deadzoneEnabled = p.deadzone_enabled !== false;
+    const deadzoneDynamic = p.deadzone_dynamic !== false;
     const deadzoneRadius =
       p.deadzone_radius ?? this._defaultFanDeadzoneRadius();
-    const deadzoneRange = this._fanDeadzoneControlRange();
+    const deadzoneMinRadius = p.deadzone_min_radius ?? 0;
+    const effectiveDeadzoneRadius = this._effectiveFanDeadzoneRadius(p);
+    const formatDeadzone = (value: number) =>
+      `${this._formatFanDeadzone(value, deadzoneRange.step)} ${deadzoneRange.unit}`;
     return html`
       <div class="section">
         <div class="section-title">Map Settings</div>
@@ -975,10 +1046,40 @@ export class FpbDevicePanel extends LitElement {
           />
         </div>
 
+        <label class="toggle-row">
+          <span>Automatic Deadzone</span>
+          <input type="checkbox"
+            .checked=${deadzoneEnabled}
+            @change=${(e: Event) => {
+              const val = (e.target as HTMLInputElement).checked;
+              fanPlacements.value = fanPlacements.value.map((fan) =>
+                fan.id === p.id ? { ...fan, deadzone_enabled: val } : fan,
+              );
+              this._updateFan({ deadzone_enabled: val });
+            }}
+          />
+        </label>
+
+        <label class="toggle-row">
+          <span>Dynamic Size</span>
+          <input type="checkbox"
+            .checked=${deadzoneDynamic}
+            ?disabled=${!deadzoneEnabled}
+            @change=${(e: Event) => {
+              const val = (e.target as HTMLInputElement).checked;
+              fanPlacements.value = fanPlacements.value.map((fan) =>
+                fan.id === p.id ? { ...fan, deadzone_dynamic: val } : fan,
+              );
+              this._updateFan({ deadzone_dynamic: val });
+            }}
+          />
+        </label>
+
         <div class="slider-row">
-          <label>Presence Deadzone <span>${deadzoneRadius.toFixed(deadzoneRange.step < 1 ? 2 : 0)} ${deadzoneRange.unit}</span></label>
+          <label>Deadzone Max <span>${formatDeadzone(deadzoneRadius)}</span></label>
           <input type="range" min="0" max=${deadzoneRange.max} step=${deadzoneRange.step}
             .value=${String(deadzoneRadius)}
+            ?disabled=${!deadzoneEnabled}
             @input=${(e: Event) => {
               const val = Number((e.target as HTMLInputElement).value);
               fanPlacements.value = fanPlacements.value.map((fan) =>
@@ -988,6 +1089,33 @@ export class FpbDevicePanel extends LitElement {
             }}
             @change=${(e: Event) => this._updateFan({ deadzone_radius: Number((e.target as HTMLInputElement).value) })}
           />
+        </div>
+
+        ${
+          deadzoneDynamic
+            ? html`
+        <div class="slider-row">
+          <label>Deadzone Min <span>${formatDeadzone(Math.min(deadzoneRadius, deadzoneMinRadius))}</span></label>
+          <input type="range" min="0" max=${deadzoneRange.max} step=${deadzoneRange.step}
+            .value=${String(Math.min(deadzoneRadius, deadzoneMinRadius))}
+            ?disabled=${!deadzoneEnabled}
+            @input=${(e: Event) => {
+              const val = Number((e.target as HTMLInputElement).value);
+              fanPlacements.value = fanPlacements.value.map((fan) =>
+                fan.id === p.id ? { ...fan, deadzone_min_radius: val } : fan,
+              );
+              this.requestUpdate();
+            }}
+            @change=${(e: Event) => this._updateFan({ deadzone_min_radius: Number((e.target as HTMLInputElement).value) })}
+          />
+        </div>
+        `
+            : nothing
+        }
+
+        <div class="metric-row">
+          <span>Current Deadzone</span>
+          <span>${formatDeadzone(effectiveDeadzoneRadius)}</span>
         </div>
       </div>
     `;
