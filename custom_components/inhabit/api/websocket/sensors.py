@@ -70,6 +70,7 @@ def ws_sensor_config_get(
         vol.Optional("hold_until_exit"): bool,
         vol.Optional("occupies_parent"): bool,
         vol.Optional("presence_affects"): bool,
+        vol.Optional("spatial_presence_delay"): vol.Any(int, None),
         vol.Optional("door_seals_room"): bool,
         vol.Optional("seal_max_duration"): int,
         vol.Optional("long_stay"): bool,
@@ -136,6 +137,9 @@ def ws_sensor_config_update(
         config.occupies_parent = msg["occupies_parent"]
     if "presence_affects" in msg:
         config.presence_affects = msg["presence_affects"]
+    if "spatial_presence_delay" in msg:
+        delay = msg["spatial_presence_delay"]
+        config.spatial_presence_delay = None if delay is None else max(0, delay)
     if "door_seals_room" in msg:
         config.door_seals_room = msg["door_seals_room"]
     elif "door_blocks_vacancy" in msg:

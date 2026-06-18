@@ -4586,7 +4586,7 @@ function ft(t,e){return(e,i,o)=>((t,e,i)=>(i.configurable=!0,i.enumerable=!0,Ref
           `:Z}
         </div>
       </div>
-    `}render(){const t=(this._config?.door_sensors??[]).length>0;return H`
+    `}render(){const t=(this._config?.door_sensors??[]).length>0,e=this._config?.spatial_presence_delay??("zone"===this.targetType?5:0);return H`
       <div class="panel-header">
         <h3>${this.targetName} Occupancy</h3>
         <button class="close-btn" @click=${()=>this.dispatchEvent(new CustomEvent("close-panel"))}>
@@ -4649,6 +4649,16 @@ function ft(t,e){return(e,i,o)=>((t,e,i)=>(i.configurable=!0,i.enumerable=!0,Ref
                   @change=${t=>this._updateConfig({presence_timeout:Number(t.target.value)})}
                 />
               </div>
+
+              ${"zone"===this.targetType?H`
+              <div class="slider-row">
+                <label>Spatial Delay <span>${e}s</span></label>
+                <input type="range" min="0" max="30" step="1"
+                  .value=${String(e)}
+                  @change=${t=>this._updateConfig({spatial_presence_delay:Number(t.target.value)})}
+                />
+              </div>
+            `:Z}
             </div>
 
             <!-- Sensor Bindings -->

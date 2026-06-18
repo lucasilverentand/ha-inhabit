@@ -12,8 +12,14 @@ from homeassistant.helpers.dispatcher import (
     async_dispatcher_connect,
     async_dispatcher_send,
 )
+from homeassistant.helpers.event import async_call_later
 
-from ..const import DOMAIN, OCCUPANCY_HISTORY_MAXLEN, OccupancyState
+from ..const import (
+    DEFAULT_ZONE_SPATIAL_PRESENCE_DELAY,
+    DOMAIN,
+    OCCUPANCY_HISTORY_MAXLEN,
+    OccupancyState,
+)
 from ..models.virtual_sensor import (
     OccupancyHistoryEntry,
     OccupancyStateData,
@@ -84,6 +90,10 @@ class VirtualSensorEngine:
 
         # Per-region target tracking: {region_id: set of "placement_id:target_index" keys}
         self._mmwave_target_keys_per_region: dict[str, set[str]] = {}
+        self._pending_mmwave_target_keys_per_region: dict[str, set[str]] = {}
+        self._pending_mmwave_target_timers: dict[
+            tuple[str, str], Callable[[], None]
+        ] = {}
 
         # Occupancy history tracking
         self._occupancy_history: deque[OccupancyHistoryEntry] = deque(
@@ -234,7 +244,9 @@ class VirtualSensorEngine:
         if self._unsub_mmwave:
             self._unsub_mmwave()
             self._unsub_mmwave = None
+        self._cancel_pending_spatial_presence()
         self._mmwave_target_keys_per_region.clear()
+        self._pending_mmwave_target_keys_per_region.clear()
 
         # Save feedback data before stopping
         self._store.save_feedback_data(self._feedback_controller.save_data())
@@ -530,28 +542,134 @@ class VirtualSensorEngine:
         target_key = f"{placement_id}:{target_index}"
         new_regions = set(region_ids)
 
-        # Find all old regions this target was in
-        old_regions: set[str] = set()
-        for rid, target_keys in self._mmwave_target_keys_per_region.items():
-            if target_key in target_keys:
-                old_regions.add(rid)
+        old_regions = self._get_spatial_regions_for_target(target_key)
 
         if old_regions == new_regions:
             return
 
         # Remove target from regions it left
         for rid in old_regions - new_regions:
-            self._mmwave_target_keys_per_region[rid].discard(target_key)
-            count = len(self._mmwave_target_keys_per_region[rid])
-            if count == 0:
-                del self._mmwave_target_keys_per_region[rid]
-            self._route_spatial_presence(rid, count)
+            self._remove_target_from_spatial_region(rid, target_key)
 
         # Add target to regions it entered
         for rid in new_regions - old_regions:
-            self._mmwave_target_keys_per_region.setdefault(rid, set()).add(target_key)
-            new_count = len(self._mmwave_target_keys_per_region[rid])
-            self._route_spatial_presence(rid, new_count)
+            self._add_target_to_spatial_region(rid, target_key)
+
+    def _get_spatial_regions_for_target(self, target_key: str) -> set[str]:
+        """Return active or pending regions for a target."""
+        regions: set[str] = set()
+        for rid, target_keys in self._mmwave_target_keys_per_region.items():
+            if target_key in target_keys:
+                regions.add(rid)
+        for rid, target_keys in self._pending_mmwave_target_keys_per_region.items():
+            if target_key in target_keys:
+                regions.add(rid)
+        return regions
+
+    def _add_target_to_spatial_region(self, region_id: str, target_key: str) -> None:
+        """Add a target to a region, delaying zone occupancy when configured."""
+        delay = self._spatial_presence_delay_for_region(region_id)
+        if delay <= 0:
+            self._mmwave_target_keys_per_region.setdefault(region_id, set()).add(
+                target_key
+            )
+            new_count = len(self._mmwave_target_keys_per_region[region_id])
+            self._route_spatial_presence(region_id, new_count)
+            return
+
+        self._pending_mmwave_target_keys_per_region.setdefault(region_id, set()).add(
+            target_key
+        )
+
+        timer_key = (region_id, target_key)
+
+        @callback
+        def confirm_spatial_presence(_now: Any) -> None:
+            self._pending_mmwave_target_timers.pop(timer_key, None)
+            pending_targets = self._pending_mmwave_target_keys_per_region.get(region_id)
+            if not pending_targets or target_key not in pending_targets:
+                return
+
+            pending_targets.discard(target_key)
+            if not pending_targets:
+                del self._pending_mmwave_target_keys_per_region[region_id]
+
+            self._mmwave_target_keys_per_region.setdefault(region_id, set()).add(
+                target_key
+            )
+            target_count = len(self._mmwave_target_keys_per_region[region_id])
+            self._route_spatial_presence(region_id, target_count)
+
+        self._pending_mmwave_target_timers[timer_key] = async_call_later(
+            self.hass,
+            delay,
+            confirm_spatial_presence,
+        )
+        _LOGGER.debug(
+            "Delaying spatial presence for %s in %s by %ds",
+            target_key,
+            region_id,
+            delay,
+        )
+
+    def _remove_target_from_spatial_region(
+        self, region_id: str, target_key: str
+    ) -> None:
+        """Remove a target from a region and cancel pending confirmation."""
+        self._cancel_pending_spatial_presence(region_id, target_key)
+
+        active_targets = self._mmwave_target_keys_per_region.get(region_id)
+        if not active_targets or target_key not in active_targets:
+            return
+
+        active_targets.discard(target_key)
+        count = len(active_targets)
+        if count == 0:
+            del self._mmwave_target_keys_per_region[region_id]
+        self._route_spatial_presence(region_id, count)
+
+    def _cancel_pending_spatial_presence(
+        self, region_id: str | None = None, target_key: str | None = None
+    ) -> None:
+        """Cancel pending spatial presence confirmations."""
+        for pending_key, cancel in list(self._pending_mmwave_target_timers.items()):
+            pending_region_id, pending_target_key = pending_key
+            if region_id is not None and pending_region_id != region_id:
+                continue
+            if target_key is not None and pending_target_key != target_key:
+                continue
+
+            cancel()
+            self._pending_mmwave_target_timers.pop(pending_key, None)
+            pending_targets = self._pending_mmwave_target_keys_per_region.get(
+                pending_region_id
+            )
+            if pending_targets:
+                pending_targets.discard(pending_target_key)
+                if not pending_targets:
+                    del self._pending_mmwave_target_keys_per_region[pending_region_id]
+
+    def _spatial_presence_delay_for_region(self, region_id: str) -> int:
+        """Return the confirmation delay for a spatial region."""
+        config = self._store.get_sensor_config(region_id)
+        if not config or not config.enabled or not config.presence_affects:
+            return 0
+
+        if config.spatial_presence_delay is not None:
+            return max(0, config.spatial_presence_delay)
+
+        if self._is_zone_region(region_id):
+            return DEFAULT_ZONE_SPATIAL_PRESENCE_DELAY
+
+        return 0
+
+    def _is_zone_region(self, region_id: str) -> bool:
+        """Return True when the region ID belongs to a zone."""
+        for fp in self._store.get_floor_plans():
+            for floor in fp.floors:
+                if any(zone.id == region_id for zone in floor.zones):
+                    return True
+        return False
 
     def _route_spatial_presence(self, region_id: str, target_count: int) -> None:
         """Route a spatial presence update to the correct state machine.
@@ -707,6 +825,8 @@ class VirtualSensorEngine:
             # Clean up parent zone mapping
             for zone_ids in self._parent_zones.values():
                 zone_ids.discard(room_id)
+
+            self._cancel_pending_spatial_presence(region_id=room_id)
 
             # Notify that the sensor is being removed
             async_dispatcher_send(
