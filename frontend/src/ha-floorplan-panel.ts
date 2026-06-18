@@ -6,6 +6,7 @@ import { css, html, LitElement, type PropertyValues } from "lit";
 import { property, state } from "lit/decorators.js";
 import type {
   ButtonPlacement,
+  FanPlacement,
   Floor,
   FloorPlan,
   HomeAssistant,
@@ -37,6 +38,7 @@ export {
   currentFloor,
   currentFloorPlan,
   devicePanelTarget,
+  fanPlacements,
   focusedRoomId,
   gridSize,
   layers,
@@ -65,6 +67,7 @@ import {
   currentFloor,
   currentFloorPlan,
   devicePanelTarget,
+  fanPlacements,
   focusedRoomId,
   gridSize,
   lightPlacements,
@@ -118,7 +121,7 @@ export class HaFloorplanPanel extends LitElement {
   @state()
   private _devicePanelTarget: {
     id: string;
-    type: "light" | "switch" | "mmwave" | "button" | "other";
+    type: "light" | "switch" | "fan" | "mmwave" | "button" | "other";
   } | null = null;
 
   @state()
@@ -597,6 +600,10 @@ export class HaFloorplanPanel extends LitElement {
         type: "inhabit/switches/list",
         floor_plan_id: floorPlanId,
       }),
+      this.hass.callWS<FanPlacement[]>({
+        type: "inhabit/fans/list",
+        floor_plan_id: floorPlanId,
+      }),
       this.hass.callWS<ButtonPlacement[]>({
         type: "inhabit/buttons/list",
         floor_plan_id: floorPlanId,
@@ -614,6 +621,7 @@ export class HaFloorplanPanel extends LitElement {
     const labels = [
       "lights",
       "switches",
+      "fans",
       "buttons",
       "others",
       "mmwave",
@@ -621,6 +629,7 @@ export class HaFloorplanPanel extends LitElement {
     const signals = [
       lightPlacements,
       switchPlacements,
+      fanPlacements,
       buttonPlacements,
       otherPlacements,
       mmwavePlacements,

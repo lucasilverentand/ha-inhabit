@@ -25,7 +25,13 @@ interface EntityEntry {
   domain: string;
 }
 
-type PlacementPickerType = "light" | "switch" | "button" | "mmwave" | "other";
+type PlacementPickerType =
+  | "light"
+  | "switch"
+  | "fan"
+  | "button"
+  | "mmwave"
+  | "other";
 
 const PLACEMENT_TYPE_OPTIONS: Record<
   PlacementPickerType,
@@ -33,6 +39,7 @@ const PLACEMENT_TYPE_OPTIONS: Record<
 > = {
   light: { label: "Light", icon: "mdi:lightbulb" },
   switch: { label: "Switch", icon: "mdi:toggle-switch" },
+  fan: { label: "Fan", icon: "mdi:fan" },
   button: { label: "Button", icon: "mdi:gesture-tap-button" },
   mmwave: { label: "mmWave", icon: "mdi:access-point" },
   other: { label: "Other", icon: "mdi:devices" },
@@ -519,6 +526,7 @@ export class FpbEntityPicker extends LitElement {
     if (entityId.startsWith("event.")) return "mdi:bell-ring";
     if (entityId.startsWith("button.") || entityId.startsWith("input_button."))
       return "mdi:gesture-tap-button";
+    if (entityId.startsWith("fan.")) return "mdi:fan";
     if (entityId.startsWith("switch.") || entityId.startsWith("input_boolean."))
       return "mdi:toggle-switch";
     if (entityId.startsWith("light.")) return "mdi:lightbulb";
@@ -559,12 +567,14 @@ export class FpbEntityPicker extends LitElement {
         ? ["light"]
         : placementType === "switch"
           ? ["switch"]
-          : placementType === "button"
-            ? ["button"]
-            : this.domains;
+          : placementType === "fan"
+            ? ["fan"]
+            : placementType === "button"
+              ? ["button"]
+              : this.domains;
     const pickerExcludeDomains =
       placementType === "other"
-        ? [...this.excludeDomains, "light", "switch", "button"]
+        ? [...this.excludeDomains, "light", "switch", "fan", "button"]
         : this.excludeDomains;
     const domainSet = new Set(pickerDomains);
     const excludeDomainSet = new Set(pickerExcludeDomains);

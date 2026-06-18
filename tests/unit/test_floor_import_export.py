@@ -23,6 +23,7 @@ from custom_components.inhabit.api.websocket.floors import (  # noqa: E402
 from custom_components.inhabit.const import DOMAIN  # noqa: E402
 from custom_components.inhabit.models.device_placement import (  # noqa: E402
     ButtonPlacement,
+    FanPlacement,
     LightPlacement,
     OtherPlacement,
     SwitchPlacement,
@@ -125,6 +126,19 @@ async def test_floor_export_import_round_trips_all_placement_and_config_types(
             position=Coordinates(20, 30),
         ),
     )
+    store.place_fan(
+        "fp_source",
+        FanPlacement(
+            id="fan_1",
+            entity_id="fan.dyson",
+            floor_id="floor_source",
+            room_id="room_living",
+            position=Coordinates(25, 35),
+            orientation=45,
+            oscillation_start=315,
+            oscillation_end=90,
+        ),
+    )
     store.place_button(
         "fp_source",
         ButtonPlacement(
@@ -197,6 +211,7 @@ async def test_floor_export_import_round_trips_all_placement_and_config_types(
 
     assert len(exported["lights"]) == 1
     assert len(exported["switches"]) == 1
+    assert len(exported["fans"]) == 1
     assert len(exported["buttons"]) == 1
     assert len(exported["others"]) == 1
     assert len(exported["mmwave_placements"]) == 1
@@ -221,6 +236,11 @@ async def test_floor_export_import_round_trips_all_placement_and_config_types(
     assert store.get_light_placements("fp_target")[0].floor_id == imported_floor_id
     assert store.get_light_placements("fp_target")[0].room_id == imported_room_id
     assert store.get_switch_placements("fp_target")[0].room_id == imported_room_id
+    imported_fan = store.get_fan_placements("fp_target")[0]
+    assert imported_fan.room_id == imported_room_id
+    assert imported_fan.orientation == 45
+    assert imported_fan.oscillation_start == 315
+    assert imported_fan.oscillation_end == 90
     assert store.get_button_placements("fp_target")[0].room_id == imported_zone_id
     assert store.get_other_placements("fp_target")[0].room_id == imported_room_id
 

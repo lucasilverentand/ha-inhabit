@@ -8,6 +8,7 @@ import { property, state } from "lit/decorators.js";
 import {
   buttonPlacements,
   devicePanelTarget,
+  fanPlacements,
   lightPlacements,
   mmwaveCalibrationTarget,
   mmwavePlacements,
@@ -18,6 +19,7 @@ import {
 import type {
   ButtonPlacement,
   Coordinates,
+  FanPlacement,
   HomeAssistant,
   LightPlacement,
   MmwavePlacement,
@@ -53,7 +55,8 @@ export class FpbDevicePanel extends LitElement {
   placementId = "";
 
   @property({ type: String })
-  deviceType: "light" | "switch" | "mmwave" | "button" | "other" = "light";
+  deviceType: "light" | "switch" | "fan" | "mmwave" | "button" | "other" =
+    "light";
 
   @state()
   private _rebinding = false;
@@ -528,6 +531,7 @@ export class FpbDevicePanel extends LitElement {
   private _getPlacement():
     | LightPlacement
     | SwitchPlacement
+    | FanPlacement
     | ButtonPlacement
     | OtherPlacement
     | MmwavePlacement
@@ -540,6 +544,8 @@ export class FpbDevicePanel extends LitElement {
       return (
         switchPlacements.value.find((p) => p.id === this.placementId) ?? null
       );
+    } else if (this.deviceType === "fan") {
+      return fanPlacements.value.find((p) => p.id === this.placementId) ?? null;
     } else if (this.deviceType === "button") {
       return (
         buttonPlacements.value.find((p) => p.id === this.placementId) ?? null
@@ -561,7 +567,8 @@ export class FpbDevicePanel extends LitElement {
   }
 
   private _getPickerExcludeDomains(): string[] {
-    if (this.deviceType === "other") return ["light", "switch", "button"];
+    if (this.deviceType === "other")
+      return ["light", "switch", "fan", "button"];
     return [];
   }
 
@@ -569,6 +576,7 @@ export class FpbDevicePanel extends LitElement {
     placement:
       | LightPlacement
       | SwitchPlacement
+      | FanPlacement
       | ButtonPlacement
       | OtherPlacement
       | MmwavePlacement,
@@ -581,6 +589,7 @@ export class FpbDevicePanel extends LitElement {
       placement as
         | LightPlacement
         | SwitchPlacement
+        | FanPlacement
         | ButtonPlacement
         | OtherPlacement,
       states,
@@ -608,6 +617,7 @@ export class FpbDevicePanel extends LitElement {
       {
         lights: lightPlacements.value,
         switches: switchPlacements.value,
+        fans: fanPlacements.value,
         buttons: buttonPlacements.value,
         others: otherPlacements.value,
       },
@@ -622,6 +632,7 @@ export class FpbDevicePanel extends LitElement {
         {
           lights: lightPlacements.value,
           switches: switchPlacements.value,
+          fans: fanPlacements.value,
           buttons: buttonPlacements.value,
           others: otherPlacements.value,
         },
@@ -651,6 +662,15 @@ export class FpbDevicePanel extends LitElement {
         switchPlacements.value = switchPlacements.value.map((p) =>
           p.id === this.placementId ? { ...p, entity_id: newEntityId } : p,
         );
+      } else if (this.deviceType === "fan") {
+        await this.hass.callWS({
+          type: "inhabit/fans/update",
+          fan_id: this.placementId,
+          entity_id: newEntityId,
+        });
+        fanPlacements.value = fanPlacements.value.map((p) =>
+          p.id === this.placementId ? { ...p, entity_id: newEntityId } : p,
+        );
       } else if (this.deviceType === "button") {
         await this.hass.callWS({
           type: "inhabit/buttons/update",
@@ -674,6 +694,23 @@ export class FpbDevicePanel extends LitElement {
       this.requestUpdate();
     } catch (err) {
       console.error("Failed to rebind entity:", err);
+    }
+  }
+
+  private async _updateFan(updates: Partial<FanPlacement>): Promise<void> {
+    if (!this.hass) return;
+    try {
+      const result = await this.hass.callWS<FanPlacement>({
+        type: "inhabit/fans/update",
+        fan_id: this.placementId,
+        ...updates,
+      });
+      fanPlacements.value = fanPlacements.value.map((p) =>
+        p.id === result.id ? result : p,
+      );
+      this.requestUpdate();
+    } catch (err) {
+      console.error("Failed to update fan placement:", err);
     }
   }
 
@@ -711,6 +748,14 @@ export class FpbDevicePanel extends LitElement {
           switch_id: this.placementId,
         });
         switchPlacements.value = switchPlacements.value.filter(
+          (p) => p.id !== this.placementId,
+        );
+      } else if (this.deviceType === "fan") {
+        await this.hass.callWS({
+          type: "inhabit/fans/remove",
+          fan_id: this.placementId,
+        });
+        fanPlacements.value = fanPlacements.value.filter(
           (p) => p.id !== this.placementId,
         );
       } else if (this.deviceType === "button") {
@@ -752,6 +797,7 @@ export class FpbDevicePanel extends LitElement {
   private _getIcon(): string {
     if (this.deviceType === "light") return "mdi:lightbulb";
     if (this.deviceType === "switch") return "mdi:toggle-switch";
+    if (this.deviceType === "fan") return "mdi:fan";
     if (this.deviceType === "button") return "mdi:gesture-tap-button";
     if (this.deviceType === "other") return "mdi:devices";
     return "mdi:access-point";
@@ -760,6 +806,7 @@ export class FpbDevicePanel extends LitElement {
   private _getTitle(): string {
     if (this.deviceType === "light") return "Light";
     if (this.deviceType === "switch") return "Switch";
+    if (this.deviceType === "fan") return "Fan";
     if (this.deviceType === "button") return "Button";
     if (this.deviceType === "other") return "Other Device";
     return "mmWave Sensor";
@@ -839,6 +886,7 @@ export class FpbDevicePanel extends LitElement {
             : nothing
         }
 
+        ${this.deviceType === "fan" ? this._renderFanSettings(placement as FanPlacement) : null}
         ${this.deviceType === "mmwave" ? this._renderMmwaveSettings(placement as MmwavePlacement) : null}
 
         <!-- Delete -->
@@ -846,6 +894,61 @@ export class FpbDevicePanel extends LitElement {
           <button class="delete-btn" @click=${this._deletePlacement}>
             Delete ${this._getTitle()}
           </button>
+        </div>
+      </div>
+    `;
+  }
+
+  private _renderFanSettings(p: FanPlacement) {
+    const oscillationStart = p.oscillation_start ?? p.orientation;
+    const oscillationEnd = p.oscillation_end ?? p.orientation;
+    return html`
+      <div class="section">
+        <div class="section-title">Map Settings</div>
+
+        <div class="slider-row">
+          <label>Orientation <span>${p.orientation.toFixed(0)}&deg;</span></label>
+          <input type="range" min="0" max="359" step="1"
+            .value=${String(p.orientation)}
+            @input=${(e: Event) => {
+              const val = Number((e.target as HTMLInputElement).value);
+              fanPlacements.value = fanPlacements.value.map((fan) =>
+                fan.id === p.id ? { ...fan, orientation: val } : fan,
+              );
+              this.requestUpdate();
+            }}
+            @change=${(e: Event) => this._updateFan({ orientation: Number((e.target as HTMLInputElement).value) })}
+          />
+        </div>
+
+        <div class="slider-row">
+          <label>Oscillation Begin <span>${oscillationStart.toFixed(0)}&deg;</span></label>
+          <input type="range" min="0" max="359" step="1"
+            .value=${String(oscillationStart)}
+            @input=${(e: Event) => {
+              const val = Number((e.target as HTMLInputElement).value);
+              fanPlacements.value = fanPlacements.value.map((fan) =>
+                fan.id === p.id ? { ...fan, oscillation_start: val } : fan,
+              );
+              this.requestUpdate();
+            }}
+            @change=${(e: Event) => this._updateFan({ oscillation_start: Number((e.target as HTMLInputElement).value) })}
+          />
+        </div>
+
+        <div class="slider-row">
+          <label>Oscillation End <span>${oscillationEnd.toFixed(0)}&deg;</span></label>
+          <input type="range" min="0" max="359" step="1"
+            .value=${String(oscillationEnd)}
+            @input=${(e: Event) => {
+              const val = Number((e.target as HTMLInputElement).value);
+              fanPlacements.value = fanPlacements.value.map((fan) =>
+                fan.id === p.id ? { ...fan, oscillation_end: val } : fan,
+              );
+              this.requestUpdate();
+            }}
+            @change=${(e: Event) => this._updateFan({ oscillation_end: Number((e.target as HTMLInputElement).value) })}
+          />
         </div>
       </div>
     `;

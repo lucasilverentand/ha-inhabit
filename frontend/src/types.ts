@@ -172,6 +172,12 @@ export interface LightPlacement extends BasePlacement {}
 
 export interface SwitchPlacement extends BasePlacement {}
 
+export interface FanPlacement extends BasePlacement {
+  orientation: number;
+  oscillation_start?: number | null;
+  oscillation_end?: number | null;
+}
+
 export interface ButtonPlacement extends BasePlacement {}
 
 export interface OtherPlacement extends BasePlacement {}
@@ -381,6 +387,7 @@ export interface SelectionState {
     | "edge"
     | "light"
     | "switch"
+    | "fan"
     | "mmwave"
     | "button"
     | "other"

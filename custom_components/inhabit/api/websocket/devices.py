@@ -11,6 +11,7 @@ from homeassistant.core import HomeAssistant, callback
 from ...const import DOMAIN, WS_PREFIX
 from ...models.device_placement import (
     ButtonPlacement,
+    FanPlacement,
     LightPlacement,
     OtherPlacement,
     SwitchPlacement,
@@ -29,6 +30,10 @@ def register(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_switches_update)
     websocket_api.async_register_command(hass, ws_switches_remove)
     websocket_api.async_register_command(hass, ws_switches_list)
+    websocket_api.async_register_command(hass, ws_fans_place)
+    websocket_api.async_register_command(hass, ws_fans_update)
+    websocket_api.async_register_command(hass, ws_fans_remove)
+    websocket_api.async_register_command(hass, ws_fans_list)
     websocket_api.async_register_command(hass, ws_buttons_place)
     websocket_api.async_register_command(hass, ws_buttons_update)
     websocket_api.async_register_command(hass, ws_buttons_remove)
@@ -56,6 +61,16 @@ def _reject_duplicate_device_entity(
         )
         return True
     return False
+
+
+def _apply_fan_map_fields(fan: FanPlacement, msg: dict[str, Any]) -> None:
+    """Apply optional fan map settings from a WebSocket payload."""
+    if "orientation" in msg:
+        fan.orientation = msg["orientation"]
+    if "oscillation_start" in msg:
+        fan.oscillation_start = msg["oscillation_start"]
+    if "oscillation_end" in msg:
+        fan.oscillation_end = msg["oscillation_end"]
 
 
 # ==================== Light Placements ====================
@@ -327,6 +342,152 @@ def ws_switches_list(
     """List all switch placements for a floor plan."""
     store = hass.data[DOMAIN]["store"]
     placements = store.get_switch_placements(msg["floor_plan_id"])
+    connection.send_result(msg["id"], [p.to_dict() for p in placements])
+
+
+# ==================== Fan Placements ====================
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{WS_PREFIX}/fans/place",
+        vol.Required("floor_plan_id"): str,
+        vol.Required("floor_id"): str,
+        vol.Required("entity_id"): str,
+        vol.Required("position"): dict,
+        vol.Optional("room_id"): vol.Any(str, None),
+        vol.Optional("label"): vol.Any(str, None),
+        vol.Optional("orientation"): vol.Coerce(float),
+        vol.Optional("oscillation_start"): vol.Any(vol.Coerce(float), None),
+        vol.Optional("oscillation_end"): vol.Any(vol.Coerce(float), None),
+    }
+)
+@callback
+def ws_fans_place(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Place a fan on a floor plan."""
+    if not _require_admin(connection, msg):
+        return
+    store = hass.data[DOMAIN]["store"]
+    if not _validate_placement_location(connection, msg, store):
+        return
+    if _reject_duplicate_device_entity(
+        connection,
+        msg,
+        store,
+        msg["floor_plan_id"],
+        msg["entity_id"],
+    ):
+        return
+    fan = FanPlacement(
+        entity_id=msg["entity_id"],
+        floor_id=msg["floor_id"],
+        room_id=msg.get("room_id"),
+        position=Coordinates.from_dict(msg["position"]),
+        label=msg.get("label"),
+        orientation=msg.get("orientation", 0),
+        oscillation_start=msg.get("oscillation_start"),
+        oscillation_end=msg.get("oscillation_end"),
+    )
+    result = store.place_fan(msg["floor_plan_id"], fan)
+    connection.send_result(msg["id"], result.to_dict())
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{WS_PREFIX}/fans/update",
+        vol.Required("fan_id"): str,
+        vol.Optional("entity_id"): str,
+        vol.Optional("position"): dict,
+        vol.Optional("room_id"): vol.Any(str, None),
+        vol.Optional("label"): vol.Any(str, None),
+        vol.Optional("orientation"): vol.Coerce(float),
+        vol.Optional("oscillation_start"): vol.Any(vol.Coerce(float), None),
+        vol.Optional("oscillation_end"): vol.Any(vol.Coerce(float), None),
+    }
+)
+@callback
+def ws_fans_update(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Update a fan placement."""
+    if not _require_admin(connection, msg):
+        return
+    store = hass.data[DOMAIN]["store"]
+    fan = store.get_fan_placement(msg["fan_id"])
+    if not fan:
+        connection.send_error(msg["id"], "not_found", "Fan not found")
+        return
+
+    if "entity_id" in msg:
+        floor_plan_id = store.get_device_placement_floor_plan_id(msg["fan_id"])
+        if floor_plan_id and _reject_duplicate_device_entity(
+            connection,
+            msg,
+            store,
+            floor_plan_id,
+            msg["entity_id"],
+            msg["fan_id"],
+        ):
+            return
+        fan.entity_id = msg["entity_id"]
+    if "position" in msg:
+        fan.position = Coordinates.from_dict(msg["position"])
+    if "room_id" in msg:
+        fan.room_id = msg["room_id"]
+    if "label" in msg:
+        fan.label = msg["label"]
+    _apply_fan_map_fields(fan, msg)
+
+    result = store.update_fan_placement(fan)
+    if result:
+        connection.send_result(msg["id"], result.to_dict())
+    else:
+        connection.send_error(msg["id"], "update_failed", "Failed to update fan")
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{WS_PREFIX}/fans/remove",
+        vol.Required("fan_id"): str,
+    }
+)
+@callback
+def ws_fans_remove(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Remove a fan placement."""
+    if not _require_admin(connection, msg):
+        return
+    store = hass.data[DOMAIN]["store"]
+    if store.remove_fan_placement(msg["fan_id"]):
+        connection.send_result(msg["id"], {"success": True})
+    else:
+        connection.send_error(msg["id"], "not_found", "Fan not found")
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{WS_PREFIX}/fans/list",
+        vol.Required("floor_plan_id"): str,
+    }
+)
+@callback
+def ws_fans_list(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """List all fan placements for a floor plan."""
+    store = hass.data[DOMAIN]["store"]
+    placements = store.get_fan_placements(msg["floor_plan_id"])
     connection.send_result(msg["id"], [p.to_dict() for p in placements])
 
 

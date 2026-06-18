@@ -1,5 +1,6 @@
 import type {
   ButtonPlacement,
+  FanPlacement,
   LightPlacement,
   OtherPlacement,
   SwitchPlacement,
@@ -8,6 +9,7 @@ import type {
 export interface NormalDevicePlacementGroups {
   lights: LightPlacement[];
   switches: SwitchPlacement[];
+  fans: FanPlacement[];
   buttons: ButtonPlacement[];
   others: OtherPlacement[];
 }
@@ -15,6 +17,7 @@ export interface NormalDevicePlacementGroups {
 type NormalDevicePlacement =
   | LightPlacement
   | SwitchPlacement
+  | FanPlacement
   | ButtonPlacement
   | OtherPlacement;
 
@@ -26,6 +29,7 @@ export function getPlacedDeviceEntityIds(
   const placements: NormalDevicePlacement[] = [
     ...groups.lights,
     ...groups.switches,
+    ...groups.fans,
     ...groups.buttons,
     ...groups.others,
   ];

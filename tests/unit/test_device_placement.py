@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from custom_components.inhabit.models.device_placement import (
     ButtonPlacement,
+    FanPlacement,
     LightPlacement,
     OtherPlacement,
     SwitchPlacement,
@@ -107,6 +108,41 @@ class TestSwitchPlacement:
         assert restored.entity_id == "switch.fan"
         assert restored.position.x == 50
         assert restored.label == "Fan Switch"
+
+
+class TestFanPlacement:
+    """Test FanPlacement model."""
+
+    def test_creation_and_serialization_with_map_settings(self):
+        """Test fan placement round-trip serialization."""
+        fan = FanPlacement(
+            id="fan_1",
+            entity_id="fan.dyson",
+            floor_id="floor_1",
+            room_id="room_1",
+            position=Coordinates(75, 125),
+            label="Dyson",
+            orientation=45,
+            oscillation_start=315,
+            oscillation_end=90,
+        )
+        data = fan.to_dict()
+        restored = FanPlacement.from_dict(data)
+
+        assert restored.entity_id == "fan.dyson"
+        assert restored.position.x == 75
+        assert restored.label == "Dyson"
+        assert restored.orientation == 45
+        assert restored.oscillation_start == 315
+        assert restored.oscillation_end == 90
+
+    def test_from_dict_defaults_map_settings(self):
+        """Test deserialization defaults for old/minimal data."""
+        fan = FanPlacement.from_dict({"entity_id": "fan.dyson"})
+
+        assert fan.orientation == 0
+        assert fan.oscillation_start is None
+        assert fan.oscillation_end is None
 
 
 class TestButtonPlacement:
