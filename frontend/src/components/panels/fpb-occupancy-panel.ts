@@ -6,6 +6,7 @@
 import { css, html, LitElement, nothing } from "lit";
 import { property, state } from "lit/decorators.js";
 import type {
+  HassEntity,
   HomeAssistant,
   OccupancyStateData,
   SensorBinding,
@@ -381,6 +382,37 @@ export class FpbOccupancyPanel extends LitElement {
     await this._updateConfig({ [key]: updated });
   }
 
+  private _isOverrideTriggerEntity = (
+    entityId: string,
+    stateObj: HassEntity,
+  ): boolean => {
+    const domain = entityId.split(".")[0];
+    if (
+      ["button", "input_button", "event", "switch", "input_boolean"].includes(
+        domain,
+      )
+    ) {
+      return true;
+    }
+    if (domain !== "sensor") return false;
+
+    const entityIdLower = entityId.toLowerCase();
+    const friendlyName = String(
+      stateObj.attributes?.friendly_name ?? "",
+    ).toLowerCase();
+    const deviceClass = String(
+      stateObj.attributes?.device_class ?? "",
+    ).toLowerCase();
+
+    return (
+      entityIdLower.endsWith("_action") ||
+      entityIdLower.includes("_action_") ||
+      friendlyName.endsWith(" action") ||
+      friendlyName.includes(" action ") ||
+      deviceClass === "enum"
+    );
+  };
+
   private _getEntityName(entityId: string): string {
     if (!this.hass?.states[entityId]) return entityId;
     return String(
@@ -639,10 +671,11 @@ export class FpbOccupancyPanel extends LitElement {
                     ? html`
                   <fpb-entity-picker
                     .hass=${this.hass}
-                    .domains=${["button", "input_button", "event", "switch", "input_boolean"]}
+                    .domains=${["button", "input_button", "event", "switch", "input_boolean", "sensor"]}
                     .exclude=${this._getAllBoundEntityIds()}
+                    .entityFilter=${this._isOverrideTriggerEntity}
                     title="Select Override Trigger"
-                    placeholder="Search buttons, switches, events..."
+                    placeholder="Search buttons, switches, events, action sensors..."
                     @entities-confirmed=${(e: CustomEvent) => {
                       this._updateConfig({
                         override_trigger_entity: e.detail.entityIds[0],

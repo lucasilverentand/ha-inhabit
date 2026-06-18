@@ -172,6 +172,95 @@ class TestOccupancyStateMachineWithMocks:
         assert machine.state.state == OccupancyState.VACANT
         assert not machine.is_occupied
 
+    def test_override_trigger_without_action_matches_any_event(
+        self, mock_hass, basic_config, state_changes
+    ):
+        """Override trigger toggles for Hue/action sensors with no action filter."""
+        from custom_components.inhabit.engine.occupancy_state_machine import (
+            OccupancyStateMachine,
+        )
+
+        basic_config.override_trigger_entity = "sensor.hue_button_action"
+        basic_config.override_trigger_action = ""
+        changes, on_change = state_changes
+        machine = OccupancyStateMachine(mock_hass, basic_config, on_change)
+        event = MagicMock()
+        event.data = {
+            "entity_id": "sensor.hue_button_action",
+            "new_state": MagicMock(
+                state="button_1_press",
+                attributes={},
+            ),
+        }
+
+        machine._handle_override_trigger_event(event)
+        assert machine.state.state == OccupancyState.OCCUPIED
+
+        machine._handle_override_trigger_event(event)
+        assert machine.state.state == OccupancyState.VACANT
+
+    def test_override_trigger_with_action_still_filters(
+        self, mock_hass, basic_config, state_changes
+    ):
+        """Configured action keeps filtering event entities by event_type/state."""
+        from custom_components.inhabit.engine.occupancy_state_machine import (
+            OccupancyStateMachine,
+        )
+
+        basic_config.override_trigger_entity = "event.hue_wall_switch"
+        basic_config.override_trigger_action = "initial_press"
+        changes, on_change = state_changes
+        machine = OccupancyStateMachine(mock_hass, basic_config, on_change)
+
+        wrong_event = MagicMock()
+        wrong_event.data = {
+            "entity_id": "event.hue_wall_switch",
+            "new_state": MagicMock(
+                state="2026-06-18T01:00:00+00:00",
+                attributes={"event_type": "repeat"},
+            ),
+        }
+        machine._handle_override_trigger_event(wrong_event)
+        assert machine.state.state == OccupancyState.VACANT
+
+        matching_event = MagicMock()
+        matching_event.data = {
+            "entity_id": "event.hue_wall_switch",
+            "new_state": MagicMock(
+                state="2026-06-18T01:00:01+00:00",
+                attributes={"event_type": "initial_press"},
+            ),
+        }
+        machine._handle_override_trigger_event(matching_event)
+        assert machine.state.state == OccupancyState.OCCUPIED
+
+    @pytest.mark.asyncio
+    async def test_override_trigger_subscribes_without_action(
+        self, mock_hass, basic_config, state_changes
+    ):
+        """Selecting only an override entity is enough to install a listener."""
+        from custom_components.inhabit.engine.occupancy_state_machine import (
+            OccupancyStateMachine,
+        )
+
+        basic_config.override_trigger_entity = "sensor.hue_button_action"
+        basic_config.override_trigger_action = ""
+        changes, on_change = state_changes
+        machine = OccupancyStateMachine(mock_hass, basic_config, on_change)
+        subscribed_entities: list[str] = []
+
+        def mock_track_state_change_event(hass, entity_id, callback):
+            subscribed_entities.append(entity_id)
+            return MagicMock()
+
+        with patch(
+            "custom_components.inhabit.engine.occupancy_state_machine.async_track_state_change_event",
+            mock_track_state_change_event,
+        ):
+            await machine.async_start()
+
+        assert "sensor.hue_button_action" in subscribed_entities
+
     def test_transition_to_checking(self, mock_hass, basic_config, state_changes):
         """Test transition to checking state."""
         from custom_components.inhabit.engine.occupancy_state_machine import (

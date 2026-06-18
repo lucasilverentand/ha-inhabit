@@ -239,7 +239,7 @@ class OccupancyStateMachine:
             self._unsub_state_listeners.append(unsub)
 
         # Subscribe to override trigger (physical button)
-        if self.config.override_trigger_entity and self.config.override_trigger_action:
+        if self.config.override_trigger_entity:
             unsub = async_track_state_change_event(
                 self.hass,
                 self.config.override_trigger_entity,
@@ -615,12 +615,13 @@ class OccupancyStateMachine:
         if not new_state:
             return
 
-        action = self.config.override_trigger_action
+        action = self.config.override_trigger_action.strip()
 
         # Event entities: action is in event_type attribute
         # Action sensors: action is the state value
         event_type = new_state.attributes.get("event_type", "")
-        matched = event_type == action or new_state.state == action
+        observed_action = event_type or new_state.state
+        matched = not action or event_type == action or new_state.state == action
         if not matched:
             return
 
@@ -635,11 +636,13 @@ class OccupancyStateMachine:
             "Room %s: override trigger %s fired (%s), %s → %s",
             self.config.room_id,
             entity_id,
-            action,
+            action or observed_action or "any",
             self._state.state,
             new,
         )
-        self.set_state(new, f"override trigger {entity_id} ({action})")
+        self.set_state(
+            new, f"override trigger {entity_id} ({action or observed_action or 'any'})"
+        )
 
     @callback
     def _handle_hint_event(self, event: Event) -> None:
