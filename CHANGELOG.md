@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.14.2](https://github.com/lucasilverentand/ha-inhabit/compare/v0.14.1...v0.14.2) (2026-06-18)
+
+
+### Features
+
+* add outside exposure room sensors ([#61](https://github.com/lucasilverentand/ha-inhabit/issues/61)) ([05a8ba9](https://github.com/lucasilverentand/ha-inhabit/commit/05a8ba9dd1cee9692c4848871a9584788ecd94d3))
+* delay zone spatial occupancy ([#62](https://github.com/lucasilverentand/ha-inhabit/issues/62)) ([cbbf735](https://github.com/lucasilverentand/ha-inhabit/commit/cbbf7351a9b4b43975204d381dd84746ab3f00b4))
+
+
+### Bug Fixes
+
+* keep entity picker above side panels ([#64](https://github.com/lucasilverentand/ha-inhabit/issues/64)) ([67388b7](https://github.com/lucasilverentand/ha-inhabit/commit/67388b7b998e0f75cb43e4c400e905d3bceb0038))
+
 ## [0.14.1](https://github.com/lucasilverentand/ha-inhabit/compare/v0.14.0...v0.14.1) (2026-06-18)
 
 
