@@ -180,6 +180,7 @@ export interface FanPlacement extends BasePlacement {
   deadzone_min_radius?: number | null;
   deadzone_enabled?: boolean;
   deadzone_dynamic?: boolean;
+  draggable_always?: boolean;
 }
 
 export interface ButtonPlacement extends BasePlacement {}

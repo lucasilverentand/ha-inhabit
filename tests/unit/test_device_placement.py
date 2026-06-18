@@ -129,6 +129,7 @@ class TestFanPlacement:
             deadzone_min_radius=20,
             deadzone_enabled=False,
             deadzone_dynamic=False,
+            draggable_always=True,
         )
         data = fan.to_dict()
         restored = FanPlacement.from_dict(data)
@@ -143,6 +144,7 @@ class TestFanPlacement:
         assert restored.deadzone_min_radius == 20
         assert restored.deadzone_enabled is False
         assert restored.deadzone_dynamic is False
+        assert restored.draggable_always is True
 
     def test_from_dict_defaults_map_settings(self):
         """Test deserialization defaults for old/minimal data."""
@@ -155,6 +157,7 @@ class TestFanPlacement:
         assert fan.deadzone_min_radius is None
         assert fan.deadzone_enabled is True
         assert fan.deadzone_dynamic is True
+        assert fan.draggable_always is False
 
 
 class TestButtonPlacement:

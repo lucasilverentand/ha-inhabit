@@ -89,6 +89,7 @@ class FanPlacement(_BasePlacement):
     deadzone_min_radius: float | None = None
     deadzone_enabled: bool = True
     deadzone_dynamic: bool = True
+    draggable_always: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
@@ -102,6 +103,7 @@ class FanPlacement(_BasePlacement):
                 "deadzone_min_radius": self.deadzone_min_radius,
                 "deadzone_enabled": self.deadzone_enabled,
                 "deadzone_dynamic": self.deadzone_dynamic,
+                "draggable_always": self.draggable_always,
             }
         )
         return data
@@ -124,6 +126,7 @@ class FanPlacement(_BasePlacement):
             deadzone_min_radius=_float_or_none(data.get("deadzone_min_radius")),
             deadzone_enabled=_bool_or_default(data.get("deadzone_enabled"), True),
             deadzone_dynamic=_bool_or_default(data.get("deadzone_dynamic"), True),
+            draggable_always=_bool_or_default(data.get("draggable_always"), False),
         )
 
 

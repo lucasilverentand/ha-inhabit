@@ -1150,6 +1150,16 @@ class TestMmwaveTargetProcessor:
             == []
         )
 
+        store.get_fan_placements.return_value[0].oscillation_start = 45
+        store.get_fan_placements.return_value[0].oscillation_end = 135
+        assert (
+            processor._find_containing_regions(placement, Coordinates(x=570, y=500))
+            == []
+        )
+        assert processor._find_containing_regions(
+            placement, Coordinates(x=500, y=570)
+        ) == ["zone1", "room1"]
+
         store.get_fan_placements.return_value[0].deadzone_enabled = False
         assert processor._find_containing_regions(
             placement, Coordinates(x=500, y=500)
