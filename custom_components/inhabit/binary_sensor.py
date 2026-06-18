@@ -6,7 +6,12 @@ following Home Assistant's expected platform discovery pattern.
 
 from .entities.binary_sensor import (
     VirtualOccupancySensor,
+    VirtualOutsideExposureSensor,
     async_setup_entry,
 )
 
-__all__ = ["async_setup_entry", "VirtualOccupancySensor"]
+__all__ = [
+    "async_setup_entry",
+    "VirtualOccupancySensor",
+    "VirtualOutsideExposureSensor",
+]

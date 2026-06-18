@@ -26,9 +26,15 @@ from .api import services
 from .api import websocket as ws_api
 from .const import DOMAIN
 from .engine.mmwave_target_processor import MmwaveTargetProcessor
+from .engine.outside_exposure import OutsideExposureEngine
 from .engine.simulated_target_processor import SimulatedTargetProcessor
 from .engine.virtual_sensor_engine import VirtualSensorEngine
-from .entities import ENTITY_PREFIX, SUFFIX_OCCUPANCY, SUFFIX_OVERRIDE
+from .entities import (
+    ENTITY_PREFIX,
+    SUFFIX_OCCUPANCY,
+    SUFFIX_OUTSIDE_EXPOSURE,
+    SUFFIX_OVERRIDE,
+)
 from .frontend_cache import panel_module_url
 from .store import FloorPlanStore, ImageStore
 
@@ -63,8 +69,7 @@ def _sync_all_devices(
 
     for fp in store.get_floor_plans():
         for room in fp.get_all_rooms():
-            if room.occupancy_sensor_enabled:
-                _sync_device(room.id, room.name, room.ha_area_id)
+            _sync_device(room.id, room.name, room.ha_area_id)
         for floor in fp.floors:
             for zone in floor.zones:
                 if zone.occupancy_sensor_enabled:
@@ -113,7 +118,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         if not unique_id.startswith(ENTITY_PREFIX):
             return False
         prefix_len = len(ENTITY_PREFIX)
-        for suffix in (SUFFIX_OCCUPANCY, SUFFIX_OVERRIDE):
+        for suffix in (SUFFIX_OCCUPANCY, SUFFIX_OUTSIDE_EXPOSURE, SUFFIX_OVERRIDE):
             if unique_id.endswith(suffix):
                 region_id = unique_id[prefix_len : -len(suffix)]
                 return region_id not in valid_ids
@@ -139,6 +144,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Initialize virtual sensor engine
     sensor_engine = VirtualSensorEngine(hass, floor_plan_store)
 
+    # Initialize outside exposure engine
+    outside_exposure_engine = OutsideExposureEngine(hass, floor_plan_store)
+
     # Initialize mmWave target processor
     mmwave_processor = MmwaveTargetProcessor(hass, floor_plan_store)
 
@@ -150,6 +158,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "store": floor_plan_store,
         "image_store": image_store,
         "sensor_engine": sensor_engine,
+        "outside_exposure_engine": outside_exposure_engine,
         "mmwave_processor": mmwave_processor,
         "sim_processor": sim_processor,
         "entry": entry,
@@ -206,13 +215,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Start the sensor engine
     await sensor_engine.async_start()
 
+    # Start outside exposure tracking after entities have been created
+    await outside_exposure_engine.async_start()
+
     # Start mmWave target processor (after sensor engine, so subscriptions are ready)
     await mmwave_processor.async_start()
 
     @callback
     def _reconcile_restored_occupancy(_now) -> None:
-        """Republish current occupancy after startup entities have settled."""
+        """Republish current virtual sensor states after startup entities settle."""
         sensor_engine.republish_current_states()
+        outside_exposure_engine.republish_current_states()
 
     entry.async_on_unload(
         async_call_later(
@@ -237,6 +250,12 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Clear simulated targets
     sim_processor: SimulatedTargetProcessor = hass.data[DOMAIN]["sim_processor"]
     sim_processor.clear_all()
+
+    # Stop outside exposure engine
+    outside_exposure_engine: OutsideExposureEngine = hass.data[DOMAIN][
+        "outside_exposure_engine"
+    ]
+    await outside_exposure_engine.async_stop()
 
     # Stop sensor engine
     sensor_engine: VirtualSensorEngine = hass.data[DOMAIN]["sensor_engine"]
