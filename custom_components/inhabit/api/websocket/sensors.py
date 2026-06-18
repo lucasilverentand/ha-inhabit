@@ -18,6 +18,7 @@ def register(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_sensor_config_get)
     websocket_api.async_register_command(hass, ws_sensor_config_update)
     websocket_api.async_register_command(hass, ws_occupancy_states)
+    websocket_api.async_register_command(hass, ws_outside_exposure_states)
     websocket_api.async_register_command(hass, ws_occupancy_history)
     websocket_api.async_register_command(hass, ws_phantom_states)
 
@@ -192,6 +193,26 @@ def ws_occupancy_states(
     """Get all room occupancy states."""
     sensor_engine = hass.data[DOMAIN]["sensor_engine"]
     states = sensor_engine.get_all_states()
+    connection.send_result(
+        msg["id"],
+        {room_id: state.to_dict() for room_id, state in states.items()},
+    )
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{WS_PREFIX}/outside_exposure_states",
+    }
+)
+@callback
+def ws_outside_exposure_states(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Get all room outside exposure states."""
+    outside_exposure_engine = hass.data[DOMAIN]["outside_exposure_engine"]
+    states = outside_exposure_engine.get_all_states()
     connection.send_result(
         msg["id"],
         {room_id: state.to_dict() for room_id, state in states.items()},

@@ -8,11 +8,19 @@ from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 from custom_components.inhabit.const import (
     ATTR_CONFIDENCE,
     ATTR_CONTRIBUTING_SENSORS,
+    ATTR_DIRECT_OUTSIDE_EXPOSURE,
+    ATTR_EXTERIOR_OPENINGS,
+    ATTR_INTERIOR_OPENINGS,
     ATTR_LAST_MOTION_AT,
     ATTR_LAST_PRESENCE_AT,
     ATTR_STATE_MACHINE_STATE,
     DOMAIN,
     OccupancyState,
+)
+from custom_components.inhabit.engine.outside_exposure import (
+    SIGNAL_OUTSIDE_EXPOSURE_ROOM_ADDED,
+    SIGNAL_OUTSIDE_EXPOSURE_ROOM_REMOVED,
+    OutsideExposureState,
 )
 from custom_components.inhabit.entities import binary_sensor
 from custom_components.inhabit.models.virtual_sensor import OccupancyStateData
@@ -175,6 +183,13 @@ class TestSensorUniqueId:
 
         assert expected_unique_id == "fp_living_room_floor_1_occupancy"
 
+    def test_outside_exposure_unique_id_format(self):
+        """Test unique ID format for outside exposure sensors."""
+        room_id = "room_1"
+        expected_unique_id = f"fp_{room_id}_outside_exposure"
+
+        assert expected_unique_id == "fp_room_1_outside_exposure"
+
 
 class TestSensorStateChange:
     """Test sensor state change logic."""
@@ -297,6 +312,91 @@ class TestSensorRestoreState:
         assert entity._state_data.state == OccupancyState.OCCUPIED
 
 
+class TestOutsideExposureSensor:
+    """Test virtual outside exposure sensor behavior."""
+
+    async def test_added_uses_engine_state(self, mock_hass):
+        """Engine state should drive the initial outside exposure state."""
+        outside_exposure_engine = MagicMock()
+        outside_exposure_engine.get_state.return_value = OutsideExposureState(
+            room_id="room_1",
+            exposed=True,
+            direct_exposure=True,
+            exterior_openings=("binary_sensor.front_door",),
+        )
+        mock_hass.data = {DOMAIN: {"outside_exposure_engine": outside_exposure_engine}}
+        entity = binary_sensor.VirtualOutsideExposureSensor(
+            mock_hass, "fp_1", "Home", "room_1", "Living Room"
+        )
+        entity.async_get_last_state = AsyncMock(return_value=None)
+        entity.async_on_remove = MagicMock()
+
+        with patch(
+            "custom_components.inhabit.entities.binary_sensor.async_dispatcher_connect",
+            return_value=MagicMock(),
+        ):
+            await entity.async_added_to_hass()
+
+        assert entity.is_on is True
+        attrs = entity.extra_state_attributes
+        assert attrs[ATTR_DIRECT_OUTSIDE_EXPOSURE] is True
+        assert attrs[ATTR_EXTERIOR_OPENINGS] == ["binary_sensor.front_door"]
+        assert attrs[ATTR_INTERIOR_OPENINGS] == []
+
+    async def test_added_restores_state_when_engine_has_no_state(self, mock_hass):
+        """Restored outside exposure state is used until the engine publishes."""
+        outside_exposure_engine = MagicMock()
+        outside_exposure_engine.get_state.return_value = None
+        mock_hass.data = {DOMAIN: {"outside_exposure_engine": outside_exposure_engine}}
+        restored_state = MagicMock(
+            state="on",
+            attributes={
+                ATTR_DIRECT_OUTSIDE_EXPOSURE: False,
+                ATTR_EXTERIOR_OPENINGS: ["binary_sensor.front_door"],
+                ATTR_INTERIOR_OPENINGS: ["binary_sensor.living_hall_door"],
+            },
+        )
+        entity = binary_sensor.VirtualOutsideExposureSensor(
+            mock_hass, "fp_1", "Home", "room_2", "Hall"
+        )
+        entity.async_get_last_state = AsyncMock(return_value=restored_state)
+        entity.async_on_remove = MagicMock()
+
+        with patch(
+            "custom_components.inhabit.entities.binary_sensor.async_dispatcher_connect",
+            return_value=MagicMock(),
+        ):
+            await entity.async_added_to_hass()
+
+        assert entity.is_on is True
+        assert entity._state_data.direct_exposure is False
+        assert entity._state_data.exterior_openings == ("binary_sensor.front_door",)
+        assert entity._state_data.interior_openings == (
+            "binary_sensor.living_hall_door",
+        )
+
+    def test_state_change_filter_by_room_id(self, mock_hass):
+        """State changes should be filtered by room ID."""
+        entity = binary_sensor.VirtualOutsideExposureSensor(
+            mock_hass, "fp_1", "Home", "room_1", "Living Room"
+        )
+        entity.async_write_ha_state = MagicMock()
+
+        entity._handle_state_change(
+            "other_room",
+            OutsideExposureState(room_id="other_room", exposed=True),
+        )
+        assert entity.is_on is False
+        entity.async_write_ha_state.assert_not_called()
+
+        entity._handle_state_change(
+            "room_1",
+            OutsideExposureState(room_id="room_1", exposed=True),
+        )
+        assert entity.is_on is True
+        entity.async_write_ha_state.assert_called_once()
+
+
 class TestSensorDeviceInfo:
     """Test sensor device info generation."""
 
@@ -336,10 +436,17 @@ class TestSensorPlatformSetup:
         async_add_entities = MagicMock()
         unsubscribe_added = MagicMock()
         unsubscribe_removed = MagicMock()
+        unsubscribe_outside_added = MagicMock()
+        unsubscribe_outside_removed = MagicMock()
 
         with patch(
             "custom_components.inhabit.entities.binary_sensor.async_dispatcher_connect",
-            side_effect=[unsubscribe_added, unsubscribe_removed],
+            side_effect=[
+                unsubscribe_added,
+                unsubscribe_removed,
+                unsubscribe_outside_added,
+                unsubscribe_outside_removed,
+            ],
         ) as connect:
             await binary_sensor.async_setup_entry(
                 mock_hass, config_entry, async_add_entities
@@ -348,7 +455,14 @@ class TestSensorPlatformSetup:
         assert connect.call_args_list == [
             call(mock_hass, f"{DOMAIN}_sensor_added", ANY),
             call(mock_hass, f"{DOMAIN}_sensor_removed", ANY),
+            call(mock_hass, SIGNAL_OUTSIDE_EXPOSURE_ROOM_ADDED, ANY),
+            call(mock_hass, SIGNAL_OUTSIDE_EXPOSURE_ROOM_REMOVED, ANY),
         ]
         config_entry.async_on_unload.assert_has_calls(
-            [call(unsubscribe_added), call(unsubscribe_removed)]
+            [
+                call(unsubscribe_added),
+                call(unsubscribe_removed),
+                call(unsubscribe_outside_added),
+                call(unsubscribe_outside_removed),
+            ]
         )

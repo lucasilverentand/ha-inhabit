@@ -9,7 +9,7 @@ from typing import Any
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 
-from ..const import STORAGE_KEY, STORAGE_VERSION
+from ..const import DOMAIN, STORAGE_KEY, STORAGE_VERSION
 from ..models.automation_rule import VisualRule
 from ..models.device_placement import (
     ButtonPlacement,
@@ -73,6 +73,16 @@ class FloorPlanStore:
         """Schedule a delayed save (debounced)."""
         self._store.async_delay_save(lambda: self._data, 1.0)
 
+    def _schedule_outside_exposure_refresh(self) -> None:
+        """Refresh outside exposure after floor-plan topology changes."""
+        domain_data = getattr(self.hass, "data", {}).get(DOMAIN, {})
+        if not isinstance(domain_data, dict):
+            return
+        engine = domain_data.get("outside_exposure_engine")
+        if not engine or not getattr(engine, "running", False):
+            return
+        self.hass.async_create_task(engine.async_refresh())
+
     # ==================== Floor Plans ====================
 
     def get_floor_plans(self) -> list[FloorPlan]:
@@ -112,6 +122,7 @@ class FloorPlanStore:
         floor_plan.updated_at = datetime.now().isoformat()
         self._data["floor_plans"][floor_plan.id] = floor_plan.to_dict()
         self.async_delay_save()
+        self._schedule_outside_exposure_refresh()
 
         _LOGGER.debug("Updated floor plan: %s", floor_plan.id)
         return floor_plan
@@ -161,6 +172,7 @@ class FloorPlanStore:
             del visual_rules[key]
 
         self.async_delay_save()
+        self._schedule_outside_exposure_refresh()
         _LOGGER.info("Deleted floor plan: %s", floor_plan_id)
         return True
 

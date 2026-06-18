@@ -80,6 +80,9 @@ ATTR_SEALED_SINCE: Final = "sealed_since"
 ATTR_SEAL_PROBABILITY: Final = "seal_probability"
 ATTR_HOUSE_SEALED: Final = "house_sealed"
 ATTR_SENSOR_DIAGNOSTICS: Final = "sensor_diagnostics"
+ATTR_DIRECT_OUTSIDE_EXPOSURE: Final = "direct_exposure"
+ATTR_EXTERIOR_OPENINGS: Final = "exterior_openings"
+ATTR_INTERIOR_OPENINGS: Final = "interior_openings"
 
 # Events
 EVENT_CHECKING_STARTED: Final = f"{DOMAIN}_checking_started"
