@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.14.5](https://github.com/lucasilverentand/ha-inhabit/compare/v0.14.4...v0.14.5) (2026-06-18)
+
+
+### Features
+
+* target fan deadzones from the map ([ed2a49e](https://github.com/lucasilverentand/ha-inhabit/commit/ed2a49e1b93096053a484bf23d81458aecdb4233))
+
+
+### Bug Fixes
+
+* confirm door seal after close detection ([#74](https://github.com/lucasilverentand/ha-inhabit/issues/74)) ([2be67b9](https://github.com/lucasilverentand/ha-inhabit/commit/2be67b909e98dfb67a479442a4fd7746bf0ce129))
+
 ## [0.14.4](https://github.com/lucasilverentand/ha-inhabit/compare/v0.14.3...v0.14.4) (2026-06-18)
 
 
