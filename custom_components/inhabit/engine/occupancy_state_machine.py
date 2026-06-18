@@ -1,4 +1,4 @@
-"""Door-seal-aware occupancy state machine with probabilistic seal decay."""
+"""Door-seal-aware occupancy state machine with post-close confirmation."""
 
 from __future__ import annotations
 
@@ -30,22 +30,20 @@ _LOGGER = logging.getLogger(__name__)
 
 class OccupancyStateMachine:
     """
-    State machine for room occupancy with probabilistic door-seal logic.
+    State machine for room occupancy with door-seal logic.
 
     States:
         VACANT: Room is unoccupied
         OCCUPIED: Room is occupied (motion or presence detected)
         CHECKING: Motion cleared, waiting to confirm vacancy
 
-    Door Seal (Probabilistic Decay):
-        A room is "sealed" when someone was detected inside and ALL doors
-        have remained closed since that detection.  Instead of a binary
-        sealed/not-sealed, the probability that someone is still inside
-        decays exponentially over time: p = 0.5^(t / half_life).
-        The seal blocks vacancy transitions as long as p > threshold (0.1).
-        The seal is immediately broken when any door opens or any door
-        sensor becomes unavailable.  A hard max_duration safety valve
-        ensures probability reaches 0.0 even without decay.
+    Door Seal (Wasp-in-box):
+        A room is "sealed" only after ALL doors are closed and a fresh motion,
+        presence, occupancy, or spatial-presence detection happens while they
+        remain closed.  A door-close event by itself never establishes the seal
+        because motion sensors can still be active from someone leaving.  Once
+        confirmed, the seal blocks vacancy until a door opens, the door sensor
+        becomes unavailable, or a manual override sets the room vacant.
 
     Long-Stay Zones:
         Zones marked long_stay (couch, bed, dining table) get a longer
@@ -99,6 +97,7 @@ class OccupancyStateMachine:
         self._occupied_since: datetime | None = None
         self._sensor_last_triggered: dict[str, datetime] = {}
         self._last_known_door_states: dict[str, bool] = {}  # entity_id -> was_open
+        self._awaiting_seal_confirmation = False
 
         # Presence aggregator for weighted temporal-decay probability
         self._aggregator = PresenceAggregator(
@@ -289,7 +288,7 @@ class OccupancyStateMachine:
         if new_state == OccupancyState.OCCUPIED:
             self._cancel_checking_timer()
             self._state.checking_started_at = None
-            self._evaluate_seal("manual override")
+            self._evaluate_seal("manual override", fresh_detection=False)
         elif new_state == OccupancyState.CHECKING:
             self._state.checking_started_at = datetime.now()
             self._break_seal("manual override to CHECKING")
@@ -334,7 +333,8 @@ class OccupancyStateMachine:
         if is_active:
             self._state.last_presence_at = datetime.now()
             self._transition_to_occupied(
-                f"spatial presence: {target_count} targets from {source}"
+                f"spatial presence: {target_count} targets from {source}",
+                fresh_detection=True,
             )
         else:
             self._check_all_sensors_clear()
@@ -356,22 +356,29 @@ class OccupancyStateMachine:
         )
 
         if active_motion:
-            self._transition_to_occupied(f"{reason}: motion active")
+            self._transition_to_occupied(
+                f"{reason}: motion active", fresh_detection=False
+            )
             return
 
         if active_presence:
-            self._transition_to_occupied(f"{reason}: presence active")
+            self._transition_to_occupied(
+                f"{reason}: presence active", fresh_detection=False
+            )
             return
 
         if active_occupancy:
-            self._transition_to_occupied(f"{reason}: occupancy active")
+            self._transition_to_occupied(
+                f"{reason}: occupancy active", fresh_detection=False
+            )
             return
 
         # Check aggregator probability as a fallback (e.g. decaying readings)
         probability = self._aggregator.get_presence_probability()
         if probability >= self.config.occupied_threshold:
             self._transition_to_occupied(
-                f"{reason}: aggregator probability {probability:.2f}"
+                f"{reason}: aggregator probability {probability:.2f}",
+                fresh_detection=False,
             )
             return
 
@@ -479,7 +486,9 @@ class OccupancyStateMachine:
             self._state.last_motion_at = datetime.now()
             self._sensor_last_triggered[entity_id] = datetime.now()
             self._update_contributing_sensors(entity_id, add=True)
-            self._transition_to_occupied(f"motion from {entity_id}")
+            self._transition_to_occupied(
+                f"motion from {entity_id}", fresh_detection=True
+            )
         else:
             self._update_contributing_sensors(entity_id, add=False)
             self._check_all_sensors_clear()
@@ -514,7 +523,9 @@ class OccupancyStateMachine:
             self._state.last_presence_at = datetime.now()
             self._sensor_last_triggered[entity_id] = datetime.now()
             self._update_contributing_sensors(entity_id, add=True)
-            self._transition_to_occupied(f"presence from {entity_id}")
+            self._transition_to_occupied(
+                f"presence from {entity_id}", fresh_detection=True
+            )
         else:
             self._update_contributing_sensors(entity_id, add=False)
             self._check_all_sensors_clear()
@@ -549,7 +560,9 @@ class OccupancyStateMachine:
             self._state.last_presence_at = datetime.now()
             self._sensor_last_triggered[entity_id] = datetime.now()
             self._update_contributing_sensors(entity_id, add=True)
-            self._transition_to_occupied(f"occupancy from {entity_id}")
+            self._transition_to_occupied(
+                f"occupancy from {entity_id}", fresh_detection=True
+            )
         else:
             self._update_contributing_sensors(entity_id, add=False)
             self._check_all_sensors_clear()
@@ -586,11 +599,12 @@ class OccupancyStateMachine:
                 self._break_seal(f"door sensor {entity_id} unavailable")
                 if (
                     self._state.state == OccupancyState.OCCUPIED
-                    and not self._any_sensor_active()
+                    and not self._any_occupancy_signal_active()
                 ):
                     self._transition_to_checking(
                         "seal broken (sensor unavailable), sensors clear"
                     )
+            self._awaiting_seal_confirmation = False
             return
 
         is_open = self._is_sensor_active(new_state, binding.inverted)
@@ -606,24 +620,25 @@ class OccupancyStateMachine:
 
         if is_open:
             # Door opened — break the seal
+            self._awaiting_seal_confirmation = False
             if self._seal_tracker.is_sealed:
                 self._break_seal(f"door {entity_id} opened")
 
                 # If sensors are already clear, transition to CHECKING now
                 if (
                     self._state.state == OccupancyState.OCCUPIED
-                    and not self._any_sensor_active()
+                    and not self._any_occupancy_signal_active()
                 ):
                     self._transition_to_checking("seal broken, sensors already clear")
         else:
-            # Door closed — try to re-establish seal if currently occupied
-            # with active sensors
-            if (
-                self._state.state == OccupancyState.OCCUPIED
-                and self._all_doors_closed()
-                and self._any_sensor_active()
-            ):
-                self._establish_seal("door closed while sensors active")
+            # Door closed — wait for a fresh in-room detection before sealing.
+            if self.config.door_seals_room and self._all_doors_closed():
+                self._awaiting_seal_confirmation = True
+                self._snapshot_door_states()
+                _LOGGER.info(
+                    "Room %s: all doors closed, waiting for fresh detection to seal",
+                    self.config.room_id,
+                )
 
     @callback
     def _handle_exit_sensor_event(self, event: Event) -> None:
@@ -800,15 +815,25 @@ class OccupancyStateMachine:
     # Door seal logic
     # ------------------------------------------------------------------
 
-    def _evaluate_seal(self, reason: str) -> None:
+    def _evaluate_seal(self, reason: str, *, fresh_detection: bool) -> None:
         """Evaluate whether the room should be sealed right now."""
         if not self.config.door_seals_room or not self.config.door_sensors:
             return
 
         if self._all_doors_closed() and not self._any_door_unavailable():
+            if not fresh_detection:
+                self._awaiting_seal_confirmation = True
+                self._snapshot_door_states()
+                _LOGGER.debug(
+                    "Room %s: doors closed but seal requires a fresh detection (%s)",
+                    self.config.room_id,
+                    reason,
+                )
+                return
             self._establish_seal(reason)
         else:
             # Door is open or unavailable at detection time — no seal
+            self._awaiting_seal_confirmation = False
             self._snapshot_door_states()
 
     def _establish_seal(self, reason: str) -> None:
@@ -817,6 +842,7 @@ class OccupancyStateMachine:
             return
 
         self._seal_tracker.establish()
+        self._awaiting_seal_confirmation = False
         self._sync_seal_state()
         self._state.seal_broken_at = None
         self._snapshot_door_states()
@@ -830,9 +856,11 @@ class OccupancyStateMachine:
     def _break_seal(self, reason: str) -> None:
         """Break the door seal on the room."""
         if not self._seal_tracker.is_sealed:
+            self._awaiting_seal_confirmation = False
             return
 
         self._seal_tracker.break_seal()
+        self._awaiting_seal_confirmation = False
         self._state.sealed = False
         self._state.seal_probability = 0.0
         self._state.seal_broken_at = datetime.now()
@@ -853,7 +881,7 @@ class OccupancyStateMachine:
 
     def _sync_seal_state(self) -> None:
         """Sync _state fields from the seal tracker for backward compatibility."""
-        self._state.sealed = self._seal_tracker.is_effective
+        self._state.sealed = self._seal_tracker.is_sealed
         self._state.seal_probability = self._seal_tracker.probability
         self._state.sealed_since = self._seal_tracker.sealed_since
 
@@ -861,7 +889,9 @@ class OccupancyStateMachine:
     # State transitions
     # ------------------------------------------------------------------
 
-    def _transition_to_occupied(self, reason: str) -> None:
+    def _transition_to_occupied(
+        self, reason: str, *, fresh_detection: bool = True
+    ) -> None:
         """Transition to OCCUPIED state.
 
         Uses threshold-gated logic: only transitions if the aggregator
@@ -871,10 +901,14 @@ class OccupancyStateMachine:
         if self._state.state == OccupancyState.OCCUPIED:
             # Already occupied — update confidence and re-evaluate seal
             self._state.confidence = self._calculate_confidence()
-            if not self._seal_tracker.is_sealed and self.config.door_seals_room:
-                self._evaluate_seal(f"re-detection: {reason}")
-            # Re-establish seal on new activity (resets decay timer)
-            if self._seal_tracker.is_sealed:
+            if (
+                fresh_detection
+                and not self._seal_tracker.is_sealed
+                and self.config.door_seals_room
+            ):
+                self._evaluate_seal(f"re-detection: {reason}", fresh_detection=True)
+            # Re-establish seal on new activity (refreshes diagnostic probability)
+            if fresh_detection and self._seal_tracker.is_sealed:
                 self._seal_tracker.establish()
                 self._sync_seal_state()
             return
@@ -911,7 +945,7 @@ class OccupancyStateMachine:
             )
 
         # Evaluate seal on entering OCCUPIED
-        self._evaluate_seal(reason)
+        self._evaluate_seal(reason, fresh_detection=fresh_detection)
 
         _LOGGER.info(
             "Room %s: %s → OCCUPIED (%s, sealed=%s, confidence=%.2f, seal_p=%.2f)",
@@ -965,10 +999,11 @@ class OccupancyStateMachine:
             )
             return
 
-        # Room-level seal check (probabilistic)
-        if self._seal_tracker.is_effective:
+        # Room-level seal check
+        if self._seal_blocks_vacancy():
             _LOGGER.debug(
-                "Room %s: vacancy blocked by seal (probability=%.2f)",
+                "Room %s: vacancy blocked by confirmed closed-door seal "
+                "(probability=%.2f)",
                 self.config.room_id,
                 self._seal_tracker.probability,
             )
@@ -994,6 +1029,7 @@ class OccupancyStateMachine:
 
         self._cancel_checking_timer()
         self._seal_tracker.reset()
+        self._awaiting_seal_confirmation = False
         old_state = self._state.state
 
         # Record session for adaptive learning
@@ -1074,9 +1110,9 @@ class OccupancyStateMachine:
             return
 
         # All sensors clear — but if seal is still effective, stay OCCUPIED
-        if self._seal_tracker.is_effective:
+        if self._seal_blocks_vacancy():
             _LOGGER.debug(
-                "Room %s: all sensors clear but room is sealed "
+                "Room %s: all sensors clear but room has confirmed closed-door seal "
                 "(probability=%.2f), staying OCCUPIED",
                 self.config.room_id,
                 self._seal_tracker.probability,
@@ -1146,6 +1182,19 @@ class OccupancyStateMachine:
                 return True
 
         return False
+
+    def _any_occupancy_signal_active(self) -> bool:
+        """Check if any motion, presence, occupancy, or spatial source is active."""
+        return self._any_sensor_active() or self._any_presence_sensor_active()
+
+    def _seal_blocks_vacancy(self) -> bool:
+        """Return whether a confirmed closed-door seal should block vacancy."""
+        return (
+            self.config.door_seals_room
+            and self._seal_tracker.is_sealed
+            and self._all_doors_closed()
+            and not self._any_door_unavailable()
+        )
 
     def _any_presence_sensor_active(self) -> bool:
         """Check if any presence or occupancy sensor is currently active."""

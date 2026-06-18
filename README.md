@@ -68,7 +68,7 @@ Each room automatically gets a virtual occupancy sensor (`binary_sensor.fp_{room
   - `OCCUPIED`: Motion or presence detected
   - `CHECKING`: Sensors cleared, waiting to confirm vacancy
 
-- **Door-Aware Logic**: Closed doors can block vacancy transitions to prevent false negatives
+- **Door-Aware Logic**: A fresh detection after doors close confirms a room should stay occupied until a door opens or becomes unavailable
 
 - **Configurable Timeouts**:
   - Motion timeout: Time after last motion before entering CHECKING

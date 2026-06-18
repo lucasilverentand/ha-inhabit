@@ -4687,7 +4687,7 @@ function ft(t,e){return(e,i,o)=>((t,e,i)=>(i.configurable=!0,i.enumerable=!0,Ref
           `:Z}
         </div>
       </div>
-    `}render(){const t=(this._config?.door_sensors??[]).length>0,e=this._config?.spatial_presence_delay??("zone"===this.targetType?5:0);return q`
+    `}render(){const t=(this._config?.door_sensors??[]).length>0,e=this._config?.door_seals_room??this._config?.door_blocks_vacancy,i=this._config?.spatial_presence_delay??("zone"===this.targetType?5:0);return q`
       <div class="panel-header">
         <h3>${this.targetName} Occupancy</h3>
         <button class="close-btn" @click=${()=>this.dispatchEvent(new CustomEvent("close-panel"))}>
@@ -4753,9 +4753,9 @@ function ft(t,e){return(e,i,o)=>((t,e,i)=>(i.configurable=!0,i.enumerable=!0,Ref
 
               ${"zone"===this.targetType?q`
               <div class="slider-row">
-                <label>Spatial Delay <span>${e}s</span></label>
+                <label>Spatial Delay <span>${i}s</span></label>
                 <input type="range" min="0" max="30" step="1"
-                  .value=${String(e)}
+                  .value=${String(i)}
                   @change=${t=>this._updateConfig({spatial_presence_delay:Number(t.target.value)})}
                 />
               </div>
@@ -4772,12 +4772,12 @@ function ft(t,e){return(e,i,o)=>((t,e,i)=>(i.configurable=!0,i.enumerable=!0,Ref
 
               <div class="toggle-row">
                 <div>
-                  <label>Door blocks vacancy</label>
-                  <div class="sublabel">Closed door prevents VACANT</div>
+                  <label>Closed-door hold</label>
+                  <div class="sublabel">Requires a fresh detection after closing</div>
                 </div>
                 <ha-switch
-                  .checked=${this._config.door_blocks_vacancy}
-                  @change=${t=>this._updateConfig({door_blocks_vacancy:t.target.checked})}
+                  .checked=${Boolean(e)}
+                  @change=${t=>this._updateConfig({door_seals_room:t.target.checked})}
                 ></ha-switch>
               </div>
 

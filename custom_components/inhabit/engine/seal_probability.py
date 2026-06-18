@@ -1,7 +1,7 @@
-"""Probabilistic seal decay model for occupancy detection.
+"""Diagnostic seal probability model for occupancy detection.
 
-Replaces the binary sealed/not-sealed approach with an exponential decay
-curve that models the probability someone is still inside a sealed room.
+Confirmed door seals are released by door events. The probability curve remains
+available as state metadata and tuning input.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from datetime import datetime
 
 @dataclass
 class SealProbabilityTracker:
-    """Tracks seal confidence with exponential decay.
+    """Tracks seal confidence metadata with exponential decay.
 
     Instead of a binary sealed/not-sealed, the probability that someone
     is still inside decays over time: p = 0.5^(t / half_life)
@@ -52,7 +52,7 @@ class SealProbabilityTracker:
 
     @property
     def is_effective(self) -> bool:
-        """Whether the seal should still block vacancy transitions."""
+        """Whether the probability is still above the configured threshold."""
         return self.probability > self.vacancy_threshold
 
     @property

@@ -192,7 +192,7 @@ export type OccupancyState = "vacant" | "occupied" | "checking";
 
 export interface SensorBinding {
   entity_id: string;
-  sensor_type: "motion" | "presence" | "occupancy" | "door";
+  sensor_type: string;
   weight: number;
   inverted: boolean;
 }
@@ -208,8 +208,16 @@ export interface VirtualSensorConfig {
   presence_sensors: SensorBinding[];
   occupancy_sensors: SensorBinding[];
   door_sensors: SensorBinding[];
+  hint_sensors?: SensorBinding[];
+  exit_sensors?: SensorBinding[];
+  hold_until_exit?: boolean;
+  occupies_parent?: boolean;
   presence_affects: boolean;
   spatial_presence_delay?: number | null;
+  door_seals_room: boolean;
+  seal_max_duration: number;
+  seal_half_life: number;
+  long_stay: boolean;
   door_blocks_vacancy: boolean;
   door_open_resets_checking: boolean;
   override_trigger_entity: string;
@@ -224,7 +232,15 @@ export interface OccupancyStateData {
   last_motion_at?: string;
   last_presence_at?: string;
   last_door_event_at?: string;
+  checking_started_at?: string;
   contributing_sensors: string[];
+  sealed: boolean;
+  sealed_since?: string;
+  seal_broken_at?: string;
+  seal_probability: number;
+  door_states_at_detection: Record<string, boolean>;
+  sensor_reliability?: Record<string, number>;
+  sensor_diagnostics?: Record<string, unknown>;
 }
 
 // mmWave sensor types

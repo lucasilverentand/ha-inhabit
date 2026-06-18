@@ -221,12 +221,12 @@ class VirtualSensorConfig:
     hold_until_exit: bool = False
 
     # Door seal logic
-    door_seals_room: bool = True  # Enable door seal (closed doors prevent vacancy)
-    seal_max_duration: int = (
-        14400  # Max seconds a seal holds (safety valve, 4h default)
+    door_seals_room: bool = (
+        True  # Hold occupancy after post-close detection until a door opens
     )
-    seal_half_life: int = 3600  # Half-life for seal probability decay (seconds)
-    long_stay: bool = False  # Zone where occupants stay for hours (couch, bed, etc.)
+    seal_max_duration: int = 14400  # Max seconds for seal probability metadata
+    seal_half_life: int = 3600  # Half-life for seal probability metadata
+    long_stay: bool = False  # Uses slower diagnostic decay for couches, beds, etc.
 
     # Legacy door-aware logic (mapped to door_seals_room on load)
     door_blocks_vacancy: bool = True  # Deprecated: use door_seals_room
@@ -246,7 +246,7 @@ class VirtualSensorConfig:
 
     @property
     def effective_seal_max_duration(self) -> int:
-        """Get effective seal max duration, accounting for long-stay zones."""
+        """Get effective diagnostic seal max duration."""
         from ..const import (
             DEFAULT_LONG_STAY_SEAL_MAX_DURATION,
             DEFAULT_SEAL_MAX_DURATION,
@@ -258,7 +258,7 @@ class VirtualSensorConfig:
 
     @property
     def effective_seal_half_life(self) -> int:
-        """Get effective seal half-life, accounting for long-stay zones.
+        """Get effective diagnostic seal half-life, accounting for long-stay zones.
 
         Regular rooms: 3600s (1 hour)
         Long-stay rooms: 7200s (2 hours), unless explicitly overridden
