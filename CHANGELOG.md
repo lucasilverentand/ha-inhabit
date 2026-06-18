@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.14.1](https://github.com/lucasilverentand/ha-inhabit/compare/v0.14.0...v0.14.1) (2026-06-18)
+
+
+### Bug Fixes
+
+* align release-please tag detection ([#57](https://github.com/lucasilverentand/ha-inhabit/issues/57)) ([09de76a](https://github.com/lucasilverentand/ha-inhabit/commit/09de76ae2ffbb479b45b90f8380116df33e601ff))
+* match release-please release PR history ([#58](https://github.com/lucasilverentand/ha-inhabit/issues/58)) ([edf52cb](https://github.com/lucasilverentand/ha-inhabit/commit/edf52cb184b7ba7296c4dd2a6789639c53d1a798))
+* reapply spatial presence after occupancy updates ([#55](https://github.com/lucasilverentand/ha-inhabit/issues/55)) ([c4dcdac](https://github.com/lucasilverentand/ha-inhabit/commit/c4dcdac1c45b184d913c706a55b6723c2aab7488))
+* resolve frontend npm audit vulnerabilities ([#53](https://github.com/lucasilverentand/ha-inhabit/issues/53)) ([1177b64](https://github.com/lucasilverentand/ha-inhabit/commit/1177b64dc5e1140e8b777d05332c9f1e2aefcbff))
+* restore occupancy sensors after restart ([#56](https://github.com/lucasilverentand/ha-inhabit/issues/56)) ([1b7edd5](https://github.com/lucasilverentand/ha-inhabit/commit/1b7edd53bfb5a98bf386ea822f99f439d8219baf))
+* show full mmwave view in occupancy mode ([#54](https://github.com/lucasilverentand/ha-inhabit/issues/54)) ([2b9aa43](https://github.com/lucasilverentand/ha-inhabit/commit/2b9aa437f2692e97e0af39320a03d8f69132e2f9))
+
 ## [0.14.0](https://github.com/lucasilverentand/ha-inhabit/compare/v0.13.2...v0.14.0) (2026-06-17)
 
 
