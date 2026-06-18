@@ -539,7 +539,13 @@ class TestDoorSealLogic:
         return OccupancyStateMachine(mock_hass, config, on_change), changes
 
     @staticmethod
-    def _setup_sensor_states(mock_hass, motion_state=STATE_ON, door_state=STATE_OFF):
+    def _setup_sensor_states(
+        mock_hass,
+        motion_state=STATE_ON,
+        door_state=STATE_OFF,
+        presence_state=STATE_OFF,
+        occupancy_state=STATE_OFF,
+    ):
         """Set up per-entity mock states for seal tests.
 
         By default: motion active (ON), door closed (OFF).
@@ -548,11 +554,24 @@ class TestDoorSealLogic:
         def get_state(entity_id):
             if "motion" in entity_id:
                 return MagicMock(state=motion_state)
+            if "presence" in entity_id:
+                return MagicMock(state=presence_state)
+            if "occupancy" in entity_id:
+                return MagicMock(state=occupancy_state)
             if "door" in entity_id:
                 return MagicMock(state=door_state)
             return MagicMock(state=STATE_OFF)
 
         mock_hass.states.get.side_effect = get_state
+
+    @staticmethod
+    def _make_event(entity_id, state):
+        event = MagicMock()
+        event.data = {
+            "entity_id": entity_id,
+            "new_state": MagicMock(state=state, attributes={}),
+        }
+        return event
 
     def test_seal_established_on_occupied_with_doors_closed(
         self, mock_hass, seal_config, state_changes
@@ -662,7 +681,7 @@ class TestDoorSealLogic:
     def test_door_open_close_detected_reseals(
         self, mock_hass, seal_config, state_changes
     ):
-        """Door opens and closes with active sensor re-establishes seal."""
+        """Door closes wait for a fresh detection before re-establishing seal."""
         self._setup_sensor_states(
             mock_hass, motion_state=STATE_ON, door_state=STATE_OFF
         )
@@ -689,12 +708,203 @@ class TestDoorSealLogic:
             machine._transition_to_occupied("motion re-detected")
             assert machine.state.sealed is False
 
-            # Door closes + re-detection
+            # Door closes while the same sensor is still active — no seal yet.
             self._setup_sensor_states(
                 mock_hass, motion_state=STATE_ON, door_state=STATE_OFF
             )
+            machine._handle_door_event(
+                self._make_event("binary_sensor.room_door", STATE_OFF)
+            )
+            assert machine.state.sealed is False
+
+            # A fresh detection after close confirms the seal.
             machine._transition_to_occupied("motion re-detected again")
             assert machine.state.sealed is True
+
+    def test_door_close_with_stale_motion_does_not_seal(
+        self, mock_hass, seal_config, state_changes
+    ):
+        """A stale active motion state during door close does not seal the room."""
+        self._setup_sensor_states(mock_hass, motion_state=STATE_ON, door_state=STATE_ON)
+        machine, _ = self._make_machine(mock_hass, seal_config, state_changes)
+
+        with patch(
+            "custom_components.inhabit.engine.occupancy_state_machine.async_call_later",
+            lambda hass, delay, cb: MagicMock(),
+        ):
+            machine._aggregator.update_reading(
+                "binary_sensor.room_motion", True, "motion", 1.0
+            )
+            machine._handle_motion_event(
+                self._make_event("binary_sensor.room_motion", STATE_ON)
+            )
+            assert machine.state.state == OccupancyState.OCCUPIED
+            assert machine.state.sealed is False
+
+            self._setup_sensor_states(
+                mock_hass, motion_state=STATE_ON, door_state=STATE_OFF
+            )
+            machine._handle_door_event(
+                self._make_event("binary_sensor.room_door", STATE_OFF)
+            )
+            assert machine.state.sealed is False
+
+            self._setup_sensor_states(
+                mock_hass, motion_state=STATE_OFF, door_state=STATE_OFF
+            )
+            machine._handle_motion_event(
+                self._make_event("binary_sensor.room_motion", STATE_OFF)
+            )
+            assert machine.state.state == OccupancyState.CHECKING
+
+            machine._transition_to_vacant("checking timeout")
+            assert machine.state.state == OccupancyState.VACANT
+
+    def test_fresh_motion_after_door_close_confirms_seal(
+        self, mock_hass, seal_config, state_changes
+    ):
+        """A fresh motion event after all doors close establishes a strict seal."""
+        self._setup_sensor_states(
+            mock_hass, motion_state=STATE_OFF, door_state=STATE_OFF
+        )
+        machine, _ = self._make_machine(mock_hass, seal_config, state_changes)
+        machine._state.state = OccupancyState.OCCUPIED
+
+        machine._handle_door_event(
+            self._make_event("binary_sensor.room_door", STATE_OFF)
+        )
+        assert machine.state.sealed is False
+
+        self._setup_sensor_states(
+            mock_hass, motion_state=STATE_ON, door_state=STATE_OFF
+        )
+        machine._handle_motion_event(
+            self._make_event("binary_sensor.room_motion", STATE_ON)
+        )
+        assert machine.state.sealed is True
+
+    def test_fresh_presence_after_door_close_confirms_seal(
+        self, mock_hass, seal_config, state_changes
+    ):
+        """A fresh presence event after all doors close establishes a strict seal."""
+        seal_config.presence_sensors = [
+            SensorBinding(
+                entity_id="binary_sensor.room_presence",
+                sensor_type="presence",
+                weight=1.0,
+            )
+        ]
+        self._setup_sensor_states(
+            mock_hass,
+            motion_state=STATE_OFF,
+            door_state=STATE_OFF,
+            presence_state=STATE_ON,
+        )
+        machine, _ = self._make_machine(mock_hass, seal_config, state_changes)
+
+        machine._handle_presence_event(
+            self._make_event("binary_sensor.room_presence", STATE_ON)
+        )
+        assert machine.state.state == OccupancyState.OCCUPIED
+        assert machine.state.sealed is True
+
+    def test_fresh_occupancy_after_door_close_confirms_seal(
+        self, mock_hass, seal_config, state_changes
+    ):
+        """A fresh occupancy event after all doors close establishes a strict seal."""
+        seal_config.occupancy_sensors = [
+            SensorBinding(
+                entity_id="binary_sensor.room_occupancy",
+                sensor_type="occupancy",
+                weight=1.0,
+            )
+        ]
+        self._setup_sensor_states(
+            mock_hass,
+            motion_state=STATE_OFF,
+            door_state=STATE_OFF,
+            occupancy_state=STATE_ON,
+        )
+        machine, _ = self._make_machine(mock_hass, seal_config, state_changes)
+
+        machine._handle_occupancy_event(
+            self._make_event("binary_sensor.room_occupancy", STATE_ON)
+        )
+        assert machine.state.state == OccupancyState.OCCUPIED
+        assert machine.state.sealed is True
+
+    def test_spatial_presence_after_door_close_confirms_seal(
+        self, mock_hass, seal_config, state_changes
+    ):
+        """Spatial presence after all doors close establishes a strict seal."""
+        self._setup_sensor_states(
+            mock_hass, motion_state=STATE_OFF, door_state=STATE_OFF
+        )
+        machine, _ = self._make_machine(mock_hass, seal_config, state_changes)
+
+        machine.update_spatial_presence(1, source="test")
+        assert machine.state.state == OccupancyState.OCCUPIED
+        assert machine.state.sealed is True
+
+    def test_door_open_event_breaks_seal_and_allows_checking(
+        self, mock_hass, seal_config, state_changes
+    ):
+        """Opening a sealed room door releases the strict seal."""
+        self._setup_sensor_states(
+            mock_hass, motion_state=STATE_ON, door_state=STATE_OFF
+        )
+        machine, _ = self._make_machine(mock_hass, seal_config, state_changes)
+
+        with patch(
+            "custom_components.inhabit.engine.occupancy_state_machine.async_call_later",
+            lambda hass, delay, cb: MagicMock(),
+        ):
+            machine._handle_motion_event(
+                self._make_event("binary_sensor.room_motion", STATE_ON)
+            )
+            assert machine.state.sealed is True
+
+            self._setup_sensor_states(
+                mock_hass, motion_state=STATE_OFF, door_state=STATE_ON
+            )
+            machine._aggregator.update_reading(
+                "binary_sensor.room_motion", False, "motion", 1.0
+            )
+            machine._handle_door_event(
+                self._make_event("binary_sensor.room_door", STATE_ON)
+            )
+            assert machine.state.sealed is False
+            assert machine.state.state == OccupancyState.CHECKING
+
+    def test_door_unavailable_breaks_seal_and_allows_checking(
+        self, mock_hass, seal_config, state_changes
+    ):
+        """An unavailable door sensor releases the strict seal."""
+        self._setup_sensor_states(
+            mock_hass, motion_state=STATE_ON, door_state=STATE_OFF
+        )
+        machine, _ = self._make_machine(mock_hass, seal_config, state_changes)
+
+        with patch(
+            "custom_components.inhabit.engine.occupancy_state_machine.async_call_later",
+            lambda hass, delay, cb: MagicMock(),
+        ):
+            machine._handle_motion_event(
+                self._make_event("binary_sensor.room_motion", STATE_ON)
+            )
+            assert machine.state.sealed is True
+
+            self._setup_sensor_states(
+                mock_hass, motion_state=STATE_OFF, door_state="unavailable"
+            )
+            machine._aggregator.update_reading(
+                "binary_sensor.room_motion", False, "motion", 1.0
+            )
+            machine._handle_door_event(
+                self._make_event("binary_sensor.room_door", "unavailable")
+            )
+            assert machine.state.sealed is False
+            assert machine.state.state == OccupancyState.CHECKING
 
     def test_no_seal_without_door_sensors(self, mock_hass, state_changes):
         """No seal logic when room has no door sensors."""
@@ -1216,10 +1426,10 @@ class TestSensorUnavailability:
             # Room stays OCCUPIED because seal is active
             assert machine.state.state == OccupancyState.OCCUPIED
 
-    def test_all_sensors_unavailable_sealed_room_stays(
+    def test_unavailable_door_state_releases_sealed_room(
         self, mock_hass, seal_config, state_changes
     ):
-        """All sensors unavailable but room is sealed -> stays OCCUPIED."""
+        """Unavailable door state releases a sealed room into CHECKING."""
         self._setup_sensor_states(
             mock_hass, motion_state=STATE_ON, door_state=STATE_OFF
         )
@@ -1249,8 +1459,7 @@ class TestSensorUnavailability:
             )
             machine._check_all_sensors_clear()
 
-            # Room stays OCCUPIED because seal probability hasn't decayed
-            assert machine.state.state == OccupancyState.OCCUPIED
+            assert machine.state.state == OccupancyState.CHECKING
 
     @pytest.mark.asyncio
     async def test_clear_cache_on_stop(self, mock_hass, seal_config, state_changes):

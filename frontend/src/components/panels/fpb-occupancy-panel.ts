@@ -520,6 +520,8 @@ export class FpbOccupancyPanel extends LitElement {
 
   override render() {
     const hasDoorSensors = (this._config?.door_sensors ?? []).length > 0;
+    const doorSealsRoom =
+      this._config?.door_seals_room ?? this._config?.door_blocks_vacancy;
     const spatialPresenceDelay =
       this._config?.spatial_presence_delay ??
       (this.targetType === "zone" ? 5 : 0);
@@ -621,12 +623,12 @@ export class FpbOccupancyPanel extends LitElement {
 
               <div class="toggle-row">
                 <div>
-                  <label>Door blocks vacancy</label>
-                  <div class="sublabel">Closed door prevents VACANT</div>
+                  <label>Closed-door hold</label>
+                  <div class="sublabel">Requires a fresh detection after closing</div>
                 </div>
                 <ha-switch
-                  .checked=${this._config.door_blocks_vacancy}
-                  @change=${(e: Event) => this._updateConfig({ door_blocks_vacancy: (e.target as HTMLInputElement).checked })}
+                  .checked=${Boolean(doorSealsRoom)}
+                  @change=${(e: Event) => this._updateConfig({ door_seals_room: (e.target as HTMLInputElement).checked })}
                 ></ha-switch>
               </div>
 

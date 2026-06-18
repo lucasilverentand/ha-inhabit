@@ -457,8 +457,10 @@ class TestStateMachineSealIntegration:
             assert machine.state.seal_probability == 0.0
             assert machine.state.sealed is False
 
-    def test_decayed_seal_allows_vacancy(self, mock_hass, seal_config, state_changes):
-        """A seal that has decayed below threshold allows vacancy transition."""
+    def test_decayed_seal_still_blocks_vacancy(
+        self, mock_hass, seal_config, state_changes
+    ):
+        """A confirmed seal blocks vacancy even when probability decays."""
         machine, _ = self._make_machine(mock_hass, seal_config, state_changes)
 
         from custom_components.inhabit.const import OccupancyState
@@ -479,12 +481,12 @@ class TestStateMachineSealIntegration:
             ) as mock_dt:
                 mock_dt.now.return_value = future
 
-                # Move to CHECKING first (bypass seal since it has decayed)
+                # Move to CHECKING first. The confirmed closed-door seal still
+                # blocks vacancy; probability is diagnostic only.
                 machine._state.state = OccupancyState.CHECKING
                 machine._transition_to_vacant("checking timeout")
 
-                # Should succeed — seal decayed below threshold
-                assert machine.state.state == OccupancyState.VACANT
+                assert machine.state.state == OccupancyState.CHECKING
 
     def test_active_seal_blocks_vacancy(self, mock_hass, seal_config, state_changes):
         """A seal that hasn't decayed blocks vacancy transition."""
@@ -505,12 +507,12 @@ class TestStateMachineSealIntegration:
             assert machine.state.state == OccupancyState.CHECKING
 
     def test_no_expiry_timer_needed(self, mock_hass, seal_config, state_changes):
-        """The seal expiry timer is no longer used (replaced by decay)."""
+        """The seal expiry timer is not used for strict door-confirmed holds."""
         machine, _ = self._make_machine(mock_hass, seal_config, state_changes)
         assert not hasattr(machine, "_seal_expiry_timer")
 
     def test_re_detection_resets_decay(self, mock_hass, seal_config, state_changes):
-        """New detection while sealed resets the decay timer."""
+        """New detection while sealed refreshes diagnostic probability."""
         machine, _ = self._make_machine(mock_hass, seal_config, state_changes)
 
         with patch(
@@ -553,7 +555,8 @@ class TestStateMachineSealIntegration:
                 assert machine._seal_tracker.probability == 0.0
                 assert machine._seal_tracker.is_effective is False
 
-                # Should now allow vacancy
+                # Probability reaches zero, but strict wasp-in-box behavior still
+                # requires the door to open or become unavailable before vacancy.
                 machine._state.state = OccupancyState.CHECKING
                 machine._transition_to_vacant("checking timeout")
-                assert machine.state.state == OccupancyState.VACANT
+                assert machine.state.state == OccupancyState.CHECKING
