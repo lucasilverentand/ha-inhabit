@@ -12,6 +12,7 @@ from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_track_state_change_event
 
 from ..const import DOMAIN
+from ..models.device_placement import FanPlacement
 from ..models.floor_plan import Coordinates
 from ..models.mmwave_sensor import MmwavePlacement
 
@@ -23,6 +24,7 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 SIGNAL_MMWAVE_TARGETS_UPDATED = f"{DOMAIN}_mmwave_targets_updated"
+DEFAULT_FAN_DEADZONE_RADIUS_CM = 75.0
 
 
 class MmwaveTargetProcessor:
@@ -332,6 +334,9 @@ class MmwaveTargetProcessor:
         if not floor:
             return []
 
+        if self._is_inside_fan_deadzone(placement, point):
+            return []
+
         region_ids: list[str] = []
 
         # Check zones
@@ -345,3 +350,36 @@ class MmwaveTargetProcessor:
                 region_ids.append(room.id)
 
         return region_ids
+
+    def _is_inside_fan_deadzone(
+        self, placement: MmwavePlacement, point: Coordinates
+    ) -> bool:
+        """Return whether a world point should be ignored because it is near a fan."""
+        get_fans = getattr(self._store, "get_fan_placements", None)
+        if not callable(get_fans):
+            return False
+
+        for fan in get_fans(placement.floor_plan_id):
+            if fan.floor_id != placement.floor_id:
+                continue
+            radius = self._fan_deadzone_radius(placement.floor_plan_id, fan)
+            if radius <= 0:
+                continue
+            distance = math.hypot(point.x - fan.position.x, point.y - fan.position.y)
+            if distance <= radius:
+                return True
+        return False
+
+    def _fan_deadzone_radius(self, floor_plan_id: str, fan: FanPlacement) -> float:
+        """Return the fan deadzone radius in the floor plan's unit."""
+        if fan.deadzone_radius is not None:
+            return max(0.0, fan.deadzone_radius)
+
+        fp = self._store.get_floor_plan(floor_plan_id)
+        unit = fp.unit if fp else "cm"
+        return {
+            "cm": DEFAULT_FAN_DEADZONE_RADIUS_CM,
+            "m": DEFAULT_FAN_DEADZONE_RADIUS_CM / 100,
+            "in": DEFAULT_FAN_DEADZONE_RADIUS_CM / 2.54,
+            "ft": DEFAULT_FAN_DEADZONE_RADIUS_CM / 30.48,
+        }.get(unit, DEFAULT_FAN_DEADZONE_RADIUS_CM)

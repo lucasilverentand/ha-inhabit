@@ -7,6 +7,7 @@ import { css, html, LitElement, nothing } from "lit";
 import { property, state } from "lit/decorators.js";
 import {
   buttonPlacements,
+  currentFloorPlan,
   devicePanelTarget,
   fanPlacements,
   lightPlacements,
@@ -714,6 +715,26 @@ export class FpbDevicePanel extends LitElement {
     }
   }
 
+  private _defaultFanDeadzoneRadius(): number {
+    const unit = currentFloorPlan.value?.unit ?? "cm";
+    if (unit === "m") return 0.75;
+    if (unit === "in") return 75 / 2.54;
+    if (unit === "ft") return 75 / 30.48;
+    return 75;
+  }
+
+  private _fanDeadzoneControlRange(): {
+    max: number;
+    step: number;
+    unit: string;
+  } {
+    const unit = currentFloorPlan.value?.unit ?? "cm";
+    if (unit === "m") return { max: 2.5, step: 0.05, unit };
+    if (unit === "in") return { max: 100, step: 2, unit };
+    if (unit === "ft") return { max: 8, step: 0.25, unit };
+    return { max: 250, step: 5, unit: "cm" };
+  }
+
   private async _updateMmwave(updates: Record<string, unknown>): Promise<void> {
     if (!this.hass) return;
     try {
@@ -902,6 +923,9 @@ export class FpbDevicePanel extends LitElement {
   private _renderFanSettings(p: FanPlacement) {
     const oscillationStart = p.oscillation_start ?? p.orientation;
     const oscillationEnd = p.oscillation_end ?? p.orientation;
+    const deadzoneRadius =
+      p.deadzone_radius ?? this._defaultFanDeadzoneRadius();
+    const deadzoneRange = this._fanDeadzoneControlRange();
     return html`
       <div class="section">
         <div class="section-title">Map Settings</div>
@@ -948,6 +972,21 @@ export class FpbDevicePanel extends LitElement {
               this.requestUpdate();
             }}
             @change=${(e: Event) => this._updateFan({ oscillation_end: Number((e.target as HTMLInputElement).value) })}
+          />
+        </div>
+
+        <div class="slider-row">
+          <label>Presence Deadzone <span>${deadzoneRadius.toFixed(deadzoneRange.step < 1 ? 2 : 0)} ${deadzoneRange.unit}</span></label>
+          <input type="range" min="0" max=${deadzoneRange.max} step=${deadzoneRange.step}
+            .value=${String(deadzoneRadius)}
+            @input=${(e: Event) => {
+              const val = Number((e.target as HTMLInputElement).value);
+              fanPlacements.value = fanPlacements.value.map((fan) =>
+                fan.id === p.id ? { ...fan, deadzone_radius: val } : fan,
+              );
+              this.requestUpdate();
+            }}
+            @change=${(e: Event) => this._updateFan({ deadzone_radius: Number((e.target as HTMLInputElement).value) })}
           />
         </div>
       </div>

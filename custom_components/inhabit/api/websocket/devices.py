@@ -71,6 +71,8 @@ def _apply_fan_map_fields(fan: FanPlacement, msg: dict[str, Any]) -> None:
         fan.oscillation_start = msg["oscillation_start"]
     if "oscillation_end" in msg:
         fan.oscillation_end = msg["oscillation_end"]
+    if "deadzone_radius" in msg:
+        fan.deadzone_radius = msg["deadzone_radius"]
 
 
 # ==================== Light Placements ====================
@@ -360,6 +362,7 @@ def ws_switches_list(
         vol.Optional("orientation"): vol.Coerce(float),
         vol.Optional("oscillation_start"): vol.Any(vol.Coerce(float), None),
         vol.Optional("oscillation_end"): vol.Any(vol.Coerce(float), None),
+        vol.Optional("deadzone_radius"): vol.Any(vol.Coerce(float), None),
     }
 )
 @callback
@@ -391,6 +394,7 @@ def ws_fans_place(
         orientation=msg.get("orientation", 0),
         oscillation_start=msg.get("oscillation_start"),
         oscillation_end=msg.get("oscillation_end"),
+        deadzone_radius=msg.get("deadzone_radius"),
     )
     result = store.place_fan(msg["floor_plan_id"], fan)
     connection.send_result(msg["id"], result.to_dict())
@@ -407,6 +411,7 @@ def ws_fans_place(
         vol.Optional("orientation"): vol.Coerce(float),
         vol.Optional("oscillation_start"): vol.Any(vol.Coerce(float), None),
         vol.Optional("oscillation_end"): vol.Any(vol.Coerce(float), None),
+        vol.Optional("deadzone_radius"): vol.Any(vol.Coerce(float), None),
     }
 )
 @callback

@@ -7204,6 +7204,18 @@ export class FpbCanvas extends LitElement {
     };
   }
 
+  private _defaultFanDeadzoneRadius(): number {
+    const unit = currentFloorPlan.value?.unit ?? "cm";
+    if (unit === "m") return 0.75;
+    if (unit === "in") return 75 / 2.54;
+    if (unit === "ft") return 75 / 30.48;
+    return 75;
+  }
+
+  private _effectiveFanDeadzoneRadius(fan: FanPlacement): number {
+    return Math.max(0, fan.deadzone_radius ?? this._defaultFanDeadzoneRadius());
+  }
+
   private _renderFanArc(fan: FanPlacement) {
     if (
       fan.oscillation_start === null ||
@@ -7242,6 +7254,7 @@ export class FpbCanvas extends LitElement {
       fan.entity_id) as string;
     const iconData = this._getEntityIconData(state, "mdi:fan");
     const issues = getNormalDeviceIssues(fan, this.hass?.states ?? {});
+    const deadzoneRadius = this._effectiveFanDeadzoneRadius(fan);
     const orientationEnd = this._fanAnglePoint(
       fan.position,
       fan.orientation,
@@ -7249,6 +7262,22 @@ export class FpbCanvas extends LitElement {
     );
     return svg`
       <g class="fan-placement">
+        ${
+          deadzoneRadius > 0
+            ? svg`
+          <circle
+            cx="${fan.position.x}"
+            cy="${fan.position.y}"
+            r="${deadzoneRadius}"
+            fill="rgba(244, 67, 54, 0.08)"
+            stroke="rgba(244, 67, 54, 0.35)"
+            stroke-width="1"
+            stroke-dasharray="6 4"
+            pointer-events="none"
+          />
+        `
+            : null
+        }
         ${this._renderFanArc(fan)}
         <line
           x1="${fan.position.x}"

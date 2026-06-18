@@ -176,6 +176,7 @@ export interface FanPlacement extends BasePlacement {
   orientation: number;
   oscillation_start?: number | null;
   oscillation_end?: number | null;
+  deadzone_radius?: number | null;
 }
 
 export interface ButtonPlacement extends BasePlacement {}

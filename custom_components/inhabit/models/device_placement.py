@@ -74,6 +74,7 @@ class FanPlacement(_BasePlacement):
     orientation: float = 0.0
     oscillation_start: float | None = None
     oscillation_end: float | None = None
+    deadzone_radius: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
@@ -83,6 +84,7 @@ class FanPlacement(_BasePlacement):
                 "orientation": self.orientation,
                 "oscillation_start": self.oscillation_start,
                 "oscillation_end": self.oscillation_end,
+                "deadzone_radius": self.deadzone_radius,
             }
         )
         return data
@@ -101,6 +103,7 @@ class FanPlacement(_BasePlacement):
             orientation=_float_or_none(data.get("orientation")) or 0.0,
             oscillation_start=_float_or_none(data.get("oscillation_start")),
             oscillation_end=_float_or_none(data.get("oscillation_end")),
+            deadzone_radius=_float_or_none(data.get("deadzone_radius")),
         )
 
 

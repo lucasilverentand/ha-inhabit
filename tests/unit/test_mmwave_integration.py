@@ -1017,6 +1017,7 @@ class TestMmwaveTargetProcessor:
         from custom_components.inhabit.engine.mmwave_target_processor import (
             MmwaveTargetProcessor,
         )
+        from custom_components.inhabit.models.device_placement import FanPlacement
         from custom_components.inhabit.models.floor_plan import (
             Coordinates,
             Floor,
@@ -1111,3 +1112,20 @@ class TestMmwaveTargetProcessor:
         assert "room1" in dispatched_regions
         assert "zone1" in dispatched_regions
         assert len(dispatched_regions) == 2
+
+        store.get_fan_placements.return_value = [
+            FanPlacement(
+                id="fan1",
+                entity_id="fan.dyson",
+                floor_id="floor1",
+                position=Coordinates(x=500, y=500),
+                deadzone_radius=80,
+            )
+        ]
+        assert (
+            processor._find_containing_regions(placement, Coordinates(x=500, y=500))
+            == []
+        )
+        assert processor._find_containing_regions(
+            placement, Coordinates(x=700, y=500)
+        ) == ["zone1", "room1"]
