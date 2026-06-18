@@ -345,38 +345,100 @@ class OccupancyStateMachine:
 
     async def _evaluate_initial_state(self) -> None:
         """Evaluate initial state based on current sensor values."""
-        # Refresh aggregator from current HA states
-        self._aggregator.refresh_from_state()
+        self.recalculate_from_current_state("initial state evaluation")
 
-        for binding in self.config.motion_sensors:
-            state = self.hass.states.get(binding.entity_id)
-            if state and self._is_sensor_active(state, binding.inverted):
-                self._transition_to_occupied("initial motion detected")
-                return
+    def recalculate_from_current_state(
+        self, reason: str = "current state refresh"
+    ) -> None:
+        """Recalculate occupancy from current HA state without synthetic events."""
+        active_motion, active_presence, active_occupancy = (
+            self._refresh_current_sensor_snapshot()
+        )
 
-        for binding in self.config.presence_sensors:
-            state = self.hass.states.get(binding.entity_id)
-            if state and self._is_sensor_active(state, binding.inverted):
-                self._transition_to_occupied("initial presence detected")
-                return
+        if active_motion:
+            self._transition_to_occupied(f"{reason}: motion active")
+            return
 
-        for binding in self.config.occupancy_sensors:
-            state = self.hass.states.get(binding.entity_id)
-            if state and self._is_sensor_active(state, binding.inverted):
-                self._transition_to_occupied("initial occupancy detected")
-                return
+        if active_presence:
+            self._transition_to_occupied(f"{reason}: presence active")
+            return
+
+        if active_occupancy:
+            self._transition_to_occupied(f"{reason}: occupancy active")
+            return
 
         # Check aggregator probability as a fallback (e.g. decaying readings)
         probability = self._aggregator.get_presence_probability()
         if probability >= self.config.occupied_threshold:
             self._transition_to_occupied(
-                f"initial aggregator probability {probability:.2f}"
+                f"{reason}: aggregator probability {probability:.2f}"
             )
             return
 
+        if self._state.state == OccupancyState.OCCUPIED:
+            self._check_all_sensors_clear()
+        elif self._state.state == OccupancyState.VACANT:
+            self._state.confidence = 0.0
+
         _LOGGER.debug(
-            "Room %s initial state: VACANT (no activity)", self.config.room_id
+            "Room %s current state refresh: %s (no activity)",
+            self.config.room_id,
+            self._state.state,
         )
+
+    def _refresh_current_sensor_snapshot(self) -> tuple[bool, bool, bool]:
+        """Sync aggregator and contributing sensors from current HA states."""
+        self._aggregator.refresh_from_state()
+
+        active_motion = False
+        for binding in self.config.motion_sensors:
+            state = self.hass.states.get(binding.entity_id)
+            if state and self._is_sensor_active(state, binding.inverted):
+                active_motion = True
+                if binding.entity_id not in self._state.contributing_sensors:
+                    self._state.last_motion_at = datetime.now()
+                    self._sensor_last_triggered[binding.entity_id] = datetime.now()
+                self._update_contributing_sensors(binding.entity_id, add=True)
+            else:
+                self._update_contributing_sensors(binding.entity_id, add=False)
+
+        active_presence = False
+        for binding in self.config.presence_sensors:
+            state = self.hass.states.get(binding.entity_id)
+            if state and self._is_sensor_active(state, binding.inverted):
+                active_presence = True
+                if binding.entity_id not in self._state.contributing_sensors:
+                    self._state.last_presence_at = datetime.now()
+                    self._sensor_last_triggered[binding.entity_id] = datetime.now()
+                self._update_contributing_sensors(binding.entity_id, add=True)
+            else:
+                self._update_contributing_sensors(binding.entity_id, add=False)
+
+        active_occupancy = False
+        for binding in self.config.occupancy_sensors:
+            state = self.hass.states.get(binding.entity_id)
+            if state and self._is_sensor_active(state, binding.inverted):
+                active_occupancy = True
+                if binding.entity_id not in self._state.contributing_sensors:
+                    self._state.last_presence_at = datetime.now()
+                    self._sensor_last_triggered[binding.entity_id] = datetime.now()
+                self._update_contributing_sensors(binding.entity_id, add=True)
+            else:
+                self._update_contributing_sensors(binding.entity_id, add=False)
+
+        for binding in self.config.hint_sensors:
+            state = self.hass.states.get(binding.entity_id)
+            weight = self._compute_hint_weight(state, binding) if state else 0.0
+            is_active = weight > 0.0
+            self._aggregator.update_reading(
+                binding.entity_id,
+                is_active,
+                "hint",
+                min(weight, MAX_HINT_WEIGHT),
+            )
+            self._update_contributing_sensors(binding.entity_id, add=is_active)
+
+        return active_motion, active_presence, active_occupancy
 
     # ------------------------------------------------------------------
     # Sensor event handlers

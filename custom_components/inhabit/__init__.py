@@ -223,8 +223,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     @callback
     def _reconcile_restored_occupancy(_now) -> None:
-        """Republish current virtual sensor states after startup entities settle."""
-        sensor_engine.republish_current_states()
+        """Recalculate virtual sensor states after startup entities settle."""
+        sensor_engine.recalculate_current_states()
+        outside_exposure_engine.refresh_state()
         outside_exposure_engine.republish_current_states()
 
     entry.async_on_unload(

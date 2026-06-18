@@ -350,6 +350,14 @@ class VirtualSensorEngine:
                 state,
             )
 
+    def recalculate_current_states(self) -> None:
+        """Recalculate and dispatch current state for every managed room or zone."""
+        for room_id, machine in self._state_machines.items():
+            machine.recalculate_from_current_state("startup settled refresh")
+            self._reconcile_spatial_presence_for_region(room_id)
+
+        self.republish_current_states()
+
     def set_room_occupancy(self, room_id: str, state: str) -> bool:
         """Manually set a room's occupancy state."""
         machine = self._state_machines.get(room_id)
