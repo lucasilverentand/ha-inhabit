@@ -493,6 +493,121 @@ class TestZoneParentPropagation:
         assert engine._is_occupied_by_children("room_parent") is True
 
     @pytest.mark.asyncio
+    async def test_manual_room_clear_clears_all_child_zones(
+        self, mock_hass, patched_ha
+    ):
+        """Manually setting a room VACANT should also clear all zones inside it."""
+        zone_a = _make_zone("zone_a", room_id="room_parent", occupies_parent=False)
+        zone_b = _make_zone("zone_b", room_id="room_parent", occupies_parent=True)
+        fp = self._build_floor_plan_with_zones([zone_a, zone_b])
+
+        parent_cfg = _make_config("room_parent")
+        zone_a_cfg = _make_config("zone_a")
+        zone_b_cfg = _make_config("zone_b")
+
+        store = _mock_store(
+            configs=[parent_cfg, zone_a_cfg, zone_b_cfg], floor_plans=[fp]
+        )
+        store.get_sensor_config.side_effect = lambda rid: {
+            "zone_a": zone_a_cfg,
+            "zone_b": zone_b_cfg,
+        }.get(rid)
+
+        engine = await _build_engine(mock_hass, store, patched_ha)
+
+        parent_machine = engine._state_machines["room_parent"]
+        zone_a_machine = engine._state_machines["zone_a"]
+        zone_b_machine = engine._state_machines["zone_b"]
+        parent_machine.set_state = MagicMock()
+        zone_a_machine.set_state = MagicMock()
+        zone_b_machine.set_state = MagicMock()
+
+        result = engine.set_room_occupancy("room_parent", OccupancyState.VACANT)
+
+        assert result is True
+        parent_machine.set_state.assert_called_once_with(
+            OccupancyState.VACANT, "manual override"
+        )
+        zone_a_machine.set_state.assert_called_once_with(
+            OccupancyState.VACANT,
+            "parent room room_parent manually cleared",
+        )
+        zone_b_machine.set_state.assert_called_once_with(
+            OccupancyState.VACANT,
+            "parent room room_parent manually cleared",
+        )
+
+    @pytest.mark.asyncio
+    async def test_manual_room_occupied_does_not_occupy_child_zones(
+        self, mock_hass, patched_ha
+    ):
+        """Manually setting a room OCCUPIED should not turn on its zones."""
+        zone = _make_zone("zone_child", room_id="room_parent", occupies_parent=True)
+        fp = self._build_floor_plan_with_zones([zone])
+
+        parent_cfg = _make_config("room_parent")
+        zone_cfg = _make_config("zone_child")
+
+        store = _mock_store(configs=[parent_cfg, zone_cfg], floor_plans=[fp])
+        store.get_sensor_config.side_effect = lambda rid: {
+            "zone_child": zone_cfg,
+        }.get(rid)
+
+        engine = await _build_engine(mock_hass, store, patched_ha)
+
+        parent_machine = engine._state_machines["room_parent"]
+        zone_machine = engine._state_machines["zone_child"]
+        parent_machine.set_state = MagicMock()
+        zone_machine.set_state = MagicMock()
+
+        result = engine.set_room_occupancy("room_parent", OccupancyState.OCCUPIED)
+
+        assert result is True
+        parent_machine.set_state.assert_called_once_with(
+            OccupancyState.OCCUPIED, "manual override"
+        )
+        zone_machine.set_state.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_manual_zone_clear_does_not_clear_parent_or_sibling(
+        self, mock_hass, patched_ha
+    ):
+        """Manually setting a zone VACANT should not propagate back to the room."""
+        zone_a = _make_zone("zone_a", room_id="room_parent", occupies_parent=True)
+        zone_b = _make_zone("zone_b", room_id="room_parent", occupies_parent=True)
+        fp = self._build_floor_plan_with_zones([zone_a, zone_b])
+
+        parent_cfg = _make_config("room_parent")
+        zone_a_cfg = _make_config("zone_a")
+        zone_b_cfg = _make_config("zone_b")
+
+        store = _mock_store(
+            configs=[parent_cfg, zone_a_cfg, zone_b_cfg], floor_plans=[fp]
+        )
+        store.get_sensor_config.side_effect = lambda rid: {
+            "zone_a": zone_a_cfg,
+            "zone_b": zone_b_cfg,
+        }.get(rid)
+
+        engine = await _build_engine(mock_hass, store, patched_ha)
+
+        parent_machine = engine._state_machines["room_parent"]
+        zone_a_machine = engine._state_machines["zone_a"]
+        zone_b_machine = engine._state_machines["zone_b"]
+        parent_machine.set_state = MagicMock()
+        zone_a_machine.set_state = MagicMock()
+        zone_b_machine.set_state = MagicMock()
+
+        result = engine.set_room_occupancy("zone_a", OccupancyState.VACANT)
+
+        assert result is True
+        zone_a_machine.set_state.assert_called_once_with(
+            OccupancyState.VACANT, "manual override"
+        )
+        parent_machine.set_state.assert_not_called()
+        zone_b_machine.set_state.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_parent_missing_no_crash(self, mock_hass, patched_ha):
         """Propagation to a non-existent parent machine should not crash."""
         zone = _make_zone("zone_orphan", room_id="room_gone", occupies_parent=True)
