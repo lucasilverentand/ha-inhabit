@@ -284,6 +284,19 @@ class TestPresenceAffectsFlag:
         restored = VirtualSensorConfig.from_dict(data)
         assert restored.presence_affects is True
 
+    def test_spatial_presence_delay_serialization_roundtrip(self):
+        """spatial_presence_delay should survive to_dict/from_dict roundtrip."""
+        config = VirtualSensorConfig(
+            room_id="test",
+            presence_affects=True,
+            spatial_presence_delay=7,
+        )
+        data = config.to_dict()
+        assert data["spatial_presence_delay"] == 7
+
+        restored = VirtualSensorConfig.from_dict(data)
+        assert restored.spatial_presence_delay == 7
+
 
 # --------------------------------------------------------------------------
 # VirtualSensorEngine mmWave routing
@@ -539,6 +552,170 @@ class TestVirtualSensorEngineRouting:
 
         room_machine.update_spatial_presence.assert_called_with(1)
         zone_machine.update_spatial_presence.assert_called_with(1)
+
+    def test_zone_target_waits_before_routing_occupancy(self, mock_hass, mock_store):
+        """Zone spatial hits are pending until the confirmation delay elapses."""
+        from custom_components.inhabit.const import DEFAULT_ZONE_SPATIAL_PRESENCE_DELAY
+        from custom_components.inhabit.engine.virtual_sensor_engine import (
+            VirtualSensorEngine,
+        )
+        from custom_components.inhabit.models.floor_plan import Floor, FloorPlan
+        from custom_components.inhabit.models.zone import Zone
+
+        zone_config = VirtualSensorConfig(
+            room_id="walkthrough_zone",
+            floor_plan_id="test_fp",
+            enabled=True,
+            presence_affects=True,
+        )
+        original_get = mock_store.get_sensor_config
+        mock_store.get_sensor_config = lambda room_id: (
+            zone_config if room_id == "walkthrough_zone" else original_get(room_id)
+        )
+        mock_store.get_floor_plans.return_value = [
+            FloorPlan(
+                id="test_fp",
+                floors=[
+                    Floor(
+                        id="floor1",
+                        zones=[Zone(id="walkthrough_zone", floor_id="floor1")],
+                    )
+                ],
+            )
+        ]
+
+        scheduled = {}
+
+        def fake_call_later(hass, delay, callback):
+            cancel = MagicMock()
+            scheduled["delay"] = delay
+            scheduled["callback"] = callback
+            scheduled["cancel"] = cancel
+            return cancel
+
+        engine = VirtualSensorEngine(mock_hass, mock_store)
+        zone_machine = MagicMock()
+        engine._state_machines["walkthrough_zone"] = zone_machine
+
+        with patch(
+            "custom_components.inhabit.engine.virtual_sensor_engine.async_call_later",
+            side_effect=fake_call_later,
+        ):
+            engine._handle_mmwave_target_update(
+                "sensor1",
+                0,
+                MagicMock(),
+                ["walkthrough_zone"],
+            )
+
+        zone_machine.update_spatial_presence.assert_not_called()
+        assert scheduled["delay"] == DEFAULT_ZONE_SPATIAL_PRESENCE_DELAY
+
+        scheduled["callback"](None)
+
+        zone_machine.update_spatial_presence.assert_called_once_with(1)
+
+    def test_zone_target_leaving_before_delay_does_not_route_occupancy(
+        self, mock_hass, mock_store
+    ):
+        """Passing through a zone cancels the pending spatial hit."""
+        from custom_components.inhabit.engine.virtual_sensor_engine import (
+            VirtualSensorEngine,
+        )
+        from custom_components.inhabit.models.floor_plan import Floor, FloorPlan
+        from custom_components.inhabit.models.zone import Zone
+
+        zone_config = VirtualSensorConfig(
+            room_id="walkthrough_zone",
+            floor_plan_id="test_fp",
+            enabled=True,
+            presence_affects=True,
+        )
+        original_get = mock_store.get_sensor_config
+        mock_store.get_sensor_config = lambda room_id: (
+            zone_config if room_id == "walkthrough_zone" else original_get(room_id)
+        )
+        mock_store.get_floor_plans.return_value = [
+            FloorPlan(
+                id="test_fp",
+                floors=[
+                    Floor(
+                        id="floor1",
+                        zones=[Zone(id="walkthrough_zone", floor_id="floor1")],
+                    )
+                ],
+            )
+        ]
+
+        cancel = MagicMock()
+
+        def fake_call_later(hass, delay, callback):
+            return cancel
+
+        engine = VirtualSensorEngine(mock_hass, mock_store)
+        zone_machine = MagicMock()
+        engine._state_machines["walkthrough_zone"] = zone_machine
+
+        with patch(
+            "custom_components.inhabit.engine.virtual_sensor_engine.async_call_later",
+            side_effect=fake_call_later,
+        ):
+            engine._handle_mmwave_target_update(
+                "sensor1",
+                0,
+                MagicMock(),
+                ["walkthrough_zone"],
+            )
+            engine._handle_mmwave_target_update("sensor1", 0, MagicMock(), [])
+
+        cancel.assert_called_once()
+        zone_machine.update_spatial_presence.assert_not_called()
+        assert "walkthrough_zone" not in engine._pending_mmwave_target_keys_per_region
+
+    def test_zone_spatial_delay_zero_routes_immediately(self, mock_hass, mock_store):
+        """A zone can opt back into immediate spatial occupancy."""
+        from custom_components.inhabit.engine.virtual_sensor_engine import (
+            VirtualSensorEngine,
+        )
+        from custom_components.inhabit.models.floor_plan import Floor, FloorPlan
+        from custom_components.inhabit.models.zone import Zone
+
+        zone_config = VirtualSensorConfig(
+            room_id="immediate_zone",
+            floor_plan_id="test_fp",
+            enabled=True,
+            presence_affects=True,
+            spatial_presence_delay=0,
+        )
+        original_get = mock_store.get_sensor_config
+        mock_store.get_sensor_config = lambda room_id: (
+            zone_config if room_id == "immediate_zone" else original_get(room_id)
+        )
+        mock_store.get_floor_plans.return_value = [
+            FloorPlan(
+                id="test_fp",
+                floors=[
+                    Floor(id="floor1", zones=[Zone(id="immediate_zone")]),
+                ],
+            )
+        ]
+
+        engine = VirtualSensorEngine(mock_hass, mock_store)
+        zone_machine = MagicMock()
+        engine._state_machines["immediate_zone"] = zone_machine
+
+        with patch(
+            "custom_components.inhabit.engine.virtual_sensor_engine.async_call_later"
+        ) as call_later:
+            engine._handle_mmwave_target_update(
+                "sensor1",
+                0,
+                MagicMock(),
+                ["immediate_zone"],
+            )
+
+        call_later.assert_not_called()
+        zone_machine.update_spatial_presence.assert_called_once_with(1)
 
 
 # --------------------------------------------------------------------------

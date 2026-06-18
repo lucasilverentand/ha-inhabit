@@ -520,6 +520,9 @@ export class FpbOccupancyPanel extends LitElement {
 
   override render() {
     const hasDoorSensors = (this._config?.door_sensors ?? []).length > 0;
+    const spatialPresenceDelay =
+      this._config?.spatial_presence_delay ??
+      (this.targetType === "zone" ? 5 : 0);
 
     return html`
       <div class="panel-header">
@@ -590,6 +593,20 @@ export class FpbOccupancyPanel extends LitElement {
                   @change=${(e: Event) => this._updateConfig({ presence_timeout: Number((e.target as HTMLInputElement).value) })}
                 />
               </div>
+
+              ${
+                this.targetType === "zone"
+                  ? html`
+              <div class="slider-row">
+                <label>Spatial Delay <span>${spatialPresenceDelay}s</span></label>
+                <input type="range" min="0" max="30" step="1"
+                  .value=${String(spatialPresenceDelay)}
+                  @change=${(e: Event) => this._updateConfig({ spatial_presence_delay: Number((e.target as HTMLInputElement).value) })}
+                />
+              </div>
+            `
+                  : nothing
+              }
             </div>
 
             <!-- Sensor Bindings -->

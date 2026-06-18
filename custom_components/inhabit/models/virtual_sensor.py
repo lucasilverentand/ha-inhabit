@@ -205,6 +205,9 @@ class VirtualSensorConfig:
 
     # Spatial presence detection
     presence_affects: bool = False  # Spatial presence targets affect this room/zone
+    # Seconds a spatial target must stay before it can trigger occupancy.
+    # None uses region defaults: rooms are immediate, zones are delayed.
+    spatial_presence_delay: int | None = None
 
     # Parent room propagation — when occupied, also mark parent room as occupied
     occupies_parent: bool = False
@@ -285,6 +288,7 @@ class VirtualSensorConfig:
             "occupies_parent": self.occupies_parent,
             "parent_room_id": self.parent_room_id,
             "presence_affects": self.presence_affects,
+            "spatial_presence_delay": self.spatial_presence_delay,
             "door_seals_room": self.door_seals_room,
             "seal_max_duration": self.seal_max_duration,
             "seal_half_life": self.seal_half_life,
@@ -337,6 +341,11 @@ class VirtualSensorConfig:
             occupies_parent=data.get("occupies_parent", False),
             parent_room_id=data.get("parent_room_id", ""),
             presence_affects=data.get("presence_affects", False),
+            spatial_presence_delay=(
+                int(data["spatial_presence_delay"])
+                if data.get("spatial_presence_delay") is not None
+                else None
+            ),
             door_seals_room=door_seals_room,
             seal_max_duration=int(data.get("seal_max_duration", 14400)),
             seal_half_life=int(data.get("seal_half_life", 3600)),

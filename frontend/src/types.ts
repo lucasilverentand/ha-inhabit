@@ -132,6 +132,7 @@ export interface Zone {
   occupancy_sensor_enabled: boolean;
   motion_timeout: number;
   checking_timeout: number;
+  spatial_presence_delay?: number | null;
 }
 
 export interface Floor {
@@ -197,6 +198,7 @@ export interface VirtualSensorConfig {
   occupancy_sensors: SensorBinding[];
   door_sensors: SensorBinding[];
   presence_affects: boolean;
+  spatial_presence_delay?: number | null;
   door_blocks_vacancy: boolean;
   door_open_resets_checking: boolean;
   override_trigger_entity: string;

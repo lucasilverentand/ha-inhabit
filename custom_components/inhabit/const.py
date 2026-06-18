@@ -30,6 +30,7 @@ DEFAULT_SEAL_MAX_DURATION: Final = 14400  # 4 hours
 DEFAULT_LONG_STAY_SEAL_MAX_DURATION: Final = 28800  # 8 hours
 DEFAULT_SEAL_HALF_LIFE: Final = 3600  # 1 hour
 DEFAULT_HOUSE_GUARD_MAX_DURATION: Final = 86400  # 24 hours
+DEFAULT_ZONE_SPATIAL_PRESENCE_DELAY: Final = 5
 
 # Phantom presence (transition prediction)
 DEFAULT_TRANSIT_PHANTOM_HOLD: Final = 300  # 5 minutes for hallways/corridors
