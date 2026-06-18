@@ -12,6 +12,7 @@ from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_track_state_change_event
 
 from ..const import DOMAIN
+from ..models.device_placement import FanPlacement
 from ..models.floor_plan import Coordinates
 from ..models.mmwave_sensor import MmwavePlacement
 
@@ -23,6 +24,8 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 SIGNAL_MMWAVE_TARGETS_UPDATED = f"{DOMAIN}_mmwave_targets_updated"
+DEFAULT_FAN_DEADZONE_RADIUS_CM = 75.0
+DEFAULT_FAN_DEADZONE_MIN_RADIUS_CM = 0.0
 
 
 class MmwaveTargetProcessor:
@@ -44,6 +47,8 @@ class MmwaveTargetProcessor:
         # region hits: {placement_id: {target_index: list of region_ids}}
         self._region_hits: dict[str, dict[int, list[str]]] = {}
         self._unsub_listeners: dict[str, list[Callable[[], None]]] = {}
+        self._unsub_fan_listener: Callable[[], None] | None = None
+        self._fan_listener_entity_ids: set[str] = set()
         self._running = False
 
     async def async_start(self) -> None:
@@ -56,6 +61,8 @@ class MmwaveTargetProcessor:
             placements = self._store.get_mmwave_placements(fp.id)
             for p in placements:
                 await self._setup_placement(p)
+
+        self._setup_fan_listeners()
 
         _LOGGER.info(
             "mmWave target processor started with %d placements",
@@ -72,6 +79,10 @@ class MmwaveTargetProcessor:
             for unsub in unsubs:
                 unsub()
         self._unsub_listeners.clear()
+        if self._unsub_fan_listener:
+            self._unsub_fan_listener()
+            self._unsub_fan_listener = None
+        self._fan_listener_entity_ids.clear()
         self._placements.clear()
         self._target_positions.clear()
         self._filtered_target_positions.clear()
@@ -97,6 +108,12 @@ class MmwaveTargetProcessor:
         self._region_hits.pop(placement_id, None)
         for unsub in self._unsub_listeners.pop(placement_id, []):
             unsub()
+
+    @callback
+    def refresh_fan_deadzones(self) -> None:
+        """Refresh fan listeners and recalculate target region hits."""
+        self._setup_fan_listeners()
+        self._recalculate_region_hits()
 
     def get_target_positions(
         self,
@@ -159,6 +176,70 @@ class MmwaveTargetProcessor:
             self._process_target(placement_id, target_index)
 
         return handler
+
+    @callback
+    def _handle_fan_state_change(self, event: Event) -> None:
+        """Recalculate region hits when a fan starts, stops, or changes speed."""
+        self._recalculate_region_hits()
+
+    def _setup_fan_listeners(self) -> None:
+        """Subscribe to fan entity changes used by automatic deadzones."""
+        entity_ids = self._fan_entity_ids()
+        if entity_ids == self._fan_listener_entity_ids:
+            return
+
+        if self._unsub_fan_listener:
+            self._unsub_fan_listener()
+            self._unsub_fan_listener = None
+
+        self._fan_listener_entity_ids = entity_ids
+        if not entity_ids:
+            return
+
+        self._unsub_fan_listener = async_track_state_change_event(
+            self.hass,
+            list(entity_ids),
+            self._handle_fan_state_change,
+        )
+
+    def _fan_entity_ids(self) -> set[str]:
+        """Return all placed fan entity ids for the current store."""
+        get_fans = getattr(self._store, "get_fan_placements", None)
+        if not callable(get_fans):
+            return set()
+
+        entity_ids: set[str] = set()
+        for fp in self._store.get_floor_plans():
+            for fan in get_fans(fp.id):
+                if fan.entity_id:
+                    entity_ids.add(fan.entity_id)
+        return entity_ids
+
+    def _recalculate_region_hits(self) -> None:
+        """Recalculate existing target region hits after fan deadzone changes."""
+        for placement_id, targets in list(self._target_positions.items()):
+            placement = self._placements.get(placement_id)
+            if not placement:
+                continue
+
+            for target_index, point in list(targets.items()):
+                region_ids = self._find_containing_regions(placement, point)
+                previous = self._region_hits.setdefault(placement_id, {}).get(
+                    target_index,
+                    [],
+                )
+                if previous == region_ids:
+                    continue
+
+                self._region_hits[placement_id][target_index] = region_ids
+                async_dispatcher_send(
+                    self.hass,
+                    SIGNAL_MMWAVE_TARGETS_UPDATED,
+                    placement_id,
+                    target_index,
+                    point,
+                    region_ids,
+                )
 
     @callback
     def _process_target(self, placement_id: str, target_index: int) -> None:
@@ -332,6 +413,9 @@ class MmwaveTargetProcessor:
         if not floor:
             return []
 
+        if self._is_inside_fan_deadzone(placement, point):
+            return []
+
         region_ids: list[str] = []
 
         # Check zones
@@ -345,3 +429,97 @@ class MmwaveTargetProcessor:
                 region_ids.append(room.id)
 
         return region_ids
+
+    def _is_inside_fan_deadzone(
+        self, placement: MmwavePlacement, point: Coordinates
+    ) -> bool:
+        """Return whether a world point should be ignored because it is near a fan."""
+        get_fans = getattr(self._store, "get_fan_placements", None)
+        if not callable(get_fans):
+            return False
+
+        for fan in get_fans(placement.floor_plan_id):
+            if fan.floor_id != placement.floor_id:
+                continue
+            radius = self._fan_deadzone_radius(placement.floor_plan_id, fan)
+            if radius <= 0:
+                continue
+            distance = math.hypot(point.x - fan.position.x, point.y - fan.position.y)
+            if distance <= radius:
+                return True
+        return False
+
+    def _fan_deadzone_radius(self, floor_plan_id: str, fan: FanPlacement) -> float:
+        """Return the fan deadzone radius in the floor plan's unit."""
+        if not fan.deadzone_enabled:
+            return 0.0
+
+        max_radius = self._fan_deadzone_config_radius(
+            floor_plan_id,
+            fan.deadzone_radius,
+            DEFAULT_FAN_DEADZONE_RADIUS_CM,
+        )
+        if not fan.deadzone_dynamic:
+            return max_radius if self._fan_blow_factor(fan) > 0 else 0.0
+
+        blow_factor = self._fan_blow_factor(fan)
+        if blow_factor <= 0:
+            return 0.0
+
+        min_radius = min(
+            max_radius,
+            self._fan_deadzone_config_radius(
+                floor_plan_id,
+                fan.deadzone_min_radius,
+                DEFAULT_FAN_DEADZONE_MIN_RADIUS_CM,
+            ),
+        )
+        return min_radius + ((max_radius - min_radius) * blow_factor)
+
+    def _fan_deadzone_config_radius(
+        self, floor_plan_id: str, value: float | None, default_cm: float
+    ) -> float:
+        """Return a configured fan deadzone radius in the floor plan's unit."""
+        if value is not None:
+            return max(0.0, value)
+
+        fp = self._store.get_floor_plan(floor_plan_id)
+        unit = fp.unit if fp else "cm"
+        return max(0.0, self._convert_cm_to_floor_unit(default_cm, unit))
+
+    @staticmethod
+    def _convert_cm_to_floor_unit(value_cm: float, unit: str) -> float:
+        """Convert a centimeter value into the floor plan's unit."""
+        return {
+            "cm": value_cm,
+            "m": value_cm / 100,
+            "in": value_cm / 2.54,
+            "ft": value_cm / 30.48,
+        }.get(unit, value_cm)
+
+    def _fan_blow_factor(self, fan: FanPlacement) -> float:
+        """Return how strongly the fan is blowing, from 0.0 to 1.0."""
+        state = self.hass.states.get(fan.entity_id)
+        if not state or state.state != "on":
+            return 0.0
+
+        percentage = self._float_attribute(state.attributes.get("percentage"))
+        if percentage is not None:
+            return max(0.0, min(1.0, percentage / 100))
+
+        for attr_name in ("speed", "fan_speed"):
+            speed = self._float_attribute(state.attributes.get(attr_name))
+            if speed is not None:
+                return max(0.0, min(1.0, speed / 100))
+
+        return 1.0
+
+    @staticmethod
+    def _float_attribute(value: Any) -> float | None:
+        """Return a float HA attribute value when it is numeric."""
+        if value is None:
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None

@@ -1,6 +1,7 @@
 import { expect } from "@open-wc/testing";
 import type {
   ButtonPlacement,
+  FanPlacement,
   LightPlacement,
   OtherPlacement,
   SwitchPlacement,
@@ -26,6 +27,7 @@ describe("device placement entity helpers", () => {
   const groups = {
     lights: [placement<LightPlacement>("light_1", "light.lamp")],
     switches: [placement<SwitchPlacement>("switch_1", "switch.fan")],
+    fans: [placement<FanPlacement>("fan_1", "fan.dyson")],
     buttons: [placement<ButtonPlacement>("button_1", "button.scene")],
     others: [placement<OtherPlacement>("other_1", "sensor.power")],
   };
@@ -34,6 +36,7 @@ describe("device placement entity helpers", () => {
     expect(getPlacedDeviceEntityIds(groups)).to.deep.equal([
       "light.lamp",
       "switch.fan",
+      "fan.dyson",
       "button.scene",
       "sensor.power",
     ]);
@@ -42,6 +45,7 @@ describe("device placement entity helpers", () => {
   it("can exclude the placement currently being edited", () => {
     expect(getPlacedDeviceEntityIds(groups, "switch_1")).to.deep.equal([
       "light.lamp",
+      "fan.dyson",
       "button.scene",
       "sensor.power",
     ]);

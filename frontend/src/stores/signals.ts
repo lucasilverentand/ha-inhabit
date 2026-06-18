@@ -13,6 +13,7 @@ import type {
   ButtonPlacement,
   CanvasMode,
   Coordinates,
+  FanPlacement,
   Floor,
   FloorPlan,
   LayerConfig,
@@ -80,6 +81,7 @@ interface InhabitSignals {
   layers: Signal<LayerConfig[]>;
   lightPlacements: Signal<LightPlacement[]>;
   switchPlacements: Signal<SwitchPlacement[]>;
+  fanPlacements: Signal<FanPlacement[]>;
   buttonPlacements: Signal<ButtonPlacement[]>;
   otherPlacements: Signal<OtherPlacement[]>;
   constraintConflicts: Signal<Map<string, ConstraintViolation[]>>;
@@ -91,7 +93,7 @@ interface InhabitSignals {
   } | null>;
   devicePanelTarget: Signal<{
     id: string;
-    type: "light" | "switch" | "mmwave" | "button" | "other";
+    type: "light" | "switch" | "fan" | "mmwave" | "button" | "other";
   } | null>;
   mmwaveCalibrationTarget: Signal<{
     placementId: string;
@@ -130,6 +132,7 @@ function createSignals(): InhabitSignals {
     layers: signal<LayerConfig[]>(structuredClone(DEFAULT_VISIBLE_LAYERS)),
     lightPlacements: signal<LightPlacement[]>([]),
     switchPlacements: signal<SwitchPlacement[]>([]),
+    fanPlacements: signal<FanPlacement[]>([]),
     buttonPlacements: signal<ButtonPlacement[]>([]),
     otherPlacements: signal<OtherPlacement[]>([]),
     constraintConflicts: signal<Map<string, ConstraintViolation[]>>(new Map()),
@@ -141,7 +144,7 @@ function createSignals(): InhabitSignals {
     } | null>(null),
     devicePanelTarget: signal<{
       id: string;
-      type: "light" | "switch" | "mmwave" | "button" | "other";
+      type: "light" | "switch" | "fan" | "mmwave" | "button" | "other";
     } | null>(null),
     mmwaveCalibrationTarget: signal<{
       placementId: string;
@@ -181,6 +184,7 @@ export const showGrid = s.showGrid;
 export const layers = s.layers;
 export const lightPlacements = s.lightPlacements;
 export const switchPlacements = s.switchPlacements;
+export const fanPlacements = s.fanPlacements;
 export const buttonPlacements = s.buttonPlacements;
 export const otherPlacements = s.otherPlacements;
 export const constraintConflicts = s.constraintConflicts;
@@ -234,6 +238,7 @@ export function resetSignals(): void {
   layers.value = structuredClone(DEFAULT_VISIBLE_LAYERS);
   lightPlacements.value = [];
   switchPlacements.value = [];
+  fanPlacements.value = [];
   buttonPlacements.value = [];
   otherPlacements.value = [];
   constraintConflicts.value = new Map();

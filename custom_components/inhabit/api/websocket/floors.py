@@ -11,6 +11,7 @@ from homeassistant.core import HomeAssistant, callback
 from ...const import DOMAIN, WS_PREFIX
 from ...models.device_placement import (
     ButtonPlacement,
+    FanPlacement,
     LightPlacement,
     OtherPlacement,
     SwitchPlacement,
@@ -198,6 +199,11 @@ def _build_floor_export(
         for d in store.get_switch_placements(floor_plan_id)
         if d.floor_id == floor.id
     ]
+    fans = [
+        d.to_dict()
+        for d in store.get_fan_placements(floor_plan_id)
+        if d.floor_id == floor.id
+    ]
     buttons = [
         d.to_dict()
         for d in store.get_button_placements(floor_plan_id)
@@ -228,6 +234,7 @@ def _build_floor_export(
         "floor": floor.to_dict(),
         "lights": lights,
         "switches": switches,
+        "fans": fans,
         "buttons": buttons,
         "others": others,
         "mmwave_placements": mmwave_placements,
@@ -353,6 +360,14 @@ def _import_floor_data(
             id_map.get(switch.room_id, switch.room_id) if switch.room_id else None
         )
         store.place_switch(floor_plan_id, switch)
+
+    # Import fan placements
+    for dev_data in data.get("fans", []):
+        fan = FanPlacement.from_dict(dev_data)
+        fan.id = _generate_id()
+        fan.floor_id = floor.id
+        fan.room_id = id_map.get(fan.room_id, fan.room_id) if fan.room_id else None
+        store.place_fan(floor_plan_id, fan)
 
     # Import button placements
     for dev_data in data.get("buttons", []):

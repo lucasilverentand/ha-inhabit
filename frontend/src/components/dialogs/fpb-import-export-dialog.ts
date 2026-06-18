@@ -28,6 +28,7 @@ interface FloorExportData {
   floor?: Record<string, unknown>;
   lights?: unknown[];
   switches?: unknown[];
+  fans?: unknown[];
   buttons?: unknown[];
   others?: unknown[];
   mmwave_placements?: unknown[];
@@ -505,6 +506,7 @@ export class FpbImportExportDialog extends LitElement {
     const placementCount = [
       floorExport.lights,
       floorExport.switches,
+      floorExport.fans,
       floorExport.buttons,
       floorExport.others,
       floorExport.mmwave_placements,

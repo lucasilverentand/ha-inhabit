@@ -13,6 +13,7 @@ from ..const import DOMAIN, STORAGE_KEY, STORAGE_VERSION
 from ..models.automation_rule import VisualRule
 from ..models.device_placement import (
     ButtonPlacement,
+    FanPlacement,
     LightPlacement,
     OtherPlacement,
     SwitchPlacement,
@@ -27,6 +28,7 @@ _LOGGER = logging.getLogger(__name__)
 DEVICE_PLACEMENT_KEYS = (
     "light_placements",
     "switch_placements",
+    "fan_placements",
     "button_placements",
     "other_placements",
 )
@@ -43,6 +45,7 @@ class FloorPlanStore:
             "floor_plans": {},
             "light_placements": {},
             "switch_placements": {},
+            "fan_placements": {},
             "sensor_configs": {},
             "visual_rules": {},
             "mmwave_placements": {},
@@ -138,6 +141,7 @@ class FloorPlanStore:
         for key in (
             "light_placements",
             "switch_placements",
+            "fan_placements",
             "button_placements",
             "other_placements",
             "mmwave_placements",
@@ -526,6 +530,52 @@ class FloorPlanStore:
         data = self._data.get("switch_placements", {}).get(switch_id)
         if data:
             return SwitchPlacement.from_dict(data)
+        return None
+
+    # ==================== Fan Placements ====================
+
+    def get_fan_placements(self, floor_plan_id: str) -> list[FanPlacement]:
+        """Get all fan placements for a floor plan."""
+        placements = []
+        for data in self._data.get("fan_placements", {}).values():
+            if data.get("floor_plan_id") == floor_plan_id:
+                placements.append(FanPlacement.from_dict(data))
+        return placements
+
+    def place_fan(self, floor_plan_id: str, fan: FanPlacement) -> FanPlacement:
+        """Place a fan on a floor plan."""
+        if "fan_placements" not in self._data:
+            self._data["fan_placements"] = {}
+        data = fan.to_dict()
+        data["floor_plan_id"] = floor_plan_id
+        self._data["fan_placements"][fan.id] = data
+        self.async_delay_save()
+        return fan
+
+    def update_fan_placement(self, fan: FanPlacement) -> FanPlacement | None:
+        """Update a fan placement."""
+        if fan.id not in self._data.get("fan_placements", {}):
+            return None
+        fp_id = self._data["fan_placements"][fan.id].get("floor_plan_id", "")
+        data = fan.to_dict()
+        data["floor_plan_id"] = fp_id
+        self._data["fan_placements"][fan.id] = data
+        self.async_delay_save()
+        return fan
+
+    def remove_fan_placement(self, fan_id: str) -> bool:
+        """Remove a fan placement."""
+        if fan_id in self._data.get("fan_placements", {}):
+            del self._data["fan_placements"][fan_id]
+            self.async_delay_save()
+            return True
+        return False
+
+    def get_fan_placement(self, fan_id: str) -> FanPlacement | None:
+        """Get a single fan placement by ID."""
+        data = self._data.get("fan_placements", {}).get(fan_id)
+        if data:
+            return FanPlacement.from_dict(data)
         return None
 
     # ==================== Button Placements ====================

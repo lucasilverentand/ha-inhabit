@@ -1,4 +1,4 @@
-"""Device placement data models — typed placements for lights, switches, and buttons."""
+"""Device placement data models."""
 
 from __future__ import annotations
 
@@ -6,6 +6,27 @@ from dataclasses import dataclass, field
 from typing import Any, Self
 
 from .floor_plan import Coordinates, _generate_id
+
+
+def _float_or_none(value: Any) -> float | None:
+    """Return a finite-ish float value, preserving missing optional settings."""
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _bool_or_default(value: Any, default: bool) -> bool:
+    """Return a boolean from stored placement data."""
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.lower() in {"1", "true", "yes", "on"}
+    return bool(value)
 
 
 @dataclass
@@ -55,6 +76,55 @@ class SwitchPlacement(_BasePlacement):
     """A switch entity placed on a floor plan."""
 
     pass
+
+
+@dataclass
+class FanPlacement(_BasePlacement):
+    """A fan entity placed on a floor plan."""
+
+    orientation: float = 0.0
+    oscillation_start: float | None = None
+    oscillation_end: float | None = None
+    deadzone_radius: float | None = None
+    deadzone_min_radius: float | None = None
+    deadzone_enabled: bool = True
+    deadzone_dynamic: bool = True
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary."""
+        data = super().to_dict()
+        data.update(
+            {
+                "orientation": self.orientation,
+                "oscillation_start": self.oscillation_start,
+                "oscillation_end": self.oscillation_end,
+                "deadzone_radius": self.deadzone_radius,
+                "deadzone_min_radius": self.deadzone_min_radius,
+                "deadzone_enabled": self.deadzone_enabled,
+                "deadzone_dynamic": self.deadzone_dynamic,
+            }
+        )
+        return data
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Self:
+        """Create from dictionary."""
+        base = super().from_dict(data)
+        return cls(
+            id=base.id,
+            entity_id=base.entity_id,
+            floor_id=base.floor_id,
+            room_id=base.room_id,
+            position=base.position,
+            label=base.label,
+            orientation=_float_or_none(data.get("orientation")) or 0.0,
+            oscillation_start=_float_or_none(data.get("oscillation_start")),
+            oscillation_end=_float_or_none(data.get("oscillation_end")),
+            deadzone_radius=_float_or_none(data.get("deadzone_radius")),
+            deadzone_min_radius=_float_or_none(data.get("deadzone_min_radius")),
+            deadzone_enabled=_bool_or_default(data.get("deadzone_enabled"), True),
+            deadzone_dynamic=_bool_or_default(data.get("deadzone_dynamic"), True),
+        )
 
 
 @dataclass

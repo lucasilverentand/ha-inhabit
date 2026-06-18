@@ -14,6 +14,7 @@ import {
   currentFloor,
   currentFloorPlan,
   devicePanelTarget,
+  fanPlacements,
   focusedRoomId,
   gridSize,
   layers,
@@ -36,6 +37,7 @@ import type {
   CanvasMode,
   Coordinates,
   Edge,
+  FanPlacement,
   Floor,
   HassEntity,
   HomeAssistant,
@@ -392,7 +394,7 @@ export class FpbCanvas extends LitElement {
   // ---- Placement dragging state ----
   @state()
   private _draggingPlacement: {
-    type: "light" | "switch" | "button" | "other" | "mmwave";
+    type: "light" | "switch" | "fan" | "button" | "other" | "mmwave";
     id: string;
     startPoint: Coordinates;
     originalPosition: Coordinates;
@@ -405,6 +407,7 @@ export class FpbCanvas extends LitElement {
   private readonly _devicePickerTypes = [
     "light",
     "switch",
+    "fan",
     "button",
     "mmwave",
     "other",
@@ -2196,6 +2199,7 @@ export class FpbCanvas extends LitElement {
           mode === "placement" &&
           (selection.value.type === "light" ||
             selection.value.type === "switch" ||
+            selection.value.type === "fan" ||
             selection.value.type === "button" ||
             selection.value.type === "other" ||
             selection.value.type === "mmwave") &&
@@ -2213,6 +2217,9 @@ export class FpbCanvas extends LitElement {
             pos =
               switchPlacements.value.find((p) => p.id === selId)?.position ??
               null;
+          } else if (selType === "fan") {
+            pos =
+              fanPlacements.value.find((p) => p.id === selId)?.position ?? null;
           } else if (selType === "button") {
             pos =
               buttonPlacements.value.find((p) => p.id === selId)?.position ??
@@ -2617,6 +2624,10 @@ export class FpbCanvas extends LitElement {
           );
         } else if (dp.type === "switch") {
           switchPlacements.value = switchPlacements.value.map((p) =>
+            p.id === dp.id ? { ...p, position: newPos } : p,
+          );
+        } else if (dp.type === "fan") {
+          fanPlacements.value = fanPlacements.value.map((p) =>
             p.id === dp.id ? { ...p, position: newPos } : p,
           );
         } else if (dp.type === "button") {
@@ -4334,6 +4345,23 @@ export class FpbCanvas extends LitElement {
           return true;
         }
       }
+      for (const fan of fanPlacements.value.filter(
+        (d) => d.floor_id === floor.id,
+      )) {
+        const dist = Math.hypot(
+          point.x - fan.position.x,
+          point.y - fan.position.y,
+        );
+        if (dist < 15) {
+          selection.value = { type: "fan", ids: [fan.id] };
+          if (mode === "placement") {
+            devicePanelTarget.value = { id: fan.id, type: "fan" };
+          } else {
+            this._toggleEntity(fan.entity_id);
+          }
+          return true;
+        }
+      }
       for (const btn of buttonPlacements.value.filter(
         (d) => d.floor_id === floor.id,
       )) {
@@ -4809,6 +4837,12 @@ export class FpbCanvas extends LitElement {
         ys.push(sw.position.y);
       }
     }
+    for (const fan of fanPlacements.value) {
+      if (fan.floor_id === floor.id) {
+        xs.push(fan.position.x);
+        ys.push(fan.position.y);
+      }
+    }
     for (const btn of buttonPlacements.value) {
       if (btn.floor_id === floor.id) {
         xs.push(btn.position.x);
@@ -4924,6 +4958,12 @@ export class FpbCanvas extends LitElement {
       if (sw.floor_id === floor.id) {
         xs.push(sw.position.x);
         ys.push(sw.position.y);
+      }
+    }
+    for (const fan of fanPlacements.value) {
+      if (fan.floor_id === floor.id) {
+        xs.push(fan.position.x);
+        ys.push(fan.position.y);
       }
     }
     for (const btn of buttonPlacements.value) {
@@ -7009,6 +7049,19 @@ export class FpbCanvas extends LitElement {
         ${
           calibrationTarget || !modePolicy.showNormalDevices
             ? null
+            : fanPlacements.value
+                .filter((d) => d.floor_id === floor.id)
+                .map(
+                  (fan) => svg`
+            <g class="${frid ? (this._isDeviceInFocusedRegion(fan.room_id, fan.position, frid, floor) ? "device-focused" : "device-dimmed") : ""}">
+              ${this._renderFan(fan)}
+            </g>
+          `,
+                )
+        }
+        ${
+          calibrationTarget || !modePolicy.showNormalDevices
+            ? null
             : buttonPlacements.value
                 .filter((d) => d.floor_id === floor.id)
                 .map(
@@ -7137,6 +7190,154 @@ export class FpbCanvas extends LitElement {
       iconData,
       issues,
     );
+  }
+
+  private _fanAnglePoint(
+    center: Coordinates,
+    angleDeg: number,
+    radius: number,
+  ): Coordinates {
+    const rad = ((angleDeg - 90) * Math.PI) / 180;
+    return {
+      x: center.x + Math.cos(rad) * radius,
+      y: center.y + Math.sin(rad) * radius,
+    };
+  }
+
+  private _defaultFanDeadzoneRadius(): number {
+    const unit = currentFloorPlan.value?.unit ?? "cm";
+    if (unit === "m") return 0.75;
+    if (unit === "in") return 75 / 2.54;
+    if (unit === "ft") return 75 / 30.48;
+    return 75;
+  }
+
+  private _fanBlowFactor(fan: FanPlacement): number {
+    const state = this.hass?.states[fan.entity_id];
+    if (!state || state.state !== "on") return 0;
+
+    const percentage = this._numericFanAttribute(state.attributes.percentage);
+    if (percentage !== null) return Math.max(0, Math.min(1, percentage / 100));
+
+    const speed =
+      this._numericFanAttribute(state.attributes.speed) ??
+      this._numericFanAttribute(state.attributes.fan_speed);
+    if (speed !== null) return Math.max(0, Math.min(1, speed / 100));
+
+    return 1;
+  }
+
+  private _numericFanAttribute(value: unknown): number | null {
+    if (value === null || value === undefined) return null;
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : null;
+  }
+
+  private _effectiveFanDeadzoneRadius(fan: FanPlacement): number {
+    if (fan.deadzone_enabled === false) return 0;
+
+    const maxRadius = Math.max(
+      0,
+      fan.deadzone_radius ?? this._defaultFanDeadzoneRadius(),
+    );
+    const blowFactor = this._fanBlowFactor(fan);
+    if (blowFactor <= 0) return 0;
+    if (fan.deadzone_dynamic === false) return maxRadius;
+
+    const minRadius = Math.min(
+      maxRadius,
+      Math.max(0, fan.deadzone_min_radius ?? 0),
+    );
+    return minRadius + (maxRadius - minRadius) * blowFactor;
+  }
+
+  private _renderFanArc(fan: FanPlacement) {
+    if (
+      fan.oscillation_start === null ||
+      fan.oscillation_start === undefined ||
+      fan.oscillation_end === null ||
+      fan.oscillation_end === undefined
+    ) {
+      return null;
+    }
+    const center = fan.position;
+    const radius = this._canvasMode === "viewing" ? 34 : 32;
+    const start = ((fan.oscillation_start % 360) + 360) % 360;
+    const end = ((fan.oscillation_end % 360) + 360) % 360;
+    const sweep = (end - start + 360) % 360;
+    if (sweep === 0) return null;
+
+    const startPoint = this._fanAnglePoint(center, start, radius);
+    const endPoint = this._fanAnglePoint(center, end, radius);
+    const largeArc = sweep > 180 ? 1 : 0;
+    return svg`
+      <path
+        d="M ${center.x} ${center.y} L ${startPoint.x} ${startPoint.y} A ${radius} ${radius} 0 ${largeArc} 1 ${endPoint.x} ${endPoint.y} Z"
+        fill="rgba(0, 150, 136, 0.14)"
+        stroke="rgba(0, 150, 136, 0.45)"
+        stroke-width="1"
+        pointer-events="none"
+      />
+    `;
+  }
+
+  private _renderFan(fan: FanPlacement) {
+    const state = this.hass?.states[fan.entity_id];
+    const isOn = state?.state === "on";
+    const label = (fan.label ||
+      state?.attributes.friendly_name ||
+      fan.entity_id) as string;
+    const iconData = this._getEntityIconData(state, "mdi:fan");
+    const issues = getNormalDeviceIssues(fan, this.hass?.states ?? {});
+    const deadzoneRadius = this._effectiveFanDeadzoneRadius(fan);
+    const orientationEnd = this._fanAnglePoint(
+      fan.position,
+      fan.orientation,
+      this._canvasMode === "viewing" ? 34 : 32,
+    );
+    return svg`
+      <g class="fan-placement">
+        ${
+          deadzoneRadius > 0
+            ? svg`
+          <circle
+            cx="${fan.position.x}"
+            cy="${fan.position.y}"
+            r="${deadzoneRadius}"
+            fill="rgba(244, 67, 54, 0.08)"
+            stroke="rgba(244, 67, 54, 0.35)"
+            stroke-width="1"
+            stroke-dasharray="6 4"
+            pointer-events="none"
+          />
+        `
+            : null
+        }
+        ${this._renderFanArc(fan)}
+        <line
+          x1="${fan.position.x}"
+          y1="${fan.position.y}"
+          x2="${orientationEnd.x}"
+          y2="${orientationEnd.y}"
+          stroke="${isOn ? "#009688" : "#607d8b"}"
+          stroke-width="2"
+          stroke-linecap="round"
+          pointer-events="none"
+        />
+        ${this._renderDeviceIcon(
+          fan.position.x,
+          fan.position.y,
+          isOn,
+          "fan",
+          fan.id,
+          label,
+          "#009688",
+          isOn ? "#fff" : "#616161",
+          iconData,
+          issues,
+        )}
+      </g>
+    `;
   }
 
   private _renderButton(btn: ButtonPlacement) {
@@ -9558,6 +9759,7 @@ export class FpbCanvas extends LitElement {
       this.hass.callService("button", "press", { entity_id: entityId });
     } else if (
       domain === "light" ||
+      domain === "fan" ||
       domain === "switch" ||
       domain === "input_boolean"
     ) {
@@ -9572,7 +9774,7 @@ export class FpbCanvas extends LitElement {
     floor: Floor,
   ): {
     entityId: string;
-    type: "light" | "switch" | "button" | "other" | "mmwave";
+    type: "light" | "switch" | "fan" | "button" | "other" | "mmwave";
     id: string;
   } | null {
     for (const light of lightPlacements.value.filter(
@@ -9589,6 +9791,13 @@ export class FpbCanvas extends LitElement {
     )) {
       if (Math.hypot(point.x - sw.position.x, point.y - sw.position.y) < 15) {
         return { entityId: sw.entity_id, type: "switch", id: sw.id };
+      }
+    }
+    for (const fan of fanPlacements.value.filter(
+      (d) => d.floor_id === floor.id,
+    )) {
+      if (Math.hypot(point.x - fan.position.x, point.y - fan.position.y) < 15) {
+        return { entityId: fan.entity_id, type: "fan", id: fan.id };
       }
     }
     for (const btn of buttonPlacements.value.filter(
@@ -9824,7 +10033,7 @@ export class FpbCanvas extends LitElement {
 
   private async _placeDevice(
     entityId: string,
-    placementType: "light" | "switch" | "button" | "other",
+    placementType: "light" | "switch" | "fan" | "button" | "other",
   ): Promise<void> {
     if (!this.hass || !this._pendingDevice) return;
 
@@ -9836,6 +10045,7 @@ export class FpbCanvas extends LitElement {
         {
           lights: lightPlacements.value,
           switches: switchPlacements.value,
+          fans: fanPlacements.value,
           buttons: buttonPlacements.value,
           others: otherPlacements.value,
         },
@@ -9850,27 +10060,33 @@ export class FpbCanvas extends LitElement {
     const wsType =
       placementType === "light"
         ? "inhabit/lights/place"
-        : placementType === "button"
-          ? "inhabit/buttons/place"
-          : placementType === "other"
-            ? "inhabit/others/place"
-            : "inhabit/switches/place";
+        : placementType === "fan"
+          ? "inhabit/fans/place"
+          : placementType === "button"
+            ? "inhabit/buttons/place"
+            : placementType === "other"
+              ? "inhabit/others/place"
+              : "inhabit/switches/place";
     const removeType =
       placementType === "light"
         ? "inhabit/lights/remove"
-        : placementType === "button"
-          ? "inhabit/buttons/remove"
-          : placementType === "other"
-            ? "inhabit/others/remove"
-            : "inhabit/switches/remove";
+        : placementType === "fan"
+          ? "inhabit/fans/remove"
+          : placementType === "button"
+            ? "inhabit/buttons/remove"
+            : placementType === "other"
+              ? "inhabit/others/remove"
+              : "inhabit/switches/remove";
     const idKey =
       placementType === "light"
         ? "light_id"
-        : placementType === "button"
-          ? "button_id"
-          : placementType === "other"
-            ? "other_id"
-            : "switch_id";
+        : placementType === "fan"
+          ? "fan_id"
+          : placementType === "button"
+            ? "button_id"
+            : placementType === "other"
+              ? "other_id"
+              : "switch_id";
 
     const hass = this.hass;
     const fpId = floorPlan.id;
@@ -9989,6 +10205,8 @@ export class FpbCanvas extends LitElement {
       newPos = lightPlacements.value.find((p) => p.id === dp.id)?.position;
     } else if (dp.type === "switch") {
       newPos = switchPlacements.value.find((p) => p.id === dp.id)?.position;
+    } else if (dp.type === "fan") {
+      newPos = fanPlacements.value.find((p) => p.id === dp.id)?.position;
     } else if (dp.type === "button") {
       newPos = buttonPlacements.value.find((p) => p.id === dp.id)?.position;
     } else if (dp.type === "other") {
@@ -10011,6 +10229,12 @@ export class FpbCanvas extends LitElement {
         await hass.callWS({
           type: "inhabit/switches/update",
           switch_id: dp.id,
+          position: finalPos,
+        });
+      } else if (dp.type === "fan") {
+        await hass.callWS({
+          type: "inhabit/fans/update",
+          fan_id: dp.id,
           position: finalPos,
         });
       } else if (dp.type === "button") {
@@ -10052,6 +10276,12 @@ export class FpbCanvas extends LitElement {
               switch_id: placementId,
               position: origPos,
             });
+          } else if (placementType === "fan") {
+            await hass.callWS({
+              type: "inhabit/fans/update",
+              fan_id: placementId,
+              position: origPos,
+            });
           } else if (placementType === "button") {
             await hass.callWS({
               type: "inhabit/buttons/update",
@@ -10084,6 +10314,12 @@ export class FpbCanvas extends LitElement {
             await hass.callWS({
               type: "inhabit/switches/update",
               switch_id: placementId,
+              position: finalPos,
+            });
+          } else if (placementType === "fan") {
+            await hass.callWS({
+              type: "inhabit/fans/update",
+              fan_id: placementId,
               position: finalPos,
             });
           } else if (placementType === "button") {
@@ -10137,6 +10373,9 @@ export class FpbCanvas extends LitElement {
         switchPlacements.value = switchPlacements.value.filter(
           (p) => p.id !== id,
         );
+      } else if (sel.type === "fan") {
+        await hass.callWS({ type: "inhabit/fans/remove", fan_id: id });
+        fanPlacements.value = fanPlacements.value.filter((p) => p.id !== id);
       } else if (sel.type === "button") {
         await hass.callWS({ type: "inhabit/buttons/remove", button_id: id });
         buttonPlacements.value = buttonPlacements.value.filter(
@@ -10304,6 +10543,7 @@ export class FpbCanvas extends LitElement {
         .exclude=${getPlacedDeviceEntityIds({
           lights: lightPlacements.value,
           switches: switchPlacements.value,
+          fans: fanPlacements.value,
           buttons: buttonPlacements.value,
           others: otherPlacements.value,
         })}
@@ -10312,6 +10552,7 @@ export class FpbCanvas extends LitElement {
           const placementType = e.detail.placementType as
             | "light"
             | "switch"
+            | "fan"
             | "button"
             | "mmwave"
             | "other";
@@ -10321,6 +10562,7 @@ export class FpbCanvas extends LitElement {
           } else if (
             placementType === "light" ||
             placementType === "switch" ||
+            placementType === "fan" ||
             placementType === "button" ||
             placementType === "other"
           ) {
