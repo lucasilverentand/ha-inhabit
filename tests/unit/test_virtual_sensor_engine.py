@@ -763,3 +763,52 @@ class TestConfigSync:
             ],
             any_order=True,
         )
+
+    @pytest.mark.asyncio
+    async def test_recalculate_current_states_picks_up_startup_presence(
+        self, mock_hass, patched_ha
+    ):
+        """Settled startup refresh should read live presence sensors."""
+        from custom_components.inhabit.engine.virtual_sensor_engine import (
+            SIGNAL_OCCUPANCY_STATE_CHANGED,
+        )
+
+        cfg = _make_config("room_presence")
+        cfg.presence_sensors = [
+            SensorBinding(
+                entity_id="binary_sensor.room_presence_sensor",
+                sensor_type="presence",
+                weight=1.0,
+            )
+        ]
+        store = _mock_store(configs=[cfg])
+
+        def initial_state(_entity_id):
+            return MagicMock(state="off")
+
+        mock_hass.states.get.side_effect = initial_state
+        engine = await _build_engine(mock_hass, store, patched_ha)
+
+        assert engine.get_state("room_presence").state == OccupancyState.VACANT
+
+        def settled_state(entity_id):
+            if entity_id == "binary_sensor.room_presence_sensor":
+                return MagicMock(state="on")
+            return MagicMock(state="off")
+
+        mock_hass.states.get.side_effect = settled_state
+
+        with patch(
+            "custom_components.inhabit.engine.virtual_sensor_engine.async_dispatcher_send"
+        ) as dispatch:
+            engine.recalculate_current_states()
+
+        state = engine.get_state("room_presence")
+        assert state.state == OccupancyState.OCCUPIED
+        assert "binary_sensor.room_presence_sensor" in state.contributing_sensors
+        dispatch.assert_any_call(
+            mock_hass,
+            SIGNAL_OCCUPANCY_STATE_CHANGED,
+            "room_presence",
+            state,
+        )
