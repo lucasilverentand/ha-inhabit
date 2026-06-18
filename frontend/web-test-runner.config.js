@@ -1,10 +1,10 @@
-import { esbuildPlugin } from '@web/dev-server-esbuild';
+import { esbuildPlugin } from "@web/dev-server-esbuild";
 
 export default {
-  files: 'src/**/*.test.ts',
+  files: "src/**/*.test.ts",
   nodeResolve: true,
   plugins: [
-    esbuildPlugin({ ts: true, target: 'auto' }),
+    esbuildPlugin({ ts: true, target: "es2022", tsconfig: "tsconfig.json" }),
   ],
   testFramework: {
     config: {

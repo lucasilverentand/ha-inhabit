@@ -12,7 +12,7 @@
 import { css, html, LitElement, nothing } from "lit";
 import { property, query, state } from "lit/decorators.js";
 import { repeat } from "lit/directives/repeat.js";
-import type { HomeAssistant } from "../../types";
+import type { HassEntity, HomeAssistant } from "../../types";
 import { isInhabitGeneratedEntity } from "./entity-filter";
 import {
   getCachedIntegrationEntityIds,
@@ -58,6 +58,10 @@ export class FpbEntityPicker extends LitElement {
   @property({ type: Boolean })
   numericOnly = false;
 
+  /** Additional predicate for callers that need domain-specific filtering. */
+  @property({ attribute: false })
+  entityFilter?: (entityId: string, stateObj: HassEntity) => boolean;
+
   /** Allow selecting multiple entities before confirming. */
   @property({ type: Boolean })
   multi = false;
@@ -93,23 +97,31 @@ export class FpbEntityPicker extends LitElement {
   @query(".search-input")
   private _input?: HTMLInputElement;
 
+  private _hasClosed = false;
+
   static override styles = css`
-    .overlay {
-      position: fixed;
-      inset: 0;
+    .entity-picker-dialog {
+      width: min(420px, 90vw);
+      max-width: 90vw;
+      max-height: min(80vh, calc(100dvh - 32px));
+      margin: auto;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: var(--primary-text-color);
+      overflow: visible;
+      box-shadow: none;
+    }
+
+    .entity-picker-dialog::backdrop {
       background: rgba(0, 0, 0, 0.5);
-      z-index: 1000;
-      display: flex;
-      align-items: center;
-      justify-content: center;
     }
 
     .dialog {
       background: var(--card-background-color, #fff);
       border-radius: 16px;
-      width: 420px;
-      max-width: 90vw;
-      max-height: 80vh;
+      width: 100%;
+      max-height: min(80vh, calc(100dvh - 32px));
       display: flex;
       flex-direction: column;
       overflow: hidden;
@@ -360,8 +372,11 @@ export class FpbEntityPicker extends LitElement {
     }
 
     @media (max-width: 900px), (hover: none) and (pointer: coarse) {
-      .overlay {
-        align-items: flex-end;
+      .entity-picker-dialog {
+        width: 100vw;
+        max-width: 100vw;
+        max-height: min(82vh, 680px);
+        margin: auto 0 0;
       }
 
       .dialog {
@@ -421,8 +436,14 @@ export class FpbEntityPicker extends LitElement {
   `;
 
   override firstUpdated(): void {
+    this._showDialog();
     requestAnimationFrame(() => this._input?.focus());
     this._loadIntegrationEntities();
+  }
+
+  override disconnectedCallback(): void {
+    super.disconnectedCallback();
+    this._getDialog()?.close();
   }
 
   override updated(changedProps: Map<string, unknown>): void {
@@ -557,6 +578,7 @@ export class FpbEntityPicker extends LitElement {
       if (isInhabitGeneratedEntity(eid, stateObj, this._integrationEntityIds))
         continue;
       if (excludeSet.has(eid)) continue;
+      if (this.entityFilter && !this.entityFilter(eid, stateObj)) continue;
       const domain = eid.split(".")[0];
       if (domainSet.size > 0 && !domainSet.has(domain)) continue;
       if (excludeDomainSet.size > 0 && excludeDomainSet.has(domain)) continue;
@@ -620,17 +642,37 @@ export class FpbEntityPicker extends LitElement {
   }
 
   private _close(): void {
+    if (this._hasClosed) return;
+    this._hasClosed = true;
     this._search = "";
     this._staged = new Set();
+    const dialog = this._getDialog();
+    if (dialog?.open) {
+      dialog.close();
+    }
     this.dispatchEvent(
       new CustomEvent("picker-closed", { bubbles: true, composed: true }),
     );
   }
 
-  private _onOverlayClick(e: MouseEvent): void {
-    if ((e.target as HTMLElement).classList.contains("overlay")) {
+  private _showDialog(): void {
+    const dialog = this._getDialog();
+    if (!dialog || dialog.open) return;
+    if (typeof dialog.showModal === "function") {
+      dialog.showModal();
+    } else {
+      dialog.setAttribute("open", "");
+    }
+  }
+
+  private _onDialogClick(e: MouseEvent): void {
+    if (e.target === this._getDialog()) {
       this._close();
     }
+  }
+
+  private _getDialog(): HTMLDialogElement | null {
+    return this.renderRoot.querySelector("dialog.entity-picker-dialog");
   }
 
   override render() {
@@ -639,11 +681,15 @@ export class FpbEntityPicker extends LitElement {
     const placementType = this._activePlacementType();
 
     return html`
-      <div class="overlay" @click=${this._onOverlayClick} @keydown=${(
-        e: KeyboardEvent,
-      ) => {
-        if (e.key === "Escape") this._close();
-      }}>
+      <dialog
+        class="entity-picker-dialog"
+        aria-label=${this.title}
+        @click=${this._onDialogClick}
+        @cancel=${(e: Event) => {
+          e.preventDefault();
+          this._close();
+        }}
+      >
         <div class="dialog">
           <div class="dialog-header">
             <h3>${this.title}</h3>
@@ -761,7 +807,7 @@ export class FpbEntityPicker extends LitElement {
               : nothing
           }
         </div>
-      </div>
+      </dialog>
     `;
   }
 }
