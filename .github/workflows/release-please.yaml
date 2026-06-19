@@ -39,7 +39,7 @@ jobs:
           jq -r 'if type == "array" then .[]?.number else .number? end' <<< "$release_prs" |
             while read -r pr_number; do
               [ -n "$pr_number" ] || continue
-              gh pr edit "$pr_number" --add-assignee lucasilverentand
+              gh pr edit "$pr_number" --repo "$GITHUB_REPOSITORY" --add-assignee lucasilverentand
             done
 
   build-release:
