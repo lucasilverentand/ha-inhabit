@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.7](https://github.com/lucasilverentand/ha-inhabit/compare/v0.14.6...v0.14.7) (2026-06-19)
+
+
+### Features
+
+* add occupancy diagnostics and config patch tools ([#77](https://github.com/lucasilverentand/ha-inhabit/issues/77)) ([06f3499](https://github.com/lucasilverentand/ha-inhabit/commit/06f3499586b3919c72417eb6a5927e2e242392a4))
+
 ## [0.14.6](https://github.com/lucasilverentand/ha-inhabit/compare/v0.14.5...v0.14.6) (2026-06-19)
 
 
