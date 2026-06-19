@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.9](https://github.com/lucasilverentand/ha-inhabit/compare/v0.14.8...v0.14.9) (2026-06-19)
+
+
+### Bug Fixes
+
+* ignore mmWave targets inside fan deadzones ([7a9f999](https://github.com/lucasilverentand/ha-inhabit/commit/7a9f999fcd44c5fd29b354b9013fe8d3840e5d57))
+
 ## [0.14.8](https://github.com/lucasilverentand/ha-inhabit/compare/v0.14.7...v0.14.8) (2026-06-19)
 
 
