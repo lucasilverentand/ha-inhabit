@@ -265,6 +265,8 @@ class FloorPlanStore:
                 if existing.id == room.id:
                     floor.rooms[i] = room
                     self.update_floor_plan(floor_plan)
+                    if not room.occupancy_sensor_enabled:
+                        self.delete_sensor_config(room.id)
                     return room
         return None
 
@@ -336,6 +338,8 @@ class FloorPlanStore:
                 if existing.id == zone.id:
                     floor.zones[i] = zone
                     self.update_floor_plan(floor_plan)
+                    if not zone.occupancy_sensor_enabled:
+                        self.delete_sensor_config(zone.id)
                     return zone
         return None
 
@@ -731,7 +735,7 @@ class FloorPlanStore:
         return False
 
     def cleanup_orphaned_sensor_configs(self) -> list[str]:
-        """Remove sensor configs whose room/zone no longer exists.
+        """Remove configs for deleted or occupancy-disabled rooms/zones.
 
         Returns the list of removed room_ids.
         """
@@ -739,16 +743,18 @@ class FloorPlanStore:
         if not sensor_configs:
             return []
 
-        # Collect all valid room and zone IDs
-        valid_ids: set[str] = set()
+        # Collect all region IDs that should still have occupancy configs.
+        active_ids: set[str] = set()
         for fp in self.get_floor_plans():
             for floor in fp.floors:
                 for room in floor.rooms:
-                    valid_ids.add(room.id)
+                    if room.occupancy_sensor_enabled:
+                        active_ids.add(room.id)
                 for zone in floor.zones:
-                    valid_ids.add(zone.id)
+                    if zone.occupancy_sensor_enabled:
+                        active_ids.add(zone.id)
 
-        orphaned = [rid for rid in sensor_configs if rid not in valid_ids]
+        orphaned = [rid for rid in sensor_configs if rid not in active_ids]
         for rid in orphaned:
             del sensor_configs[rid]
 

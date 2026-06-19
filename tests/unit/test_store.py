@@ -729,6 +729,109 @@ class TestSensorConfigOperations:
             retrieved = store.get_sensor_config("room_1")
             assert retrieved is None
 
+    @pytest.mark.asyncio
+    async def test_update_room_disabling_occupancy_deletes_sensor_config(
+        self, mock_hass
+    ):
+        """Disabling room occupancy should remove its persisted sensor config."""
+        with patch(
+            "custom_components.inhabit.store.floor_plan_store.Store",
+            return_value=create_mock_store(),
+        ):
+            store = FloorPlanStore(mock_hass)
+            await store.async_load()
+
+            fp = store.create_floor_plan(FloorPlan(name="Home"))
+            floor = store.add_floor(fp.id, Floor(name="Ground"))
+            assert floor is not None
+            room = store.add_room(
+                fp.id,
+                floor.id,
+                Room(name="Living", occupancy_sensor_enabled=True),
+            )
+            assert room is not None
+            assert store.get_sensor_config(room.id) is not None
+
+            room.occupancy_sensor_enabled = False
+            store.update_room(fp.id, room)
+
+            assert store.get_sensor_config(room.id) is None
+
+    @pytest.mark.asyncio
+    async def test_update_zone_disabling_occupancy_deletes_sensor_config(
+        self, mock_hass
+    ):
+        """Disabling zone occupancy should remove its persisted sensor config."""
+        with patch(
+            "custom_components.inhabit.store.floor_plan_store.Store",
+            return_value=create_mock_store(),
+        ):
+            store = FloorPlanStore(mock_hass)
+            await store.async_load()
+
+            fp = store.create_floor_plan(FloorPlan(name="Home"))
+            floor = store.add_floor(fp.id, Floor(name="Ground"))
+            assert floor is not None
+            zone = store.add_zone(
+                fp.id,
+                floor.id,
+                Zone(name="Desk", occupancy_sensor_enabled=True),
+            )
+            assert zone is not None
+            assert store.get_sensor_config(zone.id) is not None
+
+            zone.occupancy_sensor_enabled = False
+            store.update_zone(fp.id, zone)
+
+            assert store.get_sensor_config(zone.id) is None
+
+    @pytest.mark.asyncio
+    async def test_cleanup_orphaned_sensor_configs_removes_disabled_regions(
+        self, mock_hass
+    ):
+        """Startup cleanup should remove configs for disabled rooms and zones."""
+        with patch(
+            "custom_components.inhabit.store.floor_plan_store.Store",
+            return_value=create_mock_store(),
+        ):
+            store = FloorPlanStore(mock_hass)
+            await store.async_load()
+
+            fp = store.create_floor_plan(FloorPlan(name="Home"))
+            floor = store.add_floor(fp.id, Floor(name="Ground"))
+            assert floor is not None
+            enabled_room = store.add_room(
+                fp.id,
+                floor.id,
+                Room(name="Kitchen", occupancy_sensor_enabled=True),
+            )
+            disabled_room = store.add_room(
+                fp.id,
+                floor.id,
+                Room(name="Hall", occupancy_sensor_enabled=False),
+            )
+            disabled_zone = store.add_zone(
+                fp.id,
+                floor.id,
+                Zone(name="Desk", occupancy_sensor_enabled=False),
+            )
+            assert enabled_room is not None
+            assert disabled_room is not None
+            assert disabled_zone is not None
+            store.create_sensor_config(
+                VirtualSensorConfig(room_id=disabled_room.id, floor_plan_id=fp.id)
+            )
+            store.create_sensor_config(
+                VirtualSensorConfig(room_id=disabled_zone.id, floor_plan_id=fp.id)
+            )
+
+            removed = store.cleanup_orphaned_sensor_configs()
+
+            assert set(removed) == {disabled_room.id, disabled_zone.id}
+            assert store.get_sensor_config(enabled_room.id) is not None
+            assert store.get_sensor_config(disabled_room.id) is None
+            assert store.get_sensor_config(disabled_zone.id) is None
+
 
 class TestVisualRuleOperations:
     """Test visual rule operations."""
