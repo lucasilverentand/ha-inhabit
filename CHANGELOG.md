@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.6](https://github.com/lucasilverentand/ha-inhabit/compare/v0.14.5...v0.14.6) (2026-06-19)
+
+
+### Features
+
+* add configurable unsealed occupancy timeout ([#75](https://github.com/lucasilverentand/ha-inhabit/issues/75)) ([748f67b](https://github.com/lucasilverentand/ha-inhabit/commit/748f67bd67068d52087ac8a4731a393f855e2f27))
+
 ## [0.14.5](https://github.com/lucasilverentand/ha-inhabit/compare/v0.14.4...v0.14.5) (2026-06-18)
 
 
