@@ -244,6 +244,50 @@ export interface OccupancyStateData {
   sensor_diagnostics?: Record<string, unknown>;
 }
 
+export interface OccupancyDiagnosticEvent {
+  id: string;
+  timestamp: string;
+  category: string;
+  event: string;
+  room_id?: string | null;
+  region_id?: string | null;
+  previous_state?: string | null;
+  new_state?: string | null;
+  reason?: string | null;
+  confidence?: number | null;
+  probability?: number | null;
+  thresholds?: Record<string, number> | null;
+  contributing_sensors: string[];
+  blockers: string[];
+  target_count?: number | null;
+  metadata: Record<string, unknown>;
+}
+
+export interface OccupancyDiagnosticsResponse {
+  generated_at: string;
+  event_count: number;
+  events: OccupancyDiagnosticEvent[];
+  state?: OccupancyStateData | null;
+  config?: VirtualSensorConfig | null;
+}
+
+export interface SensorConfigPatchDiff {
+  field: string;
+  before: unknown;
+  after: unknown;
+}
+
+export interface SensorConfigPatchResult {
+  valid: boolean;
+  current: Record<string, unknown>;
+  proposed: Record<string, unknown>;
+  diff: SensorConfigPatchDiff[];
+  warnings: string[];
+  errors: string[];
+  config?: VirtualSensorConfig;
+  diagnostic_event_id?: string;
+}
+
 // mmWave sensor types
 export interface MmwaveCalibration {
   enabled: boolean;

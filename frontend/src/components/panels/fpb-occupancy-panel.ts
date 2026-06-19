@@ -8,8 +8,11 @@ import { property, state } from "lit/decorators.js";
 import type {
   HassEntity,
   HomeAssistant,
+  OccupancyDiagnosticEvent,
+  OccupancyDiagnosticsResponse,
   OccupancyStateData,
   SensorBinding,
+  SensorConfigPatchResult,
   VirtualSensorConfig,
 } from "../../types";
 import "../shared/fpb-entity-picker";
@@ -40,6 +43,27 @@ export class FpbOccupancyPanel extends LitElement {
 
   @state()
   private _activePicker: AreaSensorBindingType | "override" | null = null;
+
+  @state()
+  private _diagnostics: OccupancyDiagnosticEvent[] = [];
+
+  @state()
+  private _diagnosticsCategory = "";
+
+  @state()
+  private _diagnosticsLoading = false;
+
+  @state()
+  private _patchText = "";
+
+  @state()
+  private _patchPreview: SensorConfigPatchResult | null = null;
+
+  @state()
+  private _patchError = "";
+
+  @state()
+  private _patchApplying = false;
 
   private _pollTimer?: number;
 
@@ -214,6 +238,13 @@ export class FpbOccupancyPanel extends LitElement {
       box-sizing: border-box;
     }
 
+    .textarea-input {
+      min-height: 96px;
+      resize: vertical;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      line-height: 1.4;
+    }
+
     .status-section {
       padding: 12px;
       background: var(--primary-background-color, #fafafa);
@@ -267,6 +298,91 @@ export class FpbOccupancyPanel extends LitElement {
       color: var(--secondary-text-color);
     }
 
+    .button-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .secondary-btn {
+      padding: 6px 10px;
+      border: 1px solid var(--divider-color, #ddd);
+      border-radius: 8px;
+      background: var(--card-background-color, #fff);
+      color: var(--primary-text-color);
+      cursor: pointer;
+      font-size: 13px;
+      white-space: nowrap;
+    }
+
+    .secondary-btn:hover {
+      background: var(--secondary-background-color, #f5f5f5);
+    }
+
+    .secondary-btn[disabled],
+    .add-btn[disabled] {
+      cursor: default;
+      opacity: 0.55;
+    }
+
+    .select-input {
+      min-width: 140px;
+      padding: 6px 8px;
+      border: 1px solid var(--divider-color, #ddd);
+      border-radius: 8px;
+      background: var(--primary-background-color);
+      color: var(--primary-text-color);
+      font-size: 13px;
+    }
+
+    .diagnostic-list,
+    .diff-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .diagnostic-item,
+    .diff-item,
+    .message-box {
+      padding: 8px;
+      background: var(--primary-background-color, #fafafa);
+      border-radius: 8px;
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    .diagnostic-meta {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      color: var(--secondary-text-color);
+      font-size: 11px;
+    }
+
+    .diagnostic-title {
+      margin-top: 2px;
+      font-weight: 600;
+    }
+
+    .diagnostic-reason,
+    .diff-value {
+      margin-top: 2px;
+      color: var(--secondary-text-color);
+      overflow-wrap: anywhere;
+    }
+
+    .message-box.error {
+      color: var(--error-color, #b00020);
+      background: rgba(244, 67, 54, 0.12);
+    }
+
+    .message-box.warning {
+      color: #8a5a00;
+      background: rgba(255, 193, 7, 0.16);
+    }
+
     ha-switch {
       --mdc-theme-secondary: var(--primary-color);
     }
@@ -307,6 +423,9 @@ export class FpbOccupancyPanel extends LitElement {
   private async _loadConfig(): Promise<void> {
     if (!this.hass || !this.targetId) return;
     this._loading = true;
+    this._diagnostics = [];
+    this._patchPreview = null;
+    this._patchError = "";
     try {
       const config = await this.hass.callWS<VirtualSensorConfig>({
         type: "inhabit/sensor_config/get",
@@ -318,6 +437,7 @@ export class FpbOccupancyPanel extends LitElement {
       this._config = null;
     }
     await this._loadOccupancyState();
+    await this._loadDiagnostics();
     this._loading = false;
   }
 
@@ -335,6 +455,26 @@ export class FpbOccupancyPanel extends LitElement {
     }
   }
 
+  private async _loadDiagnostics(): Promise<void> {
+    if (!this.hass || !this.targetId) return;
+    this._diagnosticsLoading = true;
+    try {
+      const response = await this.hass.callWS<OccupancyDiagnosticsResponse>({
+        type: "inhabit/occupancy_diagnostics",
+        room_id: this.targetId,
+        category: this._diagnosticsCategory || undefined,
+        limit: 20,
+        include_config: true,
+      });
+      this._diagnostics = response.events ?? [];
+    } catch (err) {
+      console.error("Failed to load diagnostics:", err);
+      this._diagnostics = [];
+    } finally {
+      this._diagnosticsLoading = false;
+    }
+  }
+
   private async _updateConfig(
     updates: Partial<VirtualSensorConfig>,
   ): Promise<void> {
@@ -349,6 +489,107 @@ export class FpbOccupancyPanel extends LitElement {
     } catch (err) {
       console.error("Failed to update sensor config:", err);
     }
+  }
+
+  private _parsePatch(): Record<string, unknown> | null {
+    this._patchError = "";
+    const text = this._patchText.trim();
+    if (!text) {
+      this._patchError = "Paste a JSON object with config fields to change.";
+      return null;
+    }
+    try {
+      const parsed = JSON.parse(text) as unknown;
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        this._patchError = "Patch must be a JSON object.";
+        return null;
+      }
+      return parsed as Record<string, unknown>;
+    } catch (err) {
+      this._patchError = err instanceof Error ? err.message : String(err);
+      return null;
+    }
+  }
+
+  private async _previewConfigPatch(): Promise<void> {
+    if (!this.hass) return;
+    const patch = this._parsePatch();
+    if (!patch) return;
+    try {
+      this._patchPreview = await this.hass.callWS<SensorConfigPatchResult>({
+        type: "inhabit/sensor_config/preview_patch",
+        room_id: this.targetId,
+        patch,
+        reason: "AI config patch preview",
+      });
+    } catch (err) {
+      this._patchPreview = null;
+      this._patchError =
+        err instanceof Error ? err.message : "Could not preview patch.";
+    }
+  }
+
+  private async _applyConfigPatch(): Promise<void> {
+    if (!this.hass || !this._patchPreview?.valid) return;
+    const patch = this._parsePatch();
+    if (!patch) return;
+    this._patchApplying = true;
+    try {
+      const result = await this.hass.callWS<SensorConfigPatchResult>({
+        type: "inhabit/sensor_config/apply_patch",
+        room_id: this.targetId,
+        patch,
+        reason: "Applied from occupancy panel AI config patch",
+        confirm: true,
+      });
+      this._patchPreview = result;
+      if (result.config) this._config = result.config;
+      await this._loadDiagnostics();
+    } catch (err) {
+      this._patchError =
+        err instanceof Error ? err.message : "Could not apply patch.";
+    } finally {
+      this._patchApplying = false;
+    }
+  }
+
+  private async _copyDiagnostics(): Promise<void> {
+    const payload = JSON.stringify(
+      {
+        room_id: this.targetId,
+        state: this._occupancyState,
+        config: this._config,
+        diagnostics: this._diagnostics,
+      },
+      null,
+      2,
+    );
+    await navigator.clipboard?.writeText(payload);
+  }
+
+  private _formatValue(value: unknown): string {
+    if (value === null || value === undefined) return "null";
+    if (typeof value === "string") return value;
+    return JSON.stringify(value);
+  }
+
+  private _latestWhy(): string {
+    const latest = [...this._diagnostics]
+      .reverse()
+      .find(
+        (event) =>
+          event.event === "state_committed" ||
+          event.event === "state_transition" ||
+          event.event === "transition_blocked",
+      );
+    if (!latest) return "No recent diagnostic decision recorded.";
+    if (latest.event === "transition_blocked") {
+      const blockers = latest.blockers.length
+        ? ` (${latest.blockers.join(", ")})`
+        : "";
+      return `Stayed ${this._occupancyState?.state ?? "unknown"}: ${latest.reason ?? latest.event}${blockers}`;
+    }
+    return `${latest.previous_state ?? "unknown"} -> ${latest.new_state ?? "unknown"}: ${latest.reason ?? latest.event}`;
   }
 
   private async _addSensors(
@@ -514,6 +755,141 @@ export class FpbOccupancyPanel extends LitElement {
               : nothing
           }
         </div>
+      </div>
+    `;
+  }
+
+  private _renderDiagnostics() {
+    return html`
+      <div class="section">
+        <div class="section-title">Diagnostics</div>
+        <div class="status-section">
+          <div class="contributing-sensors">${this._latestWhy()}</div>
+          <div class="button-row">
+            <select
+              class="select-input"
+              .value=${this._diagnosticsCategory}
+              @change=${(e: Event) => {
+                this._diagnosticsCategory = (
+                  e.target as HTMLSelectElement
+                ).value;
+                this._loadDiagnostics();
+              }}
+            >
+              <option value="">All events</option>
+              <option value="state">State</option>
+              <option value="state_machine">State machine</option>
+              <option value="sensor">Sensors</option>
+              <option value="spatial">Spatial</option>
+              <option value="seal">Seal</option>
+              <option value="adaptive">Adaptive</option>
+              <option value="config">Config</option>
+            </select>
+            <button
+              class="secondary-btn"
+              ?disabled=${this._diagnosticsLoading}
+              @click=${() => this._loadDiagnostics()}
+            >
+              Refresh
+            </button>
+            <button
+              class="secondary-btn"
+              ?disabled=${this._diagnostics.length === 0}
+              @click=${() => this._copyDiagnostics()}
+            >
+              Copy JSON
+            </button>
+          </div>
+          <div class="diagnostic-list">
+            ${this._diagnostics.length === 0
+              ? html`<div class="message-box">No diagnostics recorded yet.</div>`
+              : this._diagnostics.slice(-6).map(
+                  (event) => html`
+                    <div class="diagnostic-item">
+                      <div class="diagnostic-meta">
+                        <span>${event.category}</span>
+                        <span>${new Date(event.timestamp).toLocaleTimeString()}</span>
+                      </div>
+                      <div class="diagnostic-title">${event.event}</div>
+                      ${event.reason
+                        ? html`<div class="diagnostic-reason">
+                            ${event.reason}
+                          </div>`
+                        : nothing}
+                      ${event.blockers.length > 0
+                        ? html`<div class="diagnostic-reason">
+                            Blockers: ${event.blockers.join(", ")}
+                          </div>`
+                        : nothing}
+                    </div>
+                  `,
+                )}
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  private _renderConfigPatchTools() {
+    const preview = this._patchPreview;
+    return html`
+      <div class="section">
+        <div class="section-title">AI Config Patch</div>
+        <textarea
+          class="action-input textarea-input"
+          placeholder='{"checking_timeout": 45, "occupied_threshold": 0.6}'
+          .value=${this._patchText}
+          @input=${(e: Event) => {
+            this._patchText = (e.target as HTMLTextAreaElement).value;
+            this._patchPreview = null;
+            this._patchError = "";
+          }}
+        ></textarea>
+        <div class="button-row">
+          <button class="secondary-btn" @click=${() => this._previewConfigPatch()}>
+            Preview
+          </button>
+          <button
+            class="add-btn"
+            ?disabled=${!preview?.valid || this._patchApplying}
+            @click=${() => this._applyConfigPatch()}
+          >
+            Apply Patch
+          </button>
+        </div>
+        ${this._patchError
+          ? html`<div class="message-box error">${this._patchError}</div>`
+          : nothing}
+        ${preview?.warnings?.length
+          ? html`<div class="message-box warning">
+              ${preview.warnings.join(" ")}
+            </div>`
+          : nothing}
+        ${preview?.errors?.length
+          ? html`<div class="message-box error">
+              ${preview.errors.join(" ")}
+            </div>`
+          : nothing}
+        ${preview
+          ? html`
+              <div class="diff-list">
+                ${preview.diff.length === 0
+                  ? html`<div class="message-box">No config changes.</div>`
+                  : preview.diff.map(
+                      (item) => html`
+                        <div class="diff-item">
+                          <strong>${item.field}</strong>
+                          <div class="diff-value">
+                            ${this._formatValue(item.before)} -> ${this._formatValue(
+                              item.after,
+                            )}
+                          </div>
+                        </div>
+                      `,
+                    )}
+              </div>
+            `
+          : nothing}
       </div>
     `;
   }
@@ -740,6 +1116,9 @@ export class FpbOccupancyPanel extends LitElement {
                 />
               </div>
             </div>
+
+            ${this._renderDiagnostics()}
+            ${this._renderConfigPatchTools()}
           `
               : nothing
           }

@@ -50,3 +50,55 @@ export_card:
       required: false
       selector:
         text:
+
+preview_sensor_config_patch:
+  name: Preview Sensor Config Patch
+  description: Preview a proposed occupancy sensor configuration patch without saving it
+  fields:
+    room_id:
+      name: Room ID
+      description: The room or zone ID to preview
+      required: true
+      selector:
+        text:
+    patch:
+      name: Patch
+      description: Partial VirtualSensorConfig fields to preview
+      required: true
+      selector:
+        object:
+    reason:
+      name: Reason
+      description: Optional reason for the proposed edit
+      required: false
+      selector:
+        text:
+
+apply_sensor_config_patch:
+  name: Apply Sensor Config Patch
+  description: Apply a confirmed occupancy sensor configuration patch
+  fields:
+    room_id:
+      name: Room ID
+      description: The room or zone ID to update
+      required: true
+      selector:
+        text:
+    patch:
+      name: Patch
+      description: Partial VirtualSensorConfig fields to apply
+      required: true
+      selector:
+        object:
+    reason:
+      name: Reason
+      description: Why this change is being applied
+      required: true
+      selector:
+        text:
+    confirm:
+      name: Confirm
+      description: Must be true to apply the patch
+      required: true
+      selector:
+        boolean:
