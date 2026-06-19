@@ -195,6 +195,7 @@ class VirtualSensorConfig:
     motion_timeout: int = 120  # Seconds after last motion to start CHECKING
     checking_timeout: int = 30  # Seconds in CHECKING before VACANT
     presence_timeout: int = 300  # Seconds to trust presence sensor alone
+    unsealed_activity_timeout: int = 120  # Seconds to trust unsealed activity
 
     # Sensor bindings
     motion_sensors: list[SensorBinding] = field(default_factory=list)
@@ -278,6 +279,7 @@ class VirtualSensorConfig:
             "motion_timeout": self.motion_timeout,
             "checking_timeout": self.checking_timeout,
             "presence_timeout": self.presence_timeout,
+            "unsealed_activity_timeout": self.unsealed_activity_timeout,
             "motion_sensors": [s.to_dict() for s in self.motion_sensors],
             "presence_sensors": [s.to_dict() for s in self.presence_sensors],
             "occupancy_sensors": [s.to_dict() for s in self.occupancy_sensors],
@@ -319,6 +321,7 @@ class VirtualSensorConfig:
             motion_timeout=int(data.get("motion_timeout", 120)),
             checking_timeout=int(data.get("checking_timeout", 30)),
             presence_timeout=int(data.get("presence_timeout", 300)),
+            unsealed_activity_timeout=int(data.get("unsealed_activity_timeout", 120)),
             motion_sensors=[
                 SensorBinding.from_dict(s) for s in data.get("motion_sensors", [])
             ],

@@ -4751,6 +4751,14 @@ function ft(t,e){return(e,i,o)=>((t,e,i)=>(i.configurable=!0,i.enumerable=!0,Ref
                 />
               </div>
 
+              <div class="slider-row">
+                <label>Open/unsealed idle <span>${this._config.unsealed_activity_timeout}s</span></label>
+                <input type="range" min="10" max="900" step="10"
+                  .value=${String(this._config.unsealed_activity_timeout)}
+                  @change=${t=>this._updateConfig({unsealed_activity_timeout:Number(t.target.value)})}
+                />
+              </div>
+
               ${"zone"===this.targetType?q`
               <div class="slider-row">
                 <label>Spatial Delay <span>${i}s</span></label>

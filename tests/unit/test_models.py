@@ -815,9 +815,26 @@ class TestVirtualSensorConfig:
             room_id="room_1",
             floor_plan_id="fp_1",
             motion_timeout=120,
+            unsealed_activity_timeout=180,
         )
         data = config.to_dict()
         assert data["motion_timeout"] == 120
+        assert data["unsealed_activity_timeout"] == 180
+
+    def test_unsealed_activity_timeout_defaults_and_round_trips(self):
+        """Unsealed idle timeout has a migration-safe default and round-trip."""
+        defaulted = VirtualSensorConfig.from_dict(
+            {"room_id": "room_1", "floor_plan_id": "fp_1"}
+        )
+        assert defaulted.unsealed_activity_timeout == 120
+
+        config = VirtualSensorConfig(
+            room_id="room_1",
+            floor_plan_id="fp_1",
+            unsealed_activity_timeout=45,
+        )
+        restored = VirtualSensorConfig.from_dict(config.to_dict())
+        assert restored.unsealed_activity_timeout == 45
 
 
 class TestOccupancyStateData:

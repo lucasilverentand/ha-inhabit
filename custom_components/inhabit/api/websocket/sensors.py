@@ -63,6 +63,7 @@ def ws_sensor_config_get(
         vol.Optional("motion_timeout"): int,
         vol.Optional("checking_timeout"): int,
         vol.Optional("presence_timeout"): int,
+        vol.Optional("unsealed_activity_timeout"): int,
         vol.Optional("motion_sensors"): list,
         vol.Optional("presence_sensors"): list,
         vol.Optional("occupancy_sensors"): list,
@@ -116,6 +117,8 @@ def ws_sensor_config_update(
         config.checking_timeout = msg["checking_timeout"]
     if "presence_timeout" in msg:
         config.presence_timeout = msg["presence_timeout"]
+    if "unsealed_activity_timeout" in msg:
+        config.unsealed_activity_timeout = msg["unsealed_activity_timeout"]
     if "motion_sensors" in msg:
         config.motion_sensors = [
             SensorBinding.from_dict(s) for s in msg["motion_sensors"]
