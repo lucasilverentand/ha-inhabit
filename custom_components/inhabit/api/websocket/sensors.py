@@ -328,7 +328,9 @@ def ws_sensor_config_apply_patch(
         return
 
     if msg["confirm"] is not True:
-        connection.send_error(msg["id"], "confirmation_required", "confirm must be true")
+        connection.send_error(
+            msg["id"], "confirmation_required", "confirm must be true"
+        )
         return
 
     async def _apply() -> None:

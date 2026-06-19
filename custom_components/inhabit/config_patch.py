@@ -143,7 +143,9 @@ def preview_sensor_config_patch(
         config = None
         errors.append(f"invalid config values: {err}")
 
-    if config and not (0.0 <= config.vacant_threshold <= config.occupied_threshold <= 1.0):
+    if config and not (
+        0.0 <= config.vacant_threshold <= config.occupied_threshold <= 1.0
+    ):
         errors.append(
             "thresholds must satisfy 0.0 <= vacant_threshold <= occupied_threshold <= 1.0"
         )

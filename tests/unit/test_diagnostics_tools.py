@@ -211,9 +211,7 @@ class TestEngineDiagnostics:
             ["room_a"],
         )
 
-        events = engine.get_diagnostics(room_id="room_a", category="spatial")[
-            "events"
-        ]
+        events = engine.get_diagnostics(room_id="room_a", category="spatial")["events"]
         assert any(event["event"] == "target_entered_region" for event in events)
         assert any(event["event"] == "spatial_presence_routed" for event in events)
         machine.update_spatial_presence.assert_called_once_with(1)
@@ -245,8 +243,6 @@ class TestEngineDiagnostics:
                 [],
             )
 
-        events = engine.get_diagnostics(room_id="zone_a", category="spatial")[
-            "events"
-        ]
+        events = engine.get_diagnostics(room_id="zone_a", category="spatial")["events"]
         assert any(event["event"] == "target_pending_region" for event in events)
         assert any(event["event"] == "target_pending_cancelled" for event in events)
