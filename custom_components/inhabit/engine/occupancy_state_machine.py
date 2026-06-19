@@ -67,6 +67,7 @@ class OccupancyStateMachine:
         can_go_vacant: Callable[[str], bool] | None = None,
         is_occupied_by_children: Callable[[str], bool] | None = None,
         has_phantom_hold: Callable[[str], bool] | None = None,
+        on_diagnostic: Callable[..., None] | None = None,
     ) -> None:
         """Initialize the state machine.
 
@@ -89,6 +90,7 @@ class OccupancyStateMachine:
         self._can_go_vacant = can_go_vacant
         self._is_occupied_by_children = is_occupied_by_children
         self._has_phantom_hold = has_phantom_hold
+        self._on_diagnostic = on_diagnostic
         self._state = OccupancyStateData(state=OccupancyState.VACANT)
         self._unsub_state_listeners: list[Callable[[], None]] = []
         self._checking_timer: Callable[[], None] | None = None
@@ -132,6 +134,29 @@ class OccupancyStateMachine:
 
         # Sensor correlation tracker (co-fires vs solo-fires)
         self._correlation_tracker = SensorCorrelationTracker()
+
+    def _diagnose(self, event: str, **kwargs: Any) -> None:
+        """Emit an optional structured diagnostic event."""
+        if not self._on_diagnostic:
+            return
+        self._on_diagnostic(
+            category=kwargs.pop("category", "state_machine"),
+            event=event,
+            room_id=self.config.room_id,
+            confidence=kwargs.pop("confidence", self._state.confidence),
+            probability=kwargs.pop("probability", None),
+            thresholds=kwargs.pop(
+                "thresholds",
+                {
+                    "occupied": self.config.occupied_threshold,
+                    "vacant": self.config.vacant_threshold,
+                },
+            ),
+            contributing_sensors=kwargs.pop(
+                "contributing_sensors", list(self._state.contributing_sensors)
+            ),
+            **kwargs,
+        )
 
     @property
     def state(self) -> OccupancyStateData:
@@ -318,6 +343,12 @@ class OccupancyStateMachine:
             new_state,
             reason,
         )
+        self._diagnose(
+            "manual_state_set",
+            previous_state=old_state,
+            new_state=new_state,
+            reason=reason,
+        )
         self._notify_state_change(reason, old_state)
 
     # ------------------------------------------------------------------
@@ -337,6 +368,13 @@ class OccupancyStateMachine:
 
         # Update contributing sensors
         self._update_contributing_sensors(virtual_entity, add=is_active)
+        self._diagnose(
+            "spatial_presence_update",
+            category="spatial",
+            reason=f"{target_count} targets from {source}",
+            target_count=target_count,
+            metadata={"source": source, "virtual_entity": virtual_entity},
+        )
 
         if is_active:
             self._state.last_presence_at = datetime.now()
@@ -483,6 +521,18 @@ class OccupancyStateMachine:
             new_state.state,
             is_active,
         )
+        self._diagnose(
+            "sensor_event",
+            category="sensor",
+            reason=f"motion {new_state.state}",
+            metadata={
+                "entity_id": entity_id,
+                "sensor_type": "motion",
+                "raw_state": new_state.state,
+                "active": is_active,
+                "weight": binding.weight,
+            },
+        )
 
         # Feed into aggregator
         self._aggregator.update_reading(entity_id, is_active, "motion", binding.weight)
@@ -526,6 +576,18 @@ class OccupancyStateMachine:
             new_state.state,
             is_active,
         )
+        self._diagnose(
+            "sensor_event",
+            category="sensor",
+            reason=f"presence {new_state.state}",
+            metadata={
+                "entity_id": entity_id,
+                "sensor_type": "presence",
+                "raw_state": new_state.state,
+                "active": is_active,
+                "weight": binding.weight,
+            },
+        )
 
         # Feed into aggregator
         self._aggregator.update_reading(
@@ -563,6 +625,18 @@ class OccupancyStateMachine:
             entity_id,
             new_state.state,
             is_active,
+        )
+        self._diagnose(
+            "sensor_event",
+            category="sensor",
+            reason=f"occupancy {new_state.state}",
+            metadata={
+                "entity_id": entity_id,
+                "sensor_type": "occupancy",
+                "raw_state": new_state.state,
+                "active": is_active,
+                "weight": binding.weight,
+            },
         )
 
         # Feed into aggregator
@@ -610,6 +684,13 @@ class OccupancyStateMachine:
                 entity_id,
                 new_state.state,
             )
+            self._diagnose(
+                "sensor_unavailable",
+                category="sensor",
+                reason=f"door sensor {entity_id} {new_state.state}",
+                blockers=["door_unavailable"],
+                metadata={"entity_id": entity_id, "raw_state": new_state.state},
+            )
             if self._seal_tracker.is_sealed:
                 self._break_seal(f"door sensor {entity_id} unavailable")
                 if (
@@ -634,6 +715,18 @@ class OccupancyStateMachine:
             self._seal_tracker.is_sealed,
             self._seal_tracker.probability,
         )
+        self._diagnose(
+            "door_event",
+            category="sensor",
+            reason=f"door {'open' if is_open else 'closed'}",
+            probability=self._seal_tracker.probability,
+            metadata={
+                "entity_id": entity_id,
+                "raw_state": new_state.state,
+                "open": is_open,
+                "sealed": self._seal_tracker.is_sealed,
+            },
+        )
 
         if is_open:
             # Door opened — break the seal
@@ -657,6 +750,12 @@ class OccupancyStateMachine:
                 _LOGGER.info(
                     "Room %s: all doors closed, waiting for fresh detection to seal",
                     self.config.room_id,
+                )
+                self._diagnose(
+                    "seal_waiting_for_detection",
+                    category="seal",
+                    reason=f"door {entity_id} closed",
+                    metadata={"door_states": self._state.door_states_at_detection},
                 )
 
     @callback
@@ -691,6 +790,12 @@ class OccupancyStateMachine:
             "Room %s: exit sensor %s fired, releasing hold",
             self.config.room_id,
             entity_id,
+        )
+        self._diagnose(
+            "exit_sensor_released_hold",
+            category="sensor",
+            reason=f"exit sensor {entity_id}",
+            metadata={"entity_id": entity_id},
         )
 
         # Break seal if active (exit sensor overrides the seal — the
@@ -736,6 +841,17 @@ class OccupancyStateMachine:
             self._state.state,
             new,
         )
+        self._diagnose(
+            "override_trigger",
+            previous_state=self._state.state,
+            new_state=new,
+            reason=f"override trigger {entity_id}",
+            metadata={
+                "entity_id": entity_id,
+                "expected_action": action,
+                "observed_action": observed_action,
+            },
+        )
         self.set_state(
             new, f"override trigger {entity_id} ({action or observed_action or 'any'})"
         )
@@ -767,6 +883,18 @@ class OccupancyStateMachine:
             new_state.state,
             weight,
             is_active,
+        )
+        self._diagnose(
+            "sensor_event",
+            category="sensor",
+            reason=f"hint {new_state.state}",
+            metadata={
+                "entity_id": entity_id,
+                "sensor_type": binding.sensor_type,
+                "raw_state": new_state.state,
+                "active": is_active,
+                "weight": weight,
+            },
         )
 
         # Feed into aggregator with "hint" type — capped weight
@@ -848,6 +976,12 @@ class OccupancyStateMachine:
                     self.config.room_id,
                     reason,
                 )
+                self._diagnose(
+                    "seal_waiting_for_detection",
+                    category="seal",
+                    reason=reason,
+                    metadata={"door_states": self._state.door_states_at_detection},
+                )
                 return
             self._establish_seal(reason)
         else:
@@ -872,6 +1006,13 @@ class OccupancyStateMachine:
             reason,
             self._seal_tracker.probability,
         )
+        self._diagnose(
+            "seal_established",
+            category="seal",
+            reason=reason,
+            probability=self._seal_tracker.probability,
+            metadata={"door_states": self._state.door_states_at_detection},
+        )
 
     def _break_seal(self, reason: str) -> None:
         """Break the door seal on the room."""
@@ -885,6 +1026,7 @@ class OccupancyStateMachine:
         self._state.seal_probability = 0.0
         self._state.seal_broken_at = datetime.now()
         _LOGGER.info("Room %s: seal broken (%s)", self.config.room_id, reason)
+        self._diagnose("seal_broken", category="seal", reason=reason)
 
     def _snapshot_door_states(self) -> None:
         """Record current open/closed state of all doors."""
@@ -945,6 +1087,14 @@ class OccupancyStateMachine:
                     probability,
                     self.config.occupied_threshold,
                 )
+                self._diagnose(
+                    "transition_blocked",
+                    previous_state=self._state.state,
+                    new_state=OccupancyState.OCCUPIED,
+                    reason="probability below occupied threshold and no sensor active",
+                    probability=probability,
+                    blockers=["occupied_threshold"],
+                )
                 return
 
         self._cancel_checking_timer()
@@ -976,6 +1126,17 @@ class OccupancyStateMachine:
             self._seal_tracker.is_sealed,
             self._state.confidence,
             self._seal_tracker.probability,
+        )
+        self._diagnose(
+            "state_transition",
+            previous_state=old_state,
+            new_state=OccupancyState.OCCUPIED,
+            reason=reason,
+            probability=probability,
+            metadata={
+                "sealed": self._seal_tracker.is_sealed,
+                "seal_probability": self._seal_tracker.probability,
+            },
         )
         self._notify_state_change(reason, old_state)
 
@@ -1009,6 +1170,13 @@ class OccupancyStateMachine:
             self.config.room_id,
             reason,
         )
+        self._diagnose(
+            "state_transition",
+            previous_state=old_state,
+            new_state=OccupancyState.CHECKING,
+            reason=reason,
+            metadata={"checking_timeout": effective_timeout},
+        )
         self._notify_state_change(reason, old_state)
 
     def _transition_to_vacant(self, reason: str) -> None:
@@ -1018,6 +1186,13 @@ class OccupancyStateMachine:
             _LOGGER.debug(
                 "Room %s: vacancy blocked by phantom hold",
                 self.config.room_id,
+            )
+            self._diagnose(
+                "transition_blocked",
+                previous_state=self._state.state,
+                new_state=OccupancyState.VACANT,
+                reason="phantom hold active",
+                blockers=["phantom_hold"],
             )
             return
 
@@ -1029,6 +1204,15 @@ class OccupancyStateMachine:
                 self.config.room_id,
                 self._seal_tracker.probability,
             )
+            self._diagnose(
+                "transition_blocked",
+                category="seal",
+                previous_state=self._state.state,
+                new_state=OccupancyState.VACANT,
+                reason="confirmed closed-door seal blocks vacancy",
+                probability=self._seal_tracker.probability,
+                blockers=["seal"],
+            )
             return
 
         # Child zone check — child zones with occupies_parent keep parent occupied
@@ -1039,6 +1223,13 @@ class OccupancyStateMachine:
                 "Room %s: vacancy blocked by occupied child zone",
                 self.config.room_id,
             )
+            self._diagnose(
+                "transition_blocked",
+                previous_state=self._state.state,
+                new_state=OccupancyState.VACANT,
+                reason="occupied child zone",
+                blockers=["child_zone"],
+            )
             return
 
         # House-level guard check
@@ -1046,6 +1237,13 @@ class OccupancyStateMachine:
             _LOGGER.debug(
                 "Room %s: vacancy blocked by house guard",
                 self.config.room_id,
+            )
+            self._diagnose(
+                "transition_blocked",
+                previous_state=self._state.state,
+                new_state=OccupancyState.VACANT,
+                reason="house guard blocked vacancy",
+                blockers=["house_guard"],
             )
             return
 
@@ -1090,6 +1288,12 @@ class OccupancyStateMachine:
             old_state,
             reason,
         )
+        self._diagnose(
+            "state_transition",
+            previous_state=old_state,
+            new_state=OccupancyState.VACANT,
+            reason=reason,
+        )
         self._notify_state_change(reason, old_state)
 
     def _check_all_sensors_clear(self) -> None:
@@ -1113,6 +1317,12 @@ class OccupancyStateMachine:
                 "waiting for exit sensor",
                 self.config.room_id,
             )
+            self._diagnose(
+                "transition_blocked",
+                new_state=OccupancyState.CHECKING,
+                reason="hold_until_exit waits for exit sensor",
+                blockers=["hold_until_exit"],
+            )
             return
 
         # Child zones with occupies_parent keep parent room OCCUPIED
@@ -1124,6 +1334,12 @@ class OccupancyStateMachine:
                 "staying OCCUPIED",
                 self.config.room_id,
             )
+            self._diagnose(
+                "transition_blocked",
+                new_state=OccupancyState.CHECKING,
+                reason="occupied child zone",
+                blockers=["child_zone"],
+            )
             return
 
         # Phantom hold — transition prediction keeps room OCCUPIED
@@ -1131,6 +1347,12 @@ class OccupancyStateMachine:
             _LOGGER.debug(
                 "Room %s: sensors clear but phantom hold active, " "staying OCCUPIED",
                 self.config.room_id,
+            )
+            self._diagnose(
+                "transition_blocked",
+                new_state=OccupancyState.CHECKING,
+                reason="phantom hold active",
+                blockers=["phantom_hold"],
             )
             return
 
@@ -1141,6 +1363,14 @@ class OccupancyStateMachine:
                 "(probability=%.2f), staying OCCUPIED",
                 self.config.room_id,
                 self._seal_tracker.probability,
+            )
+            self._diagnose(
+                "transition_blocked",
+                category="seal",
+                new_state=OccupancyState.CHECKING,
+                reason="confirmed closed-door seal blocks checking",
+                probability=self._seal_tracker.probability,
+                blockers=["seal"],
             )
             return
 
@@ -1156,6 +1386,13 @@ class OccupancyStateMachine:
             )
             # Update confidence to reflect current probability
             self._state.confidence = self._calculate_confidence()
+            self._diagnose(
+                "transition_blocked",
+                new_state=OccupancyState.CHECKING,
+                reason="probability above vacant threshold",
+                probability=probability,
+                blockers=["vacant_threshold"],
+            )
             return
 
         self._transition_to_checking("all sensors clear")
@@ -1211,6 +1448,12 @@ class OccupancyStateMachine:
             return
 
         if self._seal_blocks_vacancy():
+            self._diagnose(
+                "unsealed_activity_timer_ignored",
+                category="seal",
+                blockers=["seal"],
+                reason="confirmed seal active",
+            )
             return
 
         # Hold-until-exit zones require an explicit exit signal.

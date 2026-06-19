@@ -8,6 +8,7 @@ import voluptuous as vol
 from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant, callback
 
+from ...config_patch import apply_sensor_config_patch, preview_sensor_config_patch
 from ...const import DOMAIN, WS_PREFIX
 from ...models.virtual_sensor import SensorBinding, VirtualSensorConfig
 from ._helpers import _require_admin
@@ -20,6 +21,9 @@ def register(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_occupancy_states)
     websocket_api.async_register_command(hass, ws_outside_exposure_states)
     websocket_api.async_register_command(hass, ws_occupancy_history)
+    websocket_api.async_register_command(hass, ws_occupancy_diagnostics)
+    websocket_api.async_register_command(hass, ws_sensor_config_preview_patch)
+    websocket_api.async_register_command(hass, ws_sensor_config_apply_patch)
     websocket_api.async_register_command(hass, ws_phantom_states)
 
 
@@ -248,6 +252,118 @@ def ws_occupancy_history(
         msg["id"],
         {"history": [e.to_dict() for e in history]},
     )
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{WS_PREFIX}/occupancy_diagnostics",
+        vol.Optional("room_id"): str,
+        vol.Optional("category"): str,
+        vol.Optional("limit", default=100): int,
+        vol.Optional("include_config", default=False): bool,
+    }
+)
+@callback
+def ws_occupancy_diagnostics(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Get structured occupancy diagnostics for AI-readable analysis."""
+    if not _require_admin(connection, msg):
+        return
+
+    sensor_engine = hass.data[DOMAIN]["sensor_engine"]
+    connection.send_result(
+        msg["id"],
+        sensor_engine.get_diagnostics(
+            room_id=msg.get("room_id"),
+            category=msg.get("category"),
+            limit=msg.get("limit", 100),
+            include_config=msg.get("include_config", False),
+        ),
+    )
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{WS_PREFIX}/sensor_config/preview_patch",
+        vol.Required("room_id"): str,
+        vol.Required("patch"): dict,
+        vol.Optional("reason"): str,
+    }
+)
+@callback
+def ws_sensor_config_preview_patch(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Preview an AI-proposed sensor configuration patch."""
+    if not _require_admin(connection, msg):
+        return
+
+    store = hass.data[DOMAIN]["store"]
+    result = preview_sensor_config_patch(store, msg["room_id"], msg["patch"])
+    connection.send_result(msg["id"], result.to_dict())
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{WS_PREFIX}/sensor_config/apply_patch",
+        vol.Required("room_id"): str,
+        vol.Required("patch"): dict,
+        vol.Required("reason"): str,
+        vol.Required("confirm"): bool,
+    }
+)
+@callback
+def ws_sensor_config_apply_patch(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Apply a confirmed AI-proposed sensor configuration patch."""
+    if not _require_admin(connection, msg):
+        return
+
+    if msg["confirm"] is not True:
+        connection.send_error(msg["id"], "confirmation_required", "confirm must be true")
+        return
+
+    async def _apply() -> None:
+        store = hass.data[DOMAIN]["store"]
+        sensor_engine = hass.data[DOMAIN]["sensor_engine"]
+        result = await apply_sensor_config_patch(
+            store,
+            sensor_engine,
+            msg["room_id"],
+            msg["patch"],
+        )
+        if not result.valid or result.config is None:
+            connection.send_error(
+                msg["id"],
+                "invalid_patch",
+                "; ".join(result.errors) or "Invalid sensor config patch",
+            )
+            return
+
+        diagnostic = sensor_engine.record_diagnostic(
+            category="config",
+            event="config_patch_applied",
+            room_id=msg["room_id"],
+            reason=msg["reason"],
+            metadata={
+                "diff": result.diff,
+                "warnings": result.warnings,
+                "source": "websocket",
+            },
+        )
+        payload = result.to_dict()
+        payload["diagnostic_event_id"] = diagnostic.id
+        connection.send_result(msg["id"], payload)
+
+    hass.async_create_task(_apply())
 
 
 @websocket_api.websocket_command({vol.Required("type"): f"{WS_PREFIX}/phantom_states"})

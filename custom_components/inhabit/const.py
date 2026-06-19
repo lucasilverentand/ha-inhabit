@@ -67,6 +67,8 @@ SERVICE_SET_ROOM_OCCUPANCY: Final = "set_room_occupancy"
 SERVICE_REFRESH_SENSORS: Final = "refresh_sensors"
 SERVICE_EXPORT_AUTOMATION: Final = "export_automation"
 SERVICE_EXPORT_CARD: Final = "export_card"
+SERVICE_PREVIEW_SENSOR_CONFIG_PATCH: Final = "preview_sensor_config_patch"
+SERVICE_APPLY_SENSOR_CONFIG_PATCH: Final = "apply_sensor_config_patch"
 
 # Attributes
 ATTR_FLOOR_PLAN_ID: Final = "floor_plan_id"

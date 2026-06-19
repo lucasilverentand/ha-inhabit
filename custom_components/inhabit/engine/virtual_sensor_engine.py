@@ -20,6 +20,7 @@ from ..const import (
     OCCUPANCY_HISTORY_MAXLEN,
     OccupancyState,
 )
+from ..diagnostics import DiagnosticEvent, DiagnosticTrace
 from ..models.virtual_sensor import (
     OccupancyHistoryEntry,
     OccupancyStateData,
@@ -99,6 +100,7 @@ class VirtualSensorEngine:
         self._occupancy_history: deque[OccupancyHistoryEntry] = deque(
             maxlen=OCCUPANCY_HISTORY_MAXLEN
         )
+        self._diagnostics = DiagnosticTrace()
         # Tracks when each room last transitioned (for duration calculation)
         self._last_transition_time: dict[str, datetime] = {}
 
@@ -367,12 +369,59 @@ class VirtualSensorEngine:
         machine = self._state_machines.get(room_id)
         if not machine:
             _LOGGER.warning("No state machine found for room %s", room_id)
+            self.record_diagnostic(
+                category="config",
+                event="manual_occupancy_failed",
+                room_id=room_id,
+                reason=f"no state machine for requested state {state}",
+            )
             return False
 
         machine.set_state(state, "manual override")
         if state == OccupancyState.VACANT:
             self._clear_child_zones(room_id)
         return True
+
+    def record_diagnostic(self, **kwargs: Any) -> DiagnosticEvent:
+        """Record a structured diagnostic event."""
+        event = self._diagnostics.record(**kwargs)
+        _LOGGER.debug("Inhabit diagnostic: %s", event.to_dict())
+        return event
+
+    def get_diagnostics(
+        self,
+        *,
+        room_id: str | None = None,
+        category: str | None = None,
+        limit: int = 100,
+        include_config: bool = False,
+    ) -> dict[str, Any]:
+        """Get recent diagnostics, optionally with state/config context."""
+        events = self._diagnostics.to_dicts(
+            room_id=room_id,
+            category=category,
+            limit=limit,
+        )
+        result: dict[str, Any] = {
+            "generated_at": datetime.now().isoformat(),
+            "event_count": len(events),
+            "events": events,
+        }
+        if room_id:
+            state = self.get_state(room_id)
+            config = self._store.get_sensor_config(room_id)
+            result["state"] = state.to_dict() if state else None
+            if include_config:
+                result["config"] = config.to_dict() if config else None
+        elif include_config:
+            result["states"] = {
+                rid: state.to_dict() for rid, state in self.get_all_states().items()
+            }
+            result["configs"] = {
+                config.room_id: config.to_dict()
+                for config in self._store.get_all_sensor_configs()
+            }
+        return result
 
     # ------------------------------------------------------------------
     # Zone → parent room propagation
@@ -611,6 +660,14 @@ class VirtualSensorEngine:
                 target_key
             )
             new_count = len(self._mmwave_target_keys_per_region[region_id])
+            self.record_diagnostic(
+                category="spatial",
+                event="target_entered_region",
+                region_id=region_id,
+                reason=f"{target_key} entered {region_id}",
+                target_count=new_count,
+                metadata={"target_key": target_key, "delay": 0},
+            )
             self._route_spatial_presence(region_id, new_count)
             return
 
@@ -635,6 +692,14 @@ class VirtualSensorEngine:
                 target_key
             )
             target_count = len(self._mmwave_target_keys_per_region[region_id])
+            self.record_diagnostic(
+                category="spatial",
+                event="target_confirmed_region",
+                region_id=region_id,
+                reason=f"{target_key} confirmed in {region_id}",
+                target_count=target_count,
+                metadata={"target_key": target_key, "delay": delay},
+            )
             self._route_spatial_presence(region_id, target_count)
 
         self._pending_mmwave_target_timers[timer_key] = async_call_later(
@@ -647,6 +712,16 @@ class VirtualSensorEngine:
             target_key,
             region_id,
             delay,
+        )
+        self.record_diagnostic(
+            category="spatial",
+            event="target_pending_region",
+            region_id=region_id,
+            reason=f"{target_key} pending in {region_id}",
+            target_count=len(
+                self._pending_mmwave_target_keys_per_region.get(region_id, set())
+            ),
+            metadata={"target_key": target_key, "delay": delay},
         )
 
     def _remove_target_from_spatial_region(
@@ -663,6 +738,14 @@ class VirtualSensorEngine:
         count = len(active_targets)
         if count == 0:
             del self._mmwave_target_keys_per_region[region_id]
+        self.record_diagnostic(
+            category="spatial",
+            event="target_left_region",
+            region_id=region_id,
+            reason=f"{target_key} left {region_id}",
+            target_count=count,
+            metadata={"target_key": target_key},
+        )
         self._route_spatial_presence(region_id, count)
 
     def _cancel_pending_spatial_presence(
@@ -685,6 +768,18 @@ class VirtualSensorEngine:
                 pending_targets.discard(pending_target_key)
                 if not pending_targets:
                     del self._pending_mmwave_target_keys_per_region[pending_region_id]
+            self.record_diagnostic(
+                category="spatial",
+                event="target_pending_cancelled",
+                region_id=pending_region_id,
+                reason=f"{pending_target_key} no longer pending in {pending_region_id}",
+                target_count=len(
+                    self._pending_mmwave_target_keys_per_region.get(
+                        pending_region_id, set()
+                    )
+                ),
+                metadata={"target_key": pending_target_key},
+            )
 
     def _spatial_presence_delay_for_region(self, region_id: str) -> int:
         """Return the confirmation delay for a spatial region."""
@@ -722,6 +817,14 @@ class VirtualSensorEngine:
             return
 
         machine.update_spatial_presence(target_count)
+        self.record_diagnostic(
+            category="spatial",
+            event="spatial_presence_routed",
+            room_id=region_id,
+            region_id=region_id,
+            reason=f"{target_count} targets routed",
+            target_count=target_count,
+        )
         _LOGGER.debug(
             "Routed spatial presence to %s: %d targets", region_id, target_count
         )
@@ -836,6 +939,7 @@ class VirtualSensorEngine:
             can_go_vacant=self._house_guard.can_room_go_vacant,
             is_occupied_by_children=self._is_occupied_by_children,
             has_phantom_hold=self._transition_predictor.has_active_phantom,
+            on_diagnostic=self.record_diagnostic,
         )
 
         self._state_machines[config.room_id] = machine
@@ -916,6 +1020,20 @@ class VirtualSensorEngine:
             machine.checking_timeout_bump = (
                 self._false_vacancy_detector.get_checking_timeout_bump(room_id)
             )
+            self.record_diagnostic(
+                category="adaptive",
+                event="false_vacancy_detected",
+                room_id=room_id,
+                previous_state=previous_state,
+                new_state=state.state,
+                reason=f"rapid re-occupancy after {fv_event.gap_seconds:.1f}s",
+                confidence=state.confidence,
+                metadata={
+                    "gap_seconds": fv_event.gap_seconds,
+                    "checking_timeout_at_time": fv_event.checking_timeout_at_time,
+                    "checking_timeout_bump": machine.checking_timeout_bump,
+                },
+            )
 
         self._previous_states[room_id] = state.state
 
@@ -937,6 +1055,21 @@ class VirtualSensorEngine:
             duration_seconds=duration,
         )
         self._occupancy_history.append(entry)
+        self.record_diagnostic(
+            category="state",
+            event="state_committed",
+            room_id=room_id,
+            previous_state=state.previous_state,
+            new_state=state.state,
+            reason=state.transition_reason or reason,
+            confidence=state.confidence,
+            probability=state.seal_probability,
+            contributing_sensors=list(state.contributing_sensors),
+            metadata={
+                "sealed": state.sealed,
+                "duration_seconds": duration,
+            },
+        )
 
         # Record override events for feedback learning
         if "manual override" in reason or "override trigger" in reason:
