@@ -204,6 +204,7 @@ export interface VirtualSensorConfig {
   motion_timeout: number;
   checking_timeout: number;
   presence_timeout: number;
+  unsealed_activity_timeout: number;
   motion_sensors: SensorBinding[];
   presence_sensors: SensorBinding[];
   occupancy_sensors: SensorBinding[];

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -138,6 +139,7 @@ class TestOccupancyStateMachineBasic:
         assert basic_config.motion_timeout == 120
         assert basic_config.checking_timeout == 30
         assert basic_config.presence_timeout == 300
+        assert basic_config.unsealed_activity_timeout == 120
 
 
 class TestOccupancyStateMachineWithMocks:
@@ -759,6 +761,276 @@ class TestDoorSealLogic:
 
             machine._transition_to_vacant("checking timeout")
             assert machine.state.state == OccupancyState.VACANT
+
+    def test_open_door_stuck_motion_times_out_to_vacant(
+        self, mock_hass, seal_config, state_changes
+    ):
+        """Open-door occupancy times out even if a transient motion entity stays on."""
+        seal_config.unsealed_activity_timeout = 30
+        self._setup_sensor_states(mock_hass, motion_state=STATE_ON, door_state=STATE_ON)
+        machine, _ = self._make_machine(mock_hass, seal_config, state_changes)
+
+        with patch(
+            "custom_components.inhabit.engine.occupancy_state_machine.async_call_later",
+            lambda hass, delay, cb: MagicMock(),
+        ):
+            machine._handle_motion_event(
+                self._make_event("binary_sensor.room_motion", STATE_ON)
+            )
+            assert machine.state.state == OccupancyState.OCCUPIED
+            assert machine.state.sealed is False
+
+            machine._last_unsealed_activity_at = datetime.now() - timedelta(seconds=31)
+            machine._handle_unsealed_activity_timeout()
+
+            assert machine.state.state == OccupancyState.CHECKING
+
+            machine._transition_to_vacant("checking timeout")
+            assert machine.state.state == OccupancyState.VACANT
+
+    def test_open_door_repeated_motion_refreshes_unsealed_timer(
+        self, mock_hass, seal_config, state_changes
+    ):
+        """Fresh repeated motion keeps an open-door room in OCCUPIED."""
+        seal_config.unsealed_activity_timeout = 30
+        self._setup_sensor_states(mock_hass, motion_state=STATE_ON, door_state=STATE_ON)
+        machine, _ = self._make_machine(mock_hass, seal_config, state_changes)
+        scheduled: list[tuple[float, MagicMock]] = []
+
+        def mock_async_call_later(hass, delay, callback):
+            cancel = MagicMock()
+            scheduled.append((delay, cancel))
+            return cancel
+
+        with patch(
+            "custom_components.inhabit.engine.occupancy_state_machine.async_call_later",
+            mock_async_call_later,
+        ):
+            machine._handle_motion_event(
+                self._make_event("binary_sensor.room_motion", STATE_ON)
+            )
+            first_cancel = scheduled[-1][1]
+
+            machine._handle_motion_event(
+                self._make_event("binary_sensor.room_motion", STATE_ON)
+            )
+
+            assert machine.state.state == OccupancyState.OCCUPIED
+            assert machine.state.sealed is False
+            assert len(scheduled) == 2
+            assert scheduled[-1][0] == 30
+            first_cancel.assert_called_once()
+
+    def test_open_door_active_presence_holds_until_presence_timeout(
+        self, mock_hass, seal_config, state_changes
+    ):
+        """Fresh sustained presence can hold unsealed occupancy past idle timeout."""
+        seal_config.unsealed_activity_timeout = 30
+        seal_config.presence_timeout = 300
+        seal_config.presence_sensors = [
+            SensorBinding(
+                entity_id="binary_sensor.room_presence",
+                sensor_type="presence",
+                weight=1.0,
+            )
+        ]
+        self._setup_sensor_states(
+            mock_hass,
+            motion_state=STATE_OFF,
+            door_state=STATE_ON,
+            presence_state=STATE_ON,
+        )
+        machine, _ = self._make_machine(mock_hass, seal_config, state_changes)
+
+        with patch(
+            "custom_components.inhabit.engine.occupancy_state_machine.async_call_later",
+            lambda hass, delay, cb: MagicMock(),
+        ):
+            machine._handle_presence_event(
+                self._make_event("binary_sensor.room_presence", STATE_ON)
+            )
+            machine._last_unsealed_activity_at = datetime.now() - timedelta(seconds=31)
+            machine._last_sustained_activity_at = datetime.now() - timedelta(
+                seconds=120
+            )
+
+            machine._handle_unsealed_activity_timeout()
+
+            assert machine.state.state == OccupancyState.OCCUPIED
+
+    def test_open_door_stale_presence_times_out(
+        self, mock_hass, seal_config, state_changes
+    ):
+        """A stuck sustained presence entity is bounded by presence_timeout."""
+        seal_config.unsealed_activity_timeout = 30
+        seal_config.presence_timeout = 60
+        seal_config.presence_sensors = [
+            SensorBinding(
+                entity_id="binary_sensor.room_presence",
+                sensor_type="presence",
+                weight=1.0,
+            )
+        ]
+        self._setup_sensor_states(
+            mock_hass,
+            motion_state=STATE_OFF,
+            door_state=STATE_ON,
+            presence_state=STATE_ON,
+        )
+        machine, _ = self._make_machine(mock_hass, seal_config, state_changes)
+
+        with patch(
+            "custom_components.inhabit.engine.occupancy_state_machine.async_call_later",
+            lambda hass, delay, cb: MagicMock(),
+        ):
+            machine._handle_presence_event(
+                self._make_event("binary_sensor.room_presence", STATE_ON)
+            )
+            machine._last_unsealed_activity_at = datetime.now() - timedelta(seconds=31)
+            machine._last_sustained_activity_at = datetime.now() - timedelta(seconds=61)
+
+            machine._handle_unsealed_activity_timeout()
+
+            assert machine.state.state == OccupancyState.CHECKING
+
+    def test_waiting_for_post_close_detection_times_out_when_motion_sticks(
+        self, mock_hass, seal_config, state_changes
+    ):
+        """Door close without a fresh post-close detection uses unsealed timeout."""
+        seal_config.unsealed_activity_timeout = 30
+        self._setup_sensor_states(mock_hass, motion_state=STATE_ON, door_state=STATE_ON)
+        machine, _ = self._make_machine(mock_hass, seal_config, state_changes)
+
+        with patch(
+            "custom_components.inhabit.engine.occupancy_state_machine.async_call_later",
+            lambda hass, delay, cb: MagicMock(),
+        ):
+            machine._handle_motion_event(
+                self._make_event("binary_sensor.room_motion", STATE_ON)
+            )
+            assert machine.state.sealed is False
+
+            self._setup_sensor_states(
+                mock_hass, motion_state=STATE_ON, door_state=STATE_OFF
+            )
+            machine._handle_door_event(
+                self._make_event("binary_sensor.room_door", STATE_OFF)
+            )
+            assert machine.state.sealed is False
+
+            machine._last_unsealed_activity_at = datetime.now() - timedelta(seconds=31)
+            machine._handle_unsealed_activity_timeout()
+
+            assert machine.state.state == OccupancyState.CHECKING
+
+    def test_confirmed_seal_ignores_unsealed_activity_timeout(
+        self, mock_hass, seal_config, state_changes
+    ):
+        """Confirmed closed-door seals block the unsealed idle timer."""
+        seal_config.unsealed_activity_timeout = 30
+        self._setup_sensor_states(
+            mock_hass, motion_state=STATE_ON, door_state=STATE_OFF
+        )
+        machine, _ = self._make_machine(mock_hass, seal_config, state_changes)
+
+        with patch(
+            "custom_components.inhabit.engine.occupancy_state_machine.async_call_later",
+            lambda hass, delay, cb: MagicMock(),
+        ):
+            machine._handle_motion_event(
+                self._make_event("binary_sensor.room_motion", STATE_ON)
+            )
+            assert machine.state.sealed is True
+
+            self._setup_sensor_states(
+                mock_hass, motion_state=STATE_OFF, door_state=STATE_OFF
+            )
+            machine._last_unsealed_activity_at = datetime.now() - timedelta(seconds=31)
+            machine._handle_unsealed_activity_timeout()
+
+            assert machine.state.state == OccupancyState.OCCUPIED
+
+    def test_open_door_spatial_presence_holds_until_presence_timeout(
+        self, mock_hass, seal_config, state_changes
+    ):
+        """Spatial presence behaves as a sustained signal while unsealed."""
+        seal_config.unsealed_activity_timeout = 30
+        seal_config.presence_timeout = 300
+        self._setup_sensor_states(
+            mock_hass, motion_state=STATE_OFF, door_state=STATE_ON
+        )
+        machine, _ = self._make_machine(mock_hass, seal_config, state_changes)
+
+        with patch(
+            "custom_components.inhabit.engine.occupancy_state_machine.async_call_later",
+            lambda hass, delay, cb: MagicMock(),
+        ):
+            machine.update_spatial_presence(1, source="test")
+            machine._last_unsealed_activity_at = datetime.now() - timedelta(seconds=31)
+            machine._last_sustained_activity_at = datetime.now() - timedelta(
+                seconds=120
+            )
+
+            machine._handle_unsealed_activity_timeout()
+
+            assert machine.state.state == OccupancyState.OCCUPIED
+            assert machine.state.sealed is False
+
+    def test_multi_door_open_room_uses_unsealed_timeout(self, mock_hass, state_changes):
+        """Any open door keeps the room unsealed and covered by idle timeout."""
+        config = VirtualSensorConfig(
+            room_id="multi_door_room",
+            floor_plan_id="test_fp",
+            enabled=True,
+            unsealed_activity_timeout=30,
+            motion_sensors=[
+                SensorBinding(
+                    entity_id="binary_sensor.room_motion",
+                    sensor_type="motion",
+                    weight=1.0,
+                )
+            ],
+            door_sensors=[
+                SensorBinding(
+                    entity_id="binary_sensor.room_door_a",
+                    sensor_type="door",
+                    weight=1.0,
+                ),
+                SensorBinding(
+                    entity_id="binary_sensor.room_door_b",
+                    sensor_type="door",
+                    weight=1.0,
+                ),
+            ],
+            door_seals_room=True,
+        )
+
+        def get_state(entity_id):
+            if entity_id == "binary_sensor.room_motion":
+                return MagicMock(state=STATE_ON)
+            if entity_id == "binary_sensor.room_door_a":
+                return MagicMock(state=STATE_OFF)
+            if entity_id == "binary_sensor.room_door_b":
+                return MagicMock(state=STATE_ON)
+            return MagicMock(state=STATE_OFF)
+
+        mock_hass.states.get.side_effect = get_state
+        machine, _ = self._make_machine(mock_hass, config, state_changes)
+
+        with patch(
+            "custom_components.inhabit.engine.occupancy_state_machine.async_call_later",
+            lambda hass, delay, cb: MagicMock(),
+        ):
+            machine._handle_motion_event(
+                self._make_event("binary_sensor.room_motion", STATE_ON)
+            )
+            assert machine.state.state == OccupancyState.OCCUPIED
+            assert machine.state.sealed is False
+
+            machine._last_unsealed_activity_at = datetime.now() - timedelta(seconds=31)
+            machine._handle_unsealed_activity_timeout()
+
+            assert machine.state.state == OccupancyState.CHECKING
 
     def test_fresh_motion_after_door_close_confirms_seal(
         self, mock_hass, seal_config, state_changes

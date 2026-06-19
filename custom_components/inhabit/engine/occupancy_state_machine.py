@@ -92,9 +92,12 @@ class OccupancyStateMachine:
         self._state = OccupancyStateData(state=OccupancyState.VACANT)
         self._unsub_state_listeners: list[Callable[[], None]] = []
         self._checking_timer: Callable[[], None] | None = None
+        self._unsealed_activity_timer: Callable[[], None] | None = None
         self._checking_timeout_bump: int = 0
         self._running = False
         self._occupied_since: datetime | None = None
+        self._last_unsealed_activity_at: datetime | None = None
+        self._last_sustained_activity_at: datetime | None = None
         self._sensor_last_triggered: dict[str, datetime] = {}
         self._last_known_door_states: dict[str, bool] = {}  # entity_id -> was_open
         self._awaiting_seal_confirmation = False
@@ -257,6 +260,7 @@ class OccupancyStateMachine:
         )
 
         self._cancel_checking_timer()
+        self._cancel_unsealed_activity_timer()
 
         for unsub in self._unsub_state_listeners:
             try:
@@ -292,6 +296,7 @@ class OccupancyStateMachine:
         elif new_state == OccupancyState.CHECKING:
             self._state.checking_started_at = datetime.now()
             self._break_seal("manual override to CHECKING")
+            self._cancel_unsealed_activity_timer()
             self._start_checking_timer()
         else:
             # VACANT
@@ -299,9 +304,12 @@ class OccupancyStateMachine:
             self._break_seal("manual override to VACANT")
             self._seal_tracker.reset()
             self._cancel_checking_timer()
+            self._cancel_unsealed_activity_timer()
             self._state.confidence = 0.0
             self._state.seal_probability = 0.0
             self._state.contributing_sensors = []
+            self._last_unsealed_activity_at = None
+            self._last_sustained_activity_at = None
 
         _LOGGER.info(
             "Room %s state: %s → %s (%s)",
@@ -332,6 +340,7 @@ class OccupancyStateMachine:
 
         if is_active:
             self._state.last_presence_at = datetime.now()
+            self._record_unsealed_activity("spatial")
             self._transition_to_occupied(
                 f"spatial presence: {target_count} targets from {source}",
                 fresh_detection=True,
@@ -356,18 +365,21 @@ class OccupancyStateMachine:
         )
 
         if active_motion:
+            self._record_unsealed_activity("motion")
             self._transition_to_occupied(
                 f"{reason}: motion active", fresh_detection=False
             )
             return
 
         if active_presence:
+            self._record_unsealed_activity("presence")
             self._transition_to_occupied(
                 f"{reason}: presence active", fresh_detection=False
             )
             return
 
         if active_occupancy:
+            self._record_unsealed_activity("occupancy")
             self._transition_to_occupied(
                 f"{reason}: occupancy active", fresh_detection=False
             )
@@ -486,6 +498,7 @@ class OccupancyStateMachine:
             self._state.last_motion_at = datetime.now()
             self._sensor_last_triggered[entity_id] = datetime.now()
             self._update_contributing_sensors(entity_id, add=True)
+            self._record_unsealed_activity("motion")
             self._transition_to_occupied(
                 f"motion from {entity_id}", fresh_detection=True
             )
@@ -523,6 +536,7 @@ class OccupancyStateMachine:
             self._state.last_presence_at = datetime.now()
             self._sensor_last_triggered[entity_id] = datetime.now()
             self._update_contributing_sensors(entity_id, add=True)
+            self._record_unsealed_activity("presence")
             self._transition_to_occupied(
                 f"presence from {entity_id}", fresh_detection=True
             )
@@ -560,6 +574,7 @@ class OccupancyStateMachine:
             self._state.last_presence_at = datetime.now()
             self._sensor_last_triggered[entity_id] = datetime.now()
             self._update_contributing_sensors(entity_id, add=True)
+            self._record_unsealed_activity("occupancy")
             self._transition_to_occupied(
                 f"occupancy from {entity_id}", fresh_detection=True
             )
@@ -604,6 +619,8 @@ class OccupancyStateMachine:
                     self._transition_to_checking(
                         "seal broken (sensor unavailable), sensors clear"
                     )
+                elif self._state.state == OccupancyState.OCCUPIED:
+                    self._restart_unsealed_timer_from_active_signals()
             self._awaiting_seal_confirmation = False
             return
 
@@ -630,6 +647,8 @@ class OccupancyStateMachine:
                     and not self._any_occupancy_signal_active()
                 ):
                     self._transition_to_checking("seal broken, sensors already clear")
+                elif self._state.state == OccupancyState.OCCUPIED:
+                    self._restart_unsealed_timer_from_active_signals()
         else:
             # Door closed — wait for a fresh in-room detection before sealing.
             if self.config.door_seals_room and self._all_doors_closed():
@@ -843,6 +862,7 @@ class OccupancyStateMachine:
 
         self._seal_tracker.establish()
         self._awaiting_seal_confirmation = False
+        self._cancel_unsealed_activity_timer()
         self._sync_seal_state()
         self._state.seal_broken_at = None
         self._snapshot_door_states()
@@ -910,6 +930,7 @@ class OccupancyStateMachine:
             # Re-establish seal on new activity (refreshes diagnostic probability)
             if fresh_detection and self._seal_tracker.is_sealed:
                 self._seal_tracker.establish()
+                self._cancel_unsealed_activity_timer()
                 self._sync_seal_state()
             return
 
@@ -966,6 +987,7 @@ class OccupancyStateMachine:
         old_state = self._state.state
         self._state.state = OccupancyState.CHECKING
         self._state.checking_started_at = datetime.now()
+        self._cancel_unsealed_activity_timer()
         self._start_checking_timer()
 
         effective_timeout = (
@@ -1028,6 +1050,7 @@ class OccupancyStateMachine:
             return
 
         self._cancel_checking_timer()
+        self._cancel_unsealed_activity_timer()
         self._seal_tracker.reset()
         self._awaiting_seal_confirmation = False
         old_state = self._state.state
@@ -1047,6 +1070,8 @@ class OccupancyStateMachine:
         self._state.seal_probability = 0.0
         self._state.sealed_since = None
         self._occupied_since = None
+        self._last_unsealed_activity_at = None
+        self._last_sustained_activity_at = None
 
         # Fire checking_resolved event when going vacant from CHECKING
         if old_state == OccupancyState.CHECKING:
@@ -1134,6 +1159,119 @@ class OccupancyStateMachine:
             return
 
         self._transition_to_checking("all sensors clear")
+
+    # ------------------------------------------------------------------
+    # Unsealed activity timer
+    # ------------------------------------------------------------------
+
+    def _record_unsealed_activity(self, signal_type: str) -> None:
+        """Record a fresh unsealed activity signal and arm the inactivity timer."""
+        now = datetime.now()
+        self._last_unsealed_activity_at = now
+        if signal_type in ("presence", "occupancy", "spatial"):
+            self._last_sustained_activity_at = now
+        self._start_unsealed_activity_timer()
+
+    def _restart_unsealed_timer_from_active_signals(self) -> None:
+        """Start unsealed timeout coverage after a seal is released."""
+        if self._state.state != OccupancyState.OCCUPIED or self._seal_blocks_vacancy():
+            return
+
+        if self._current_sustained_signal_active():
+            self._record_unsealed_activity("presence")
+        elif self._any_sensor_active():
+            self._record_unsealed_activity("motion")
+
+    def _start_unsealed_activity_timer(self, delay: float | None = None) -> None:
+        """Start the unsealed inactivity timeout timer."""
+        self._cancel_unsealed_activity_timer()
+        timeout = self._unsealed_activity_timeout()
+        scheduled_delay = max(1.0, delay if delay is not None else timeout)
+
+        @callback
+        def _unsealed_activity_timeout(_now: Any) -> None:
+            self._unsealed_activity_timer = None
+            self._handle_unsealed_activity_timeout()
+
+        self._unsealed_activity_timer = async_call_later(
+            self.hass,
+            scheduled_delay,
+            _unsealed_activity_timeout,
+        )
+
+    def _cancel_unsealed_activity_timer(self) -> None:
+        """Cancel the unsealed inactivity timeout timer."""
+        if self._unsealed_activity_timer:
+            self._unsealed_activity_timer()
+            self._unsealed_activity_timer = None
+
+    def _handle_unsealed_activity_timeout(self) -> None:
+        """Move unsealed rooms to CHECKING when all evidence is stale."""
+        if self._state.state != OccupancyState.OCCUPIED:
+            return
+
+        if self._seal_blocks_vacancy():
+            return
+
+        # Hold-until-exit zones require an explicit exit signal.
+        if self.config.hold_until_exit and self.config.exit_sensors:
+            return
+
+        if self._is_occupied_by_children and self._is_occupied_by_children(
+            self.config.room_id
+        ):
+            self._start_unsealed_activity_timer()
+            return
+
+        if self._has_phantom_hold and self._has_phantom_hold(self.config.room_id):
+            self._start_unsealed_activity_timer()
+            return
+
+        now = datetime.now()
+        activity_remaining = self._unsealed_activity_remaining(now)
+        if activity_remaining > 0:
+            self._start_unsealed_activity_timer(activity_remaining)
+            return
+
+        sustained_valid, sustained_remaining = self._sustained_activity_remaining(now)
+        if sustained_valid:
+            self._start_unsealed_activity_timer(sustained_remaining)
+            return
+
+        self._transition_to_checking("unsealed activity timeout")
+
+    def _unsealed_activity_remaining(self, now: datetime) -> float:
+        """Return seconds of unsealed activity trust still remaining."""
+        if self._last_unsealed_activity_at is None:
+            return 0.0
+        age = (now - self._last_unsealed_activity_at).total_seconds()
+        return self._unsealed_activity_timeout() - age
+
+    def _sustained_activity_remaining(self, now: datetime) -> tuple[bool, float]:
+        """Return whether sustained presence is still fresh enough to trust."""
+        if self._last_sustained_activity_at is None:
+            return False, 0.0
+        if not self._current_sustained_signal_active():
+            return False, 0.0
+
+        timeout = max(1.0, float(getattr(self.config, "presence_timeout", 300)))
+        age = (now - self._last_sustained_activity_at).total_seconds()
+        remaining = timeout - age
+        return remaining > 0, remaining
+
+    def _current_sustained_signal_active(self) -> bool:
+        """Check whether presence, occupancy, or spatial presence is active."""
+        if self._any_presence_sensor_active():
+            return True
+
+        return any(
+            sensor_id.startswith("_spatial_")
+            for sensor_id in self._state.contributing_sensors
+        )
+
+    def _unsealed_activity_timeout(self) -> float:
+        """Configured inactivity timeout for unsealed rooms."""
+        return max(1.0, float(getattr(self.config, "unsealed_activity_timeout", 120)))
 
     # ------------------------------------------------------------------
     # Checking timer

@@ -132,10 +132,12 @@ class TestVirtualSensorConfigAdvanced:
             motion_timeout=60,
             checking_timeout=15,
             presence_timeout=180,
+            unsealed_activity_timeout=90,
         )
         assert config.motion_timeout == 60
         assert config.checking_timeout == 15
         assert config.presence_timeout == 180
+        assert config.unsealed_activity_timeout == 90
 
     def test_door_settings(self):
         """Test door-related settings."""
@@ -157,6 +159,7 @@ class TestVirtualSensorConfigAdvanced:
             motion_timeout=120,
             checking_timeout=30,
             presence_timeout=300,
+            unsealed_activity_timeout=180,
             motion_sensors=[
                 SensorBinding(
                     entity_id="binary_sensor.m1", sensor_type="motion", weight=1.0
@@ -180,6 +183,7 @@ class TestVirtualSensorConfigAdvanced:
 
         assert restored.room_id == config.room_id
         assert restored.motion_timeout == config.motion_timeout
+        assert restored.unsealed_activity_timeout == config.unsealed_activity_timeout
         assert len(restored.motion_sensors) == 1
         assert len(restored.presence_sensors) == 1
         assert len(restored.door_sensors) == 1

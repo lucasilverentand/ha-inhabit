@@ -596,6 +596,14 @@ export class FpbOccupancyPanel extends LitElement {
                 />
               </div>
 
+              <div class="slider-row">
+                <label>Open/unsealed idle <span>${this._config.unsealed_activity_timeout}s</span></label>
+                <input type="range" min="10" max="900" step="10"
+                  .value=${String(this._config.unsealed_activity_timeout)}
+                  @change=${(e: Event) => this._updateConfig({ unsealed_activity_timeout: Number((e.target as HTMLInputElement).value) })}
+                />
+              </div>
+
               ${
                 this.targetType === "zone"
                   ? html`
