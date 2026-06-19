@@ -43,6 +43,7 @@ class MmwaveTargetProcessor:
         self._placements: dict[str, MmwavePlacement] = {}
         # target positions: {placement_id: {target_index: Coordinates}}
         self._target_positions: dict[str, dict[int, Coordinates]] = {}
+        self._excluded_target_positions: dict[str, dict[int, Coordinates]] = {}
         self._filtered_target_positions: dict[str, dict[int, Coordinates]] = {}
         # region hits: {placement_id: {target_index: list of region_ids}}
         self._region_hits: dict[str, dict[int, list[str]]] = {}
@@ -85,6 +86,7 @@ class MmwaveTargetProcessor:
         self._fan_listener_entity_ids.clear()
         self._placements.clear()
         self._target_positions.clear()
+        self._excluded_target_positions.clear()
         self._filtered_target_positions.clear()
         self._region_hits.clear()
         _LOGGER.info("mmWave target processor stopped")
@@ -104,6 +106,7 @@ class MmwaveTargetProcessor:
         """Remove a placement from the processor."""
         self._placements.pop(placement_id, None)
         self._target_positions.pop(placement_id, None)
+        self._excluded_target_positions.pop(placement_id, None)
         self._filtered_target_positions.pop(placement_id, None)
         self._region_hits.pop(placement_id, None)
         for unsub in self._unsub_listeners.pop(placement_id, []):
@@ -146,6 +149,7 @@ class MmwaveTargetProcessor:
         """Set up listeners for a single placement."""
         self._placements[placement.id] = placement
         self._target_positions[placement.id] = {}
+        self._excluded_target_positions[placement.id] = {}
         self._filtered_target_positions[placement.id] = {}
         self._region_hits[placement.id] = {}
         unsubs = []
@@ -223,6 +227,43 @@ class MmwaveTargetProcessor:
                 continue
 
             for target_index, point in list(targets.items()):
+                if self._is_inside_fan_deadzone(placement, point):
+                    self._target_positions[placement_id].pop(target_index, None)
+                    self._excluded_target_positions.setdefault(placement_id, {})[
+                        target_index
+                    ] = point
+                    region_ids = []
+                else:
+                    region_ids = self._find_containing_regions(placement, point)
+                previous = self._region_hits.setdefault(placement_id, {}).get(
+                    target_index,
+                    [],
+                )
+                if previous == region_ids:
+                    continue
+
+                self._region_hits[placement_id][target_index] = region_ids
+                async_dispatcher_send(
+                    self.hass,
+                    SIGNAL_MMWAVE_TARGETS_UPDATED,
+                    placement_id,
+                    target_index,
+                    point,
+                    region_ids,
+                )
+        for placement_id, targets in list(self._excluded_target_positions.items()):
+            placement = self._placements.get(placement_id)
+            if not placement:
+                continue
+
+            for target_index, point in list(targets.items()):
+                if self._is_inside_fan_deadzone(placement, point):
+                    continue
+
+                self._excluded_target_positions[placement_id].pop(target_index, None)
+                self._target_positions.setdefault(placement_id, {})[
+                    target_index
+                ] = point
                 region_ids = self._find_containing_regions(placement, point)
                 previous = self._region_hits.setdefault(placement_id, {}).get(
                     target_index,
@@ -272,6 +313,9 @@ class MmwaveTargetProcessor:
         # Zero readings mean the sensor has no target detected — clear this target
         if local_x == 0.0 and local_y == 0.0:
             self._target_positions.get(placement_id, {}).pop(target_index, None)
+            self._excluded_target_positions.get(placement_id, {}).pop(
+                target_index, None
+            )
             self._filtered_target_positions.get(placement_id, {}).pop(
                 target_index, None
             )
@@ -289,10 +333,20 @@ class MmwaveTargetProcessor:
 
         world_pos = self._calibrated_world_position(placement, local_x, local_y)
         world_pos = self._filter_world_position(placement, target_index, world_pos)
-        self._target_positions[placement_id][target_index] = world_pos
 
-        # Test against all rooms/zones
-        region_ids = self._find_containing_regions(placement, world_pos)
+        if self._is_inside_fan_deadzone(placement, world_pos):
+            self._target_positions.get(placement_id, {}).pop(target_index, None)
+            self._excluded_target_positions.setdefault(placement_id, {})[
+                target_index
+            ] = world_pos
+            region_ids: list[str] = []
+        else:
+            self._excluded_target_positions.get(placement_id, {}).pop(
+                target_index, None
+            )
+            self._target_positions[placement_id][target_index] = world_pos
+            # Test against all rooms/zones
+            region_ids = self._find_containing_regions(placement, world_pos)
         self._region_hits.setdefault(placement_id, {})[target_index] = region_ids
 
         # Dispatch update signal with all matching regions

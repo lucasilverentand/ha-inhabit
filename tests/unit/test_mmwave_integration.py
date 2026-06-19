@@ -1012,6 +1012,112 @@ class TestMmwaveTargetProcessor:
         call_args = mock_dispatch.call_args[0]
         assert call_args[5] == []  # region_ids = []
 
+    def test_fan_deadzone_hides_target_and_clears_regions(
+        self, mock_hass, mock_store
+    ):
+        """A target inside a fan deadzone should be hidden and routed as absent."""
+        from custom_components.inhabit.engine.mmwave_target_processor import (
+            MmwaveTargetProcessor,
+        )
+        from custom_components.inhabit.models.device_placement import FanPlacement
+        from custom_components.inhabit.models.floor_plan import Coordinates
+        from custom_components.inhabit.models.mmwave_sensor import MmwavePlacement
+
+        mock_store.get_fan_placements.return_value = [
+            FanPlacement(
+                id="fan1",
+                entity_id="fan.dyson",
+                floor_id="floor1",
+                position=Coordinates(x=300, y=250),
+                deadzone_radius=80,
+            )
+        ]
+        processor = MmwaveTargetProcessor(mock_hass, mock_store)
+        placement = MmwavePlacement(
+            id="p1",
+            floor_plan_id="fp1",
+            floor_id="floor1",
+            position=Coordinates(x=250, y=250),
+            angle=0.0,
+            targets=[{"x_entity_id": "sensor.x", "y_entity_id": "sensor.y"}],
+        )
+        processor._placements["p1"] = placement
+        processor._target_positions["p1"] = {}
+        processor._excluded_target_positions["p1"] = {}
+        processor._filtered_target_positions["p1"] = {}
+        processor._region_hits["p1"] = {}
+
+        def mock_state(entity_id):
+            states = {
+                "sensor.x": MagicMock(state="0"),
+                "sensor.y": MagicMock(state="500"),
+                "fan.dyson": MagicMock(state="on", attributes={"percentage": "100"}),
+            }
+            return states.get(entity_id)
+
+        mock_hass.states.get.side_effect = mock_state
+
+        with patch(
+            "custom_components.inhabit.engine.mmwave_target_processor.async_dispatcher_send"
+        ) as mock_dispatch:
+            processor._process_target("p1", 0)
+
+        assert 0 not in processor._target_positions["p1"]
+        assert 0 in processor._excluded_target_positions["p1"]
+        assert processor.get_target_positions() == {"p1": {}}
+
+        call_args = mock_dispatch.call_args[0]
+        assert call_args[5] == []
+
+    def test_fan_deadzone_recalculation_clears_existing_target(
+        self, mock_hass, mock_store
+    ):
+        """Turning on a fan should hide an existing target and clear occupancy hits."""
+        from custom_components.inhabit.engine.mmwave_target_processor import (
+            MmwaveTargetProcessor,
+        )
+        from custom_components.inhabit.models.device_placement import FanPlacement
+        from custom_components.inhabit.models.floor_plan import Coordinates
+        from custom_components.inhabit.models.mmwave_sensor import MmwavePlacement
+
+        mock_store.get_fan_placements.return_value = [
+            FanPlacement(
+                id="fan1",
+                entity_id="fan.dyson",
+                floor_id="floor1",
+                position=Coordinates(x=300, y=300),
+                deadzone_radius=80,
+            )
+        ]
+        mock_hass.states.get.return_value = MagicMock(
+            state="on", attributes={"percentage": "100"}
+        )
+        processor = MmwaveTargetProcessor(mock_hass, mock_store)
+        placement = MmwavePlacement(
+            id="p1",
+            floor_plan_id="fp1",
+            floor_id="floor1",
+            position=Coordinates(x=250, y=250),
+            angle=0.0,
+            targets=[{"x_entity_id": "sensor.x", "y_entity_id": "sensor.y"}],
+        )
+        processor._placements["p1"] = placement
+        processor._target_positions["p1"] = {0: Coordinates(x=300, y=300)}
+        processor._excluded_target_positions["p1"] = {}
+        processor._region_hits["p1"] = {0: ["room1"]}
+
+        with patch(
+            "custom_components.inhabit.engine.mmwave_target_processor.async_dispatcher_send"
+        ) as mock_dispatch:
+            processor._recalculate_region_hits()
+
+        assert 0 not in processor._target_positions["p1"]
+        assert 0 in processor._excluded_target_positions["p1"]
+        assert processor.get_target_positions() == {"p1": {}}
+
+        call_args = mock_dispatch.call_args[0]
+        assert call_args[5] == []
+
     def test_target_hits_multiple_overlapping_regions(self, mock_hass):
         """A target inside overlapping room and zone hits both."""
         from custom_components.inhabit.engine.mmwave_target_processor import (

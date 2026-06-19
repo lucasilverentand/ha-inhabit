@@ -7398,6 +7398,47 @@ export class FpbCanvas extends LitElement {
     return minRadius + (maxRadius - minRadius) * blowFactor;
   }
 
+  private _isInsideFanDeadzone(point: Coordinates, floorId: string): boolean {
+    for (const fan of fanPlacements.value) {
+      if (fan.floor_id !== floorId) continue;
+      const radius = this._effectiveFanDeadzoneRadius(fan);
+      if (radius <= 0) continue;
+      const distance = Math.hypot(
+        point.x - fan.position.x,
+        point.y - fan.position.y,
+      );
+      if (distance > radius) continue;
+      if (this._fanDeadzoneCoversPoint(fan, point)) return true;
+    }
+    return false;
+  }
+
+  private _fanDeadzoneCoversPoint(
+    fan: FanPlacement,
+    point: Coordinates,
+  ): boolean {
+    if (fan.oscillation_start === null || fan.oscillation_start === undefined) {
+      return true;
+    }
+    if (fan.oscillation_end === null || fan.oscillation_end === undefined) {
+      return true;
+    }
+
+    const dx = point.x - fan.position.x;
+    const dy = point.y - fan.position.y;
+    if (dx === 0 && dy === 0) return true;
+
+    const pointAngle = (Math.atan2(dy, dx) * (180 / Math.PI) + 90 + 360) % 360;
+    const start = ((fan.oscillation_start % 360) + 360) % 360;
+    const end = ((fan.oscillation_end % 360) + 360) % 360;
+    const sweep = (end - start + 360) % 360;
+    if (sweep === 0) {
+      return Math.abs(((pointAngle - start + 180) % 360) - 180) <= 1;
+    }
+
+    return (pointAngle - start + 360) % 360 <= sweep;
+  }
+
   private _renderFanArc(fan: FanPlacement) {
     if (fan.deadzone_enabled === false) return null;
     const center = fan.position;
@@ -7714,7 +7755,6 @@ export class FpbCanvas extends LitElement {
               continue;
 
             const key = `${p.id}-${idx}`;
-            activeKeys.add(key);
             const existing = this._mmwaveTargetPositions.get(key);
             const world = rawTargetToWorld(p, rawX, rawY, floorPlanUnit);
             const filtered = filterJitter(
@@ -7724,6 +7764,8 @@ export class FpbCanvas extends LitElement {
                 : undefined,
               world,
             );
+            if (this._isInsideFanDeadzone(filtered, floor.id)) continue;
+
             if (existing) {
               existing.targetX = filtered.x;
               existing.targetY = filtered.y;
@@ -7739,6 +7781,7 @@ export class FpbCanvas extends LitElement {
                 isNew: true,
               });
             }
+            activeKeys.add(key);
             this._ensureMmwaveAnimLoop();
           }
 
