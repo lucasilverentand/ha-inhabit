@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.14.8](https://github.com/lucasilverentand/ha-inhabit/compare/v0.14.7...v0.14.8) (2026-06-19)
+
+
+### Bug Fixes
+
+* clean up disabled occupancy regions ([#82](https://github.com/lucasilverentand/ha-inhabit/issues/82)) ([5c48865](https://github.com/lucasilverentand/ha-inhabit/commit/5c48865f7685ccfd9144ef8d6f249259ffa37ae9))
+* pass repo to release PR assignment ([#80](https://github.com/lucasilverentand/ha-inhabit/issues/80)) ([94b12f0](https://github.com/lucasilverentand/ha-inhabit/commit/94b12f0d2868e784828a7c37eaddcf252042be53))
+
+
+### Miscellaneous
+
+* narrow Python metadata for uv ([#81](https://github.com/lucasilverentand/ha-inhabit/issues/81)) ([23abc3c](https://github.com/lucasilverentand/ha-inhabit/commit/23abc3c7cb403580de7329cf813a992e82afa8db))
+
 ## [0.14.7](https://github.com/lucasilverentand/ha-inhabit/compare/v0.14.6...v0.14.7) (2026-06-19)
 
 
