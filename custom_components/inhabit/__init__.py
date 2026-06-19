@@ -105,29 +105,39 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Clean up orphaned entity and device registry entries
     ent_reg = er.async_get(hass)
     dev_reg = dr.async_get(hass)
-    valid_ids = set()
+    occupancy_region_ids: set[str] = set()
+    outside_exposure_region_ids: set[str] = set()
+    device_region_ids: set[str] = set()
     for fp in floor_plan_store.get_floor_plans():
         for room in fp.get_all_rooms():
-            valid_ids.add(room.id)
+            outside_exposure_region_ids.add(room.id)
+            device_region_ids.add(room.id)
+            if room.occupancy_sensor_enabled:
+                occupancy_region_ids.add(room.id)
         for floor in fp.floors:
             for zone in floor.zones:
-                valid_ids.add(zone.id)
+                if zone.occupancy_sensor_enabled:
+                    occupancy_region_ids.add(zone.id)
+                    device_region_ids.add(zone.id)
 
-    def _is_orphaned(unique_id: str) -> bool:
-        """Check if a unique_id belongs to a region that no longer exists."""
+    def _should_remove_entity(unique_id: str) -> bool:
+        """Check if a unique_id belongs to an inactive or deleted region."""
         if not unique_id.startswith(ENTITY_PREFIX):
             return False
         prefix_len = len(ENTITY_PREFIX)
-        for suffix in (SUFFIX_OCCUPANCY, SUFFIX_OUTSIDE_EXPOSURE, SUFFIX_OVERRIDE):
+        for suffix in (SUFFIX_OCCUPANCY, SUFFIX_OVERRIDE):
             if unique_id.endswith(suffix):
                 region_id = unique_id[prefix_len : -len(suffix)]
-                return region_id not in valid_ids
+                return region_id not in occupancy_region_ids
+        if unique_id.endswith(SUFFIX_OUTSIDE_EXPOSURE):
+            region_id = unique_id[prefix_len : -len(SUFFIX_OUTSIDE_EXPOSURE)]
+            return region_id not in outside_exposure_region_ids
         return False
 
     orphaned_entities = [
         ent
         for ent in er.async_entries_for_config_entry(ent_reg, entry.entry_id)
-        if _is_orphaned(ent.unique_id)
+        if _should_remove_entity(ent.unique_id)
     ]
     for ent in orphaned_entities:
         _LOGGER.info("Removing orphaned entity %s (%s)", ent.entity_id, ent.unique_id)
@@ -136,7 +146,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Clean up orphaned devices (devices whose region_id no longer exists)
     for device in dr.async_entries_for_config_entry(dev_reg, entry.entry_id):
         for _, identifier in device.identifiers:
-            if identifier not in valid_ids:
+            if identifier not in device_region_ids:
                 _LOGGER.info("Removing orphaned device %s (%s)", device.name, device.id)
                 dev_reg.async_remove_device(device.id)
                 break
