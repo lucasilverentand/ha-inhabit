@@ -441,7 +441,7 @@ class TestTransitionPredictorDoorGeometry:
     async def test_door_links_from_geometry(self):
         """Door edges should be linked to rooms via polygon containment."""
         # Create two rooms with polygons and a door between them
-        room_a = _make_room("room_a", ["room_b"])
+        room_a = _make_room("room_a")
         room_a.polygon = Polygon(
             vertices=[
                 Coordinates(0, 0),
@@ -450,7 +450,7 @@ class TestTransitionPredictorDoorGeometry:
                 Coordinates(0, 100),
             ]
         )
-        room_b = _make_room("room_b", ["room_a"])
+        room_b = _make_room("room_b")
         room_b.polygon = Polygon(
             vertices=[
                 Coordinates(100, 0),
@@ -470,15 +470,25 @@ class TestTransitionPredictorDoorGeometry:
         ]
 
         store = _make_store([room_a, room_b], nodes=nodes, edges=edges)
+        set_occupied = MagicMock()
         hass = MagicMock()
 
-        predictor = TransitionPredictor(hass, store)
+        predictor = TransitionPredictor(hass, store, set_room_occupied=set_occupied)
         await predictor.async_start()
 
         assert "binary_sensor.door_1" in predictor.door_links
         link = predictor.door_links["binary_sensor.door_1"]
         rooms_connected = {link.room_a, link.room_b}
         assert rooms_connected == {"room_a", "room_b"}
+        assert predictor._adjacency["room_a"] == {"room_b"}
+        assert predictor._adjacency["room_b"] == {"room_a"}
+
+        predictor.on_room_state_changed(
+            "room_a", OccupancyState.OCCUPIED, OccupancyState.CHECKING
+        )
+
+        assert predictor.has_active_phantom("room_b")
+        set_occupied.assert_called_once()
 
 
 class TestTransitionPredictorZoneAdjacency:

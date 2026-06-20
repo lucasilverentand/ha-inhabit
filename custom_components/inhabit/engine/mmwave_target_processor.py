@@ -76,6 +76,9 @@ class MmwaveTargetProcessor:
             return
         self._running = False
 
+        for placement_id in list(self._placements):
+            self._clear_placement_presence(placement_id)
+
         for unsubs in self._unsub_listeners.values():
             for unsub in unsubs:
                 unsub()
@@ -104,6 +107,7 @@ class MmwaveTargetProcessor:
 
     async def async_remove_placement(self, placement_id: str) -> None:
         """Remove a placement from the processor."""
+        self._clear_placement_presence(placement_id)
         self._placements.pop(placement_id, None)
         self._target_positions.pop(placement_id, None)
         self._excluded_target_positions.pop(placement_id, None)
@@ -302,33 +306,22 @@ class MmwaveTargetProcessor:
         x_state = self.hass.states.get(x_entity_id)
         y_state = self.hass.states.get(y_entity_id)
         if not x_state or not y_state:
+            self._clear_target_presence(placement_id, target_index)
             return
 
         try:
             local_x = float(x_state.state)
             local_y = float(y_state.state)
         except (ValueError, TypeError):
+            self._clear_target_presence(placement_id, target_index)
+            return
+        if not math.isfinite(local_x) or not math.isfinite(local_y):
+            self._clear_target_presence(placement_id, target_index)
             return
 
         # Zero readings mean the sensor has no target detected — clear this target
         if local_x == 0.0 and local_y == 0.0:
-            self._target_positions.get(placement_id, {}).pop(target_index, None)
-            self._excluded_target_positions.get(placement_id, {}).pop(
-                target_index, None
-            )
-            self._filtered_target_positions.get(placement_id, {}).pop(
-                target_index, None
-            )
-            old_regions = self._region_hits.get(placement_id, {}).pop(target_index, [])
-            if old_regions:
-                async_dispatcher_send(
-                    self.hass,
-                    SIGNAL_MMWAVE_TARGETS_UPDATED,
-                    placement_id,
-                    target_index,
-                    Coordinates(x=0, y=0),
-                    [],
-                )
+            self._clear_target_presence(placement_id, target_index)
             return
 
         world_pos = self._calibrated_world_position(placement, local_x, local_y)
@@ -358,6 +351,33 @@ class MmwaveTargetProcessor:
             world_pos,
             region_ids,
         )
+
+    def _clear_placement_presence(self, placement_id: str) -> None:
+        """Clear every active target for a placement before removing it."""
+        target_indexes = set(self._region_hits.get(placement_id, {}))
+        target_indexes.update(self._target_positions.get(placement_id, {}))
+        target_indexes.update(self._excluded_target_positions.get(placement_id, {}))
+        target_indexes.update(self._filtered_target_positions.get(placement_id, {}))
+        for target_index in sorted(target_indexes):
+            self._clear_target_presence(placement_id, target_index)
+
+    def _clear_target_presence(
+        self, placement_id: str, target_index: int, point: Coordinates | None = None
+    ) -> None:
+        """Clear a target and route an empty region list if it was active."""
+        self._target_positions.get(placement_id, {}).pop(target_index, None)
+        self._excluded_target_positions.get(placement_id, {}).pop(target_index, None)
+        self._filtered_target_positions.get(placement_id, {}).pop(target_index, None)
+        old_regions = self._region_hits.get(placement_id, {}).pop(target_index, [])
+        if old_regions:
+            async_dispatcher_send(
+                self.hass,
+                SIGNAL_MMWAVE_TARGETS_UPDATED,
+                placement_id,
+                target_index,
+                point or Coordinates(x=0, y=0),
+                [],
+            )
 
     def _get_mm_to_unit_scale(self, floor_plan_id: str) -> float:
         """Return the multiplier to convert mm (sensor output) to floor-plan units."""

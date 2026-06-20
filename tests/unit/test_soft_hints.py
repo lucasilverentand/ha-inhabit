@@ -340,6 +340,41 @@ class TestHintEventHandling:
         reading = machine._aggregator._readings["light.living_room"]
         assert reading.is_active is False
 
+    def test_inverted_unknown_generic_hint_not_active(self, mock_hass, state_changes):
+        """Unknown inverted hints should not become active."""
+        from custom_components.inhabit.engine.occupancy_state_machine import (
+            OccupancyStateMachine,
+        )
+
+        config = VirtualSensorConfig(
+            room_id="test_room",
+            floor_plan_id="test_fp",
+            enabled=True,
+            hint_sensors=[
+                SensorBinding(
+                    entity_id="binary_sensor.generic_hint",
+                    sensor_type="generic",
+                    weight=0.3,
+                    inverted=True,
+                )
+            ],
+            door_sensors=[],
+            door_seals_room=False,
+        )
+        changes, on_change = state_changes
+        machine = OccupancyStateMachine(mock_hass, config, on_change)
+
+        event = MagicMock()
+        event.data = {
+            "entity_id": "binary_sensor.generic_hint",
+            "new_state": MagicMock(state="unknown", attributes={}),
+        }
+        machine._handle_hint_event(event)
+
+        reading = machine._aggregator._readings["binary_sensor.generic_hint"]
+        assert reading.is_active is False
+        assert "binary_sensor.generic_hint" not in machine.state.contributing_sensors
+
     def test_get_hint_binding_found(self, mock_hass, hint_config, state_changes):
         """_get_hint_binding returns the correct binding."""
         from custom_components.inhabit.engine.occupancy_state_machine import (

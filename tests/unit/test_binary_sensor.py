@@ -425,6 +425,42 @@ class TestSensorDeviceInfo:
 class TestSensorPlatformSetup:
     """Test binary sensor platform setup behavior."""
 
+    async def test_sensor_added_ignores_existing_region(self, mock_hass):
+        """Startup sensor_added signals should not duplicate existing entities."""
+        room = MagicMock(
+            id="room_1",
+            name="Living Room",
+            occupancy_sensor_enabled=True,
+            ha_area_id=None,
+        )
+        floor_plan = MagicMock(id="fp_1", name="Home", floors=[])
+        floor_plan.get_all_rooms.return_value = [room]
+        floor_plan.get_room.return_value = (MagicMock(), room)
+        store = MagicMock()
+        store.get_floor_plans.return_value = [floor_plan]
+        store.get_sensor_config.return_value = MagicMock()
+        mock_hass.data = {DOMAIN: {"store": store}}
+        config_entry = MagicMock()
+        async_add_entities = MagicMock()
+        callbacks = {}
+
+        def capture_connect(_hass, signal, callback):
+            callbacks[signal] = callback
+            return MagicMock()
+
+        with patch(
+            "custom_components.inhabit.entities.binary_sensor.async_dispatcher_connect",
+            side_effect=capture_connect,
+        ):
+            await binary_sensor.async_setup_entry(
+                mock_hass, config_entry, async_add_entities
+            )
+
+        async_add_entities.assert_called_once()
+        callbacks[f"{DOMAIN}_sensor_added"]("room_1")
+
+        async_add_entities.assert_called_once()
+
     async def test_dispatcher_unsubscribers_registered_for_entry_unload(
         self, mock_hass
     ):

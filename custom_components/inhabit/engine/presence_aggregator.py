@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from homeassistant.const import STATE_ON
+from homeassistant.const import STATE_ON, STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant, State
 
 if TYPE_CHECKING:
@@ -174,6 +174,8 @@ class PresenceAggregator:
 
     def _is_sensor_active(self, state: State, inverted: bool) -> bool:
         """Check if a sensor is in an active state."""
+        if state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+            return False
         is_on = state.state in (STATE_ON, "on", "detected", "open", "true", "1")
         return not is_on if inverted else is_on
 

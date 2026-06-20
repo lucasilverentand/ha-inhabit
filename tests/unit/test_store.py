@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from custom_components.inhabit.const import DOMAIN
 from custom_components.inhabit.models.automation_rule import (
     RuleAction,
     VisualRule,
@@ -69,6 +70,28 @@ class TestFloorPlanStoreCRUD:
             assert fp.name == "Test House"
             assert fp.created_at is not None
             assert fp.updated_at is not None
+
+    @pytest.mark.asyncio
+    async def test_create_floor_plan_refreshes_outside_exposure(self, mock_hass):
+        """Creating a plan should refresh outside exposure when the engine runs."""
+        refresh_task = object()
+        engine = MagicMock()
+        engine.running = True
+        engine.async_refresh = MagicMock(return_value=refresh_task)
+        mock_hass.data = {DOMAIN: {"outside_exposure_engine": engine}}
+        mock_hass.async_create_task = MagicMock()
+
+        with patch(
+            "custom_components.inhabit.store.floor_plan_store.Store",
+            return_value=create_mock_store(),
+        ):
+            store = FloorPlanStore(mock_hass)
+            await store.async_load()
+
+            store.create_floor_plan(FloorPlan(name="Test House"))
+
+        engine.async_refresh.assert_called_once_with()
+        mock_hass.async_create_task.assert_called_once_with(refresh_task)
 
     @pytest.mark.asyncio
     async def test_get_floor_plan(self, mock_hass):

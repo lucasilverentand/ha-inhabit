@@ -109,7 +109,10 @@ class OccupancyStateMachine:
             hass,
             config.motion_sensors,
             config.presence_sensors,
+            motion_decay_seconds=float(config.motion_timeout),
+            presence_decay_seconds=float(config.presence_timeout),
             occupancy_bindings=config.occupancy_sensors,
+            occupancy_decay_seconds=float(config.presence_timeout),
         )
 
         # Adaptive timeout manager
@@ -368,6 +371,7 @@ class OccupancyStateMachine:
 
         # Update contributing sensors
         self._update_contributing_sensors(virtual_entity, add=is_active)
+        self._aggregator.update_reading(virtual_entity, is_active, "presence", 2.0)
         self._diagnose(
             "spatial_presence_update",
             category="spatial",
@@ -917,6 +921,9 @@ class OccupancyStateMachine:
         - 'sound': process_sound_level
         - default: simple on/off with binding.weight capped at MAX_HINT_WEIGHT
         """
+        if state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+            return 0.0
+
         sensor_type = binding.sensor_type
 
         if sensor_type == "light":
@@ -1628,6 +1635,8 @@ class OccupancyStateMachine:
 
     def _is_sensor_active(self, state: State, inverted: bool) -> bool:
         """Check if a sensor is in an active state."""
+        if state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+            return False
         is_on = state.state in (STATE_ON, "on", "detected", "open", "true", "1")
         return not is_on if inverted else is_on
 

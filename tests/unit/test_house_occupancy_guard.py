@@ -17,7 +17,15 @@ from custom_components.inhabit.const import (
     OccupancyState,
 )
 from custom_components.inhabit.engine.house_occupancy_guard import HouseOccupancyGuard
-from custom_components.inhabit.models.floor_plan import Edge, Floor, FloorPlan
+from custom_components.inhabit.models.floor_plan import (
+    Coordinates,
+    Edge,
+    Floor,
+    FloorPlan,
+    Node,
+    Polygon,
+    Room,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -40,9 +48,37 @@ def _make_store(*floor_plans: FloorPlan) -> MagicMock:
     return store
 
 
-def _make_floor_plan_with_edges(edges: list[Edge]) -> FloorPlan:
+def _make_room(room_id: str, name: str, min_x: float, max_x: float) -> Room:
+    """Build a rectangular test room."""
+    return Room(
+        id=room_id,
+        name=name,
+        polygon=Polygon(
+            vertices=[
+                Coordinates(min_x, 0),
+                Coordinates(max_x, 0),
+                Coordinates(max_x, 100),
+                Coordinates(min_x, 100),
+            ]
+        ),
+    )
+
+
+def _make_floor_plan_with_edges(
+    edges: list[Edge],
+    *,
+    rooms: list[Room] | None = None,
+    nodes: list[Node] | None = None,
+) -> FloorPlan:
     """Build a FloorPlan containing one floor with the given edges."""
-    floor = Floor(id="floor_1", name="Ground", level=0, edges=edges)
+    floor = Floor(
+        id="floor_1",
+        name="Ground",
+        level=0,
+        rooms=rooms or [],
+        nodes=nodes or [],
+        edges=edges,
+    )
     return FloorPlan(
         id="fp_1",
         name="Test",
@@ -453,6 +489,76 @@ class TestHouseGuardDiscovery:
         "custom_components.inhabit.engine.house_occupancy_guard.async_call_later",
         return_value=MagicMock(),
     )
+    def test_discovers_boundary_door_without_exterior_flag(
+        self, _mock_timer, mock_hass
+    ):
+        """A one-room-sided door is exterior even if the flag is missing."""
+        nodes = [
+            Node(id="door_a", x=100, y=40),
+            Node(id="door_b", x=100, y=60),
+        ]
+        edge = Edge(
+            id="e_boundary",
+            start_node="door_a",
+            end_node="door_b",
+            type="door",
+            is_exterior=False,
+            entity_id="binary_sensor.back_door",
+        )
+        store = _make_store(
+            _make_floor_plan_with_edges(
+                [edge],
+                rooms=[_make_room("living", "Living", 0, 100)],
+                nodes=nodes,
+            )
+        )
+
+        guard = HouseOccupancyGuard(mock_hass, store)
+        guard._discover_exterior_doors()
+
+        assert len(guard._exterior_door_bindings) == 1
+        assert guard._exterior_door_bindings[0].entity_id == "binary_sensor.back_door"
+
+    @patch(
+        "custom_components.inhabit.engine.house_occupancy_guard.async_call_later",
+        return_value=MagicMock(),
+    )
+    def test_geometry_inference_ignores_door_between_two_rooms(
+        self, _mock_timer, mock_hass
+    ):
+        """A door with rooms on both sides remains interior."""
+        nodes = [
+            Node(id="door_a", x=100, y=40),
+            Node(id="door_b", x=100, y=60),
+        ]
+        edge = Edge(
+            id="e_between",
+            start_node="door_a",
+            end_node="door_b",
+            type="door",
+            is_exterior=False,
+            entity_id="binary_sensor.living_hall_door",
+        )
+        store = _make_store(
+            _make_floor_plan_with_edges(
+                [edge],
+                rooms=[
+                    _make_room("living", "Living", 0, 100),
+                    _make_room("hall", "Hall", 100, 200),
+                ],
+                nodes=nodes,
+            )
+        )
+
+        guard = HouseOccupancyGuard(mock_hass, store)
+        guard._discover_exterior_doors()
+
+        assert len(guard._exterior_door_bindings) == 0
+
+    @patch(
+        "custom_components.inhabit.engine.house_occupancy_guard.async_call_later",
+        return_value=MagicMock(),
+    )
     def test_deduplicates_door_entity_ids(self, _mock_timer, mock_hass):
         """Same entity_id on multiple edges should only produce one binding."""
         edges = [
@@ -575,3 +681,44 @@ class TestHouseGuardEdgeCases:
 
             assert guard.sealed is False
             assert guard.anyone_home is False
+
+    @pytest.mark.asyncio
+    async def test_refresh_topology_resubscribes_current_exterior_doors(
+        self, mock_hass
+    ):
+        """Topology refresh replaces old exterior-door listeners."""
+        front_edge = Edge(
+            id="front",
+            type="door",
+            is_exterior=True,
+            entity_id="binary_sensor.front_door",
+        )
+        back_edge = Edge(
+            id="back",
+            type="door",
+            is_exterior=True,
+            entity_id="binary_sensor.back_door",
+        )
+        store = _make_store(_make_floor_plan_with_edges([front_edge]))
+        first_unsub = MagicMock()
+        second_unsub = MagicMock()
+
+        with patch(
+            "custom_components.inhabit.engine.house_occupancy_guard.async_track_state_change_event",
+            side_effect=[first_unsub, second_unsub],
+        ) as mock_track:
+            guard = HouseOccupancyGuard(mock_hass, store)
+            await guard.async_start()
+
+            store.get_floor_plans.return_value = [
+                _make_floor_plan_with_edges([back_edge])
+            ]
+            guard.refresh_topology()
+
+        first_unsub.assert_called_once()
+        assert mock_track.call_count == 2
+        assert mock_track.call_args_list[0].args[1] == "binary_sensor.front_door"
+        assert mock_track.call_args_list[1].args[1] == "binary_sensor.back_door"
+        assert [b.entity_id for b in guard._exterior_door_bindings] == [
+            "binary_sensor.back_door"
+        ]

@@ -171,6 +171,18 @@ class TestSpatialPresenceOnStateMachine:
         machine.update_spatial_presence(target_count=1)
         assert machine.state.last_presence_at is not None
 
+    def test_spatial_presence_updates_confidence(
+        self, mock_hass, spatial_config, state_changes
+    ):
+        """Spatial presence should contribute to the same confidence model."""
+        mock_hass.states.get.return_value = MagicMock(state=STATE_OFF)
+        machine, changes = _make_machine(mock_hass, spatial_config, state_changes)
+
+        machine.update_spatial_presence(target_count=1)
+
+        assert machine.state.state == OccupancyState.OCCUPIED
+        assert machine.state.confidence >= spatial_config.occupied_threshold
+
     def test_custom_source_name(self, mock_hass, spatial_config, state_changes):
         """Custom source name should appear in virtual entity ID."""
         mock_hass.states.get.return_value = None
@@ -1012,9 +1024,180 @@ class TestMmwaveTargetProcessor:
         call_args = mock_dispatch.call_args[0]
         assert call_args[5] == []  # region_ids = []
 
-    def test_fan_deadzone_hides_target_and_clears_regions(
+    def test_invalid_reading_clears_stale_target(self, mock_hass, mock_store):
+        """Invalid sensor readings should clear previously routed regions."""
+        from custom_components.inhabit.engine.mmwave_target_processor import (
+            MmwaveTargetProcessor,
+        )
+        from custom_components.inhabit.models.floor_plan import Coordinates
+        from custom_components.inhabit.models.mmwave_sensor import MmwavePlacement
+
+        processor = MmwaveTargetProcessor(mock_hass, mock_store)
+
+        placement = MmwavePlacement(
+            id="p1",
+            floor_plan_id="fp1",
+            floor_id="floor1",
+            position=Coordinates(x=250, y=250),
+            angle=0.0,
+            targets=[{"x_entity_id": "sensor.x", "y_entity_id": "sensor.y"}],
+        )
+        processor._placements["p1"] = placement
+        processor._target_positions["p1"] = {0: Coordinates(x=300, y=300)}
+        processor._excluded_target_positions["p1"] = {}
+        processor._filtered_target_positions["p1"] = {0: Coordinates(x=300, y=300)}
+        processor._region_hits["p1"] = {0: ["room1"]}
+
+        def mock_state(entity_id):
+            states = {
+                "sensor.x": MagicMock(state="unknown"),
+                "sensor.y": MagicMock(state="500"),
+            }
+            return states.get(entity_id)
+
+        mock_hass.states.get.side_effect = mock_state
+
+        with patch(
+            "custom_components.inhabit.engine.mmwave_target_processor.async_dispatcher_send"
+        ) as mock_dispatch:
+            processor._process_target("p1", 0)
+
+        assert 0 not in processor._target_positions.get("p1", {})
+        assert 0 not in processor._filtered_target_positions.get("p1", {})
+        assert 0 not in processor._region_hits.get("p1", {})
+
+        mock_dispatch.assert_called_once()
+        call_args = mock_dispatch.call_args[0]
+        assert call_args[5] == []
+
+    def test_non_finite_reading_clears_stale_target(self, mock_hass, mock_store):
+        """NaN/inf readings should clear previously routed regions."""
+        from custom_components.inhabit.engine.mmwave_target_processor import (
+            MmwaveTargetProcessor,
+        )
+        from custom_components.inhabit.models.floor_plan import Coordinates
+        from custom_components.inhabit.models.mmwave_sensor import MmwavePlacement
+
+        processor = MmwaveTargetProcessor(mock_hass, mock_store)
+
+        placement = MmwavePlacement(
+            id="p1",
+            floor_plan_id="fp1",
+            floor_id="floor1",
+            position=Coordinates(x=250, y=250),
+            angle=0.0,
+            targets=[{"x_entity_id": "sensor.x", "y_entity_id": "sensor.y"}],
+        )
+        processor._placements["p1"] = placement
+        processor._target_positions["p1"] = {0: Coordinates(x=300, y=300)}
+        processor._excluded_target_positions["p1"] = {}
+        processor._filtered_target_positions["p1"] = {0: Coordinates(x=300, y=300)}
+        processor._region_hits["p1"] = {0: ["room1"]}
+
+        def mock_state(entity_id):
+            states = {
+                "sensor.x": MagicMock(state="nan"),
+                "sensor.y": MagicMock(state="500"),
+            }
+            return states.get(entity_id)
+
+        mock_hass.states.get.side_effect = mock_state
+
+        with patch(
+            "custom_components.inhabit.engine.mmwave_target_processor.async_dispatcher_send"
+        ) as mock_dispatch:
+            processor._process_target("p1", 0)
+
+        assert 0 not in processor._target_positions.get("p1", {})
+        assert 0 not in processor._filtered_target_positions.get("p1", {})
+        assert 0 not in processor._region_hits.get("p1", {})
+
+        mock_dispatch.assert_called_once()
+        call_args = mock_dispatch.call_args[0]
+        assert call_args[5] == []
+
+    @pytest.mark.asyncio
+    async def test_removing_placement_clears_routed_targets(
         self, mock_hass, mock_store
     ):
+        """Removing a placement should route absent targets before dropping state."""
+        from custom_components.inhabit.engine.mmwave_target_processor import (
+            MmwaveTargetProcessor,
+        )
+        from custom_components.inhabit.models.floor_plan import Coordinates
+        from custom_components.inhabit.models.mmwave_sensor import MmwavePlacement
+
+        processor = MmwaveTargetProcessor(mock_hass, mock_store)
+
+        placement = MmwavePlacement(
+            id="p1",
+            floor_plan_id="fp1",
+            floor_id="floor1",
+            position=Coordinates(x=250, y=250),
+            angle=0.0,
+            targets=[{"x_entity_id": "sensor.x", "y_entity_id": "sensor.y"}],
+        )
+        unsub = MagicMock()
+        processor._placements["p1"] = placement
+        processor._target_positions["p1"] = {0: Coordinates(x=300, y=300)}
+        processor._excluded_target_positions["p1"] = {}
+        processor._filtered_target_positions["p1"] = {0: Coordinates(x=300, y=300)}
+        processor._region_hits["p1"] = {0: ["room1"]}
+        processor._unsub_listeners["p1"] = [unsub]
+
+        with patch(
+            "custom_components.inhabit.engine.mmwave_target_processor.async_dispatcher_send"
+        ) as mock_dispatch:
+            await processor.async_remove_placement("p1")
+
+        mock_dispatch.assert_called_once()
+        call_args = mock_dispatch.call_args[0]
+        assert call_args[5] == []
+        unsub.assert_called_once()
+        assert "p1" not in processor._placements
+        assert "p1" not in processor._region_hits
+
+    @pytest.mark.asyncio
+    async def test_stop_clears_routed_targets(self, mock_hass, mock_store):
+        """Stopping the processor should route absent targets before clearing state."""
+        from custom_components.inhabit.engine.mmwave_target_processor import (
+            MmwaveTargetProcessor,
+        )
+        from custom_components.inhabit.models.floor_plan import Coordinates
+        from custom_components.inhabit.models.mmwave_sensor import MmwavePlacement
+
+        processor = MmwaveTargetProcessor(mock_hass, mock_store)
+
+        placement = MmwavePlacement(
+            id="p1",
+            floor_plan_id="fp1",
+            floor_id="floor1",
+            position=Coordinates(x=250, y=250),
+            angle=0.0,
+            targets=[{"x_entity_id": "sensor.x", "y_entity_id": "sensor.y"}],
+        )
+        unsub = MagicMock()
+        processor._running = True
+        processor._placements["p1"] = placement
+        processor._target_positions["p1"] = {0: Coordinates(x=300, y=300)}
+        processor._excluded_target_positions["p1"] = {}
+        processor._filtered_target_positions["p1"] = {0: Coordinates(x=300, y=300)}
+        processor._region_hits["p1"] = {0: ["room1"]}
+        processor._unsub_listeners["p1"] = [unsub]
+
+        with patch(
+            "custom_components.inhabit.engine.mmwave_target_processor.async_dispatcher_send"
+        ) as mock_dispatch:
+            await processor.async_stop()
+
+        mock_dispatch.assert_called_once()
+        call_args = mock_dispatch.call_args[0]
+        assert call_args[5] == []
+        unsub.assert_called_once()
+        assert processor._placements == {}
+        assert processor._region_hits == {}
+
+    def test_fan_deadzone_hides_target_and_clears_regions(self, mock_hass, mock_store):
         """A target inside a fan deadzone should be hidden and routed as absent."""
         from custom_components.inhabit.engine.mmwave_target_processor import (
             MmwaveTargetProcessor,

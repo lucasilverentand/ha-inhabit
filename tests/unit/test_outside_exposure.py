@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sys
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 if "homeassistant" not in sys.modules:
     from tests.conftest import *  # noqa: F401, F403
@@ -11,6 +11,8 @@ if "homeassistant" not in sys.modules:
 from homeassistant.const import STATE_OFF, STATE_ON, STATE_UNKNOWN
 
 from custom_components.inhabit.engine.outside_exposure import (
+    SIGNAL_OUTSIDE_EXPOSURE_ROOM_REMOVED,
+    OutsideExposureEngine,
     find_rooms_exposed_to_outside,
 )
 from custom_components.inhabit.models.floor_plan import (
@@ -245,6 +247,62 @@ class TestFindRoomsExposedToOutside:
         assert states["hall"].direct_exposure is True
         assert states["hall"].exterior_openings == ("binary_sensor.hall_window",)
 
+    def test_boundary_window_without_exterior_flag_exposes_adjacent_room(self):
+        """A one-room-sided opening is inferred as outside exposure."""
+        floor_plan = _floor_plan()
+        hall_window = floor_plan.floors[0].get_edge("hall_window")
+        assert hall_window is not None
+        hall_window.is_exterior = False
+
+        states = find_rooms_exposed_to_outside(
+            [floor_plan],
+            _state_lookup({"binary_sensor.hall_window"}),
+        )
+
+        assert states["living"].exposed is False
+        assert states["hall"].exposed is True
+        assert states["hall"].direct_exposure is True
+        assert states["hall"].exterior_openings == ("binary_sensor.hall_window",)
+
+    def test_open_interior_opening_without_outside_source_exposes_no_rooms(self):
+        """Two-room openings remain interior links, not outside sources."""
+        states = find_rooms_exposed_to_outside(
+            [_floor_plan()],
+            _state_lookup({"binary_sensor.living_hall_door"}),
+        )
+
+        assert states["living"].exposed is False
+        assert states["hall"].exposed is False
+
+    def test_opening_inside_same_room_is_not_inferred_as_outside(self):
+        """An opening with the same room on both sides is not an outside boundary."""
+        floor_plan = _floor_plan()
+        floor = floor_plan.floors[0]
+        floor.nodes.extend(
+            [
+                Node(id="inside_a", x=50, y=40),
+                Node(id="inside_b", x=50, y=60),
+            ]
+        )
+        floor.edges.append(
+            Edge(
+                id="inside_window",
+                start_node="inside_a",
+                end_node="inside_b",
+                type="window",
+                is_exterior=False,
+                entity_id="binary_sensor.inside_window",
+            )
+        )
+
+        states = find_rooms_exposed_to_outside(
+            [floor_plan],
+            _state_lookup({"binary_sensor.inside_window"}),
+        )
+
+        assert states["living"].exposed is False
+        assert states["hall"].exposed is False
+
     def test_unknown_opening_state_is_not_treated_as_open(self):
         """Unknown opening states do not expose rooms."""
 
@@ -324,3 +382,38 @@ class TestFindRoomsExposedToOutside:
         assert states["living"].exposed is True
         assert states["hall"].exposed is False
         assert states["bedroom"].exposed is False
+
+
+class TestOutsideExposureEngine:
+    """Tests for outside exposure engine lifecycle events."""
+
+    async def test_topology_refresh_removes_room_once(self, mock_hass):
+        """A removed room should emit one remove signal during async_refresh."""
+        floor_plans = [_floor_plan()]
+        store = MagicMock()
+        store.get_floor_plans.side_effect = lambda: floor_plans
+        mock_hass.states.get.side_effect = _state_lookup(set())
+
+        engine = OutsideExposureEngine(mock_hass, store)
+
+        with (
+            patch(
+                "custom_components.inhabit.engine.outside_exposure.async_track_state_change_event",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "custom_components.inhabit.engine.outside_exposure.async_dispatcher_send"
+            ) as dispatch,
+        ):
+            await engine.async_start()
+            dispatch.reset_mock()
+
+            floor_plans = []
+            await engine.async_refresh()
+
+        removed_room_ids = [
+            call.args[2]
+            for call in dispatch.call_args_list
+            if call.args[1] == SIGNAL_OUTSIDE_EXPOSURE_ROOM_REMOVED
+        ]
+        assert sorted(removed_room_ids) == ["hall", "living"]

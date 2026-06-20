@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from ..store.floor_plan_store import FloorPlanStore
 
 from ..const import OccupancyState
+from .outside_exposure import rooms_on_opening_sides
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -254,5 +255,14 @@ def build_adjacency_graph(store: FloorPlanStore) -> dict[str, set[str]]:
                 for connected_id in room.connected_rooms:
                     graph[room.id].add(connected_id)
                     graph[connected_id].add(room.id)
+
+            for edge in getattr(floor, "edges", []) or []:
+                if edge.type != "door":
+                    continue
+
+                room_a, room_b = rooms_on_opening_sides(floor, edge)
+                if room_a and room_b and room_a != room_b:
+                    graph[room_a].add(room_b)
+                    graph[room_b].add(room_a)
 
     return dict(graph)

@@ -2648,7 +2648,7 @@ function ft(t,e){return(e,i,o)=>((t,e,i)=>(i.configurable=!0,i.enumerable=!0,Ref
           </div>
         `:null}
 
-        ${o?(()=>{const e=Yt.value;if(!e)return null;const i=Te(e.nodes),o=i.get(t.start_node),n=i.get(t.end_node);if(!o||!n)return null;const s=(o.x+n.x)/2,a=(o.y+n.y)/2,r=n.x-o.x,l=n.y-o.y,d=Math.sqrt(r*r+l*l);if(0===d)return null;const c=-l/d,h=r/d,p=t.thickness/2+5,g={x:s+c*p,y:a+h*p},u={x:s-c*p,y:a-h*p},f=e.rooms.find(t=>t.polygon.vertices.length>=3&&this._pointInPolygon(g,t.polygon.vertices)),_=e.rooms.find(t=>t.polygon.vertices.length>=3&&this._pointInPolygon(u,t.polygon.vertices)),m=f?.name||(t.is_exterior?"Outside":null),v=_?.name||(t.is_exterior?"Outside":null);return m||v?q`
+        ${o?(()=>{const e=Yt.value;if(!e)return null;const i=Te(e.nodes),o=i.get(t.start_node),n=i.get(t.end_node);if(!o||!n)return null;const s=(o.x+n.x)/2,a=(o.y+n.y)/2,r=n.x-o.x,l=n.y-o.y,d=Math.sqrt(r*r+l*l);if(0===d)return null;const c=-l/d,h=r/d,p=t.thickness/2+5,g={x:s+c*p,y:a+h*p},u={x:s-c*p,y:a-h*p},f=e.rooms.find(t=>t.polygon.vertices.length>=3&&this._pointInPolygon(g,t.polygon.vertices)),_=e.rooms.find(t=>t.polygon.vertices.length>=3&&this._pointInPolygon(u,t.polygon.vertices)),m=f?.name||(t.is_exterior||!f&&_?"Outside":null),v=_?.name||(t.is_exterior||!_&&f?"Outside":null);return m||v?q`
             <div class="wall-editor-section">
               <span class="wall-editor-section-label">Opens into</span>
               <div class="wall-editor-row" style="gap:6px; font-size:12px; align-items:center;">

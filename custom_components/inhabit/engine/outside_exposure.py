@@ -121,6 +121,30 @@ def _rooms_on_sides(floor: Floor, edge: Edge) -> tuple[str | None, str | None]:
     )
 
 
+def _opens_to_outside(
+    edge: Edge, room_a: str | None, room_b: str | None, rooms: set[str]
+) -> bool:
+    """Return whether an opening connects a room to outside air."""
+    return edge.is_exterior or (
+        len(rooms) == 1 and (room_a is None) != (room_b is None)
+    )
+
+
+def rooms_on_opening_sides(floor: Floor, edge: Edge) -> tuple[str | None, str | None]:
+    """Return the room IDs found on each side of an opening edge."""
+    return _rooms_on_sides(floor, edge)
+
+
+def edge_opens_to_outside(floor: Floor, edge: Edge) -> bool:
+    """Return whether an opening edge is exterior by flag or floor geometry."""
+    if edge.is_exterior:
+        return True
+
+    room_a, room_b = rooms_on_opening_sides(floor, edge)
+    rooms = {room_id for room_id in (room_a, room_b) if room_id}
+    return _opens_to_outside(edge, room_a, room_b, rooms)
+
+
 def _find_room_at_point(floor: Floor, point: Coordinates) -> str | None:
     """Find which room contains a point."""
     for room in floor.rooms:
@@ -162,7 +186,7 @@ def find_rooms_exposed_to_outside(
                     continue
 
                 opening = _opening_key(edge)
-                if edge.is_exterior:
+                if _opens_to_outside(edge, room_a, room_b, rooms):
                     for room_id in rooms:
                         direct_openings.setdefault(room_id, set()).add(opening)
                     continue
@@ -309,12 +333,6 @@ class OutsideExposureEngine:
                 async_dispatcher_send(
                     self.hass,
                     SIGNAL_OUTSIDE_EXPOSURE_ROOM_ADDED,
-                    room_id,
-                )
-            for room_id in sorted(self._room_ids - next_room_ids):
-                async_dispatcher_send(
-                    self.hass,
-                    SIGNAL_OUTSIDE_EXPOSURE_ROOM_REMOVED,
                     room_id,
                 )
 

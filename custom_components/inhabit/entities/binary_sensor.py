@@ -160,6 +160,9 @@ async def async_setup_entry(
     @callback
     def async_add_sensor(region_id: str) -> None:
         """Handle new sensor being added for a room or zone."""
+        if region_id in occupancy_entity_map:
+            return
+
         for floor_plan in store.get_floor_plans():
             # Check rooms
             result = floor_plan.get_room(region_id)

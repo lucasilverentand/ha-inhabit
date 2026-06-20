@@ -556,6 +556,8 @@ class TransitionPredictor:
                 room_b=room_b_id,
             )
             self._all_door_links[edge.id] = link
+            self._adjacency.setdefault(room_a_id, set()).add(room_b_id)
+            self._adjacency.setdefault(room_b_id, set()).add(room_a_id)
 
             if edge.entity_id:
                 self._door_links[edge.entity_id] = link

@@ -288,6 +288,7 @@ class VirtualSensorEngine:
 
         # Rebuild transition predictor topology
         self._transition_predictor.refresh_topology()
+        self._house_guard.refresh_topology()
         self._subscribe_door_events()
 
         # Get current configs
