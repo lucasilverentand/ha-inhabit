@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.10](https://github.com/lucasilverentand/ha-inhabit/compare/v0.14.9...v0.14.10) (2026-06-20)
+
+
+### Bug Fixes
+
+* harden occupancy and exposure engines ([ff2f928](https://github.com/lucasilverentand/ha-inhabit/commit/ff2f92898783506efe28b1dfc95793a27a611d92))
+
 ## [0.14.9](https://github.com/lucasilverentand/ha-inhabit/compare/v0.14.8...v0.14.9) (2026-06-19)
 
 
