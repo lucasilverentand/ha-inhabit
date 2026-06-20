@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sys
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 if "homeassistant" not in sys.modules:
     from tests.conftest import *  # noqa: F401, F403
@@ -11,6 +11,8 @@ if "homeassistant" not in sys.modules:
 from homeassistant.const import STATE_OFF, STATE_ON, STATE_UNKNOWN
 
 from custom_components.inhabit.engine.outside_exposure import (
+    SIGNAL_OUTSIDE_EXPOSURE_ROOM_REMOVED,
+    OutsideExposureEngine,
     find_rooms_exposed_to_outside,
 )
 from custom_components.inhabit.models.floor_plan import (
@@ -324,3 +326,38 @@ class TestFindRoomsExposedToOutside:
         assert states["living"].exposed is True
         assert states["hall"].exposed is False
         assert states["bedroom"].exposed is False
+
+
+class TestOutsideExposureEngine:
+    """Tests for outside exposure engine lifecycle events."""
+
+    async def test_topology_refresh_removes_room_once(self, mock_hass):
+        """A removed room should emit one remove signal during async_refresh."""
+        floor_plans = [_floor_plan()]
+        store = MagicMock()
+        store.get_floor_plans.side_effect = lambda: floor_plans
+        mock_hass.states.get.side_effect = _state_lookup(set())
+
+        engine = OutsideExposureEngine(mock_hass, store)
+
+        with (
+            patch(
+                "custom_components.inhabit.engine.outside_exposure.async_track_state_change_event",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "custom_components.inhabit.engine.outside_exposure.async_dispatcher_send"
+            ) as dispatch,
+        ):
+            await engine.async_start()
+            dispatch.reset_mock()
+
+            floor_plans = []
+            await engine.async_refresh()
+
+        removed_room_ids = [
+            call.args[2]
+            for call in dispatch.call_args_list
+            if call.args[1] == SIGNAL_OUTSIDE_EXPOSURE_ROOM_REMOVED
+        ]
+        assert sorted(removed_room_ids) == ["hall", "living"]

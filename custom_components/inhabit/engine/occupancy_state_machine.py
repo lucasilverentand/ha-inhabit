@@ -368,6 +368,7 @@ class OccupancyStateMachine:
 
         # Update contributing sensors
         self._update_contributing_sensors(virtual_entity, add=is_active)
+        self._aggregator.update_reading(virtual_entity, is_active, "presence", 2.0)
         self._diagnose(
             "spatial_presence_update",
             category="spatial",

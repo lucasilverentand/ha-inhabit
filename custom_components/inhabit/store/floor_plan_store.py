@@ -113,6 +113,7 @@ class FloorPlanStore:
 
         self._data["floor_plans"][floor_plan.id] = floor_plan.to_dict()
         self.async_delay_save()
+        self._schedule_outside_exposure_refresh()
 
         _LOGGER.info("Created floor plan: %s", floor_plan.id)
         return floor_plan

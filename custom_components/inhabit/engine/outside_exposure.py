@@ -311,12 +311,6 @@ class OutsideExposureEngine:
                     SIGNAL_OUTSIDE_EXPOSURE_ROOM_ADDED,
                     room_id,
                 )
-            for room_id in sorted(self._room_ids - next_room_ids):
-                async_dispatcher_send(
-                    self.hass,
-                    SIGNAL_OUTSIDE_EXPOSURE_ROOM_REMOVED,
-                    room_id,
-                )
 
         self._room_ids = next_room_ids
         self._room_ids_initialized = True
