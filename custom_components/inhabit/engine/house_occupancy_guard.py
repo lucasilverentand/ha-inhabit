@@ -15,6 +15,7 @@ from homeassistant.helpers.event import (
 )
 
 from ..const import DEFAULT_HOUSE_GUARD_MAX_DURATION, OccupancyState
+from .outside_exposure import edge_opens_to_outside
 
 if TYPE_CHECKING:
     from homeassistant.core import Event
@@ -80,15 +81,7 @@ class HouseOccupancyGuard:
 
         self._running = True
         self._discover_exterior_doors()
-
-        # Subscribe to exterior door sensors
-        for binding in self._exterior_door_bindings:
-            unsub = async_track_state_change_event(
-                self.hass,
-                binding.entity_id,
-                self._handle_exterior_door_event,
-            )
-            self._unsub_listeners.append(unsub)
+        self._subscribe_exterior_door_events()
 
         _LOGGER.info(
             "House guard started with %d exterior door sensors: %s",
@@ -101,16 +94,22 @@ class HouseOccupancyGuard:
         self._running = False
         self._cancel_expiry_timer()
 
-        for unsub in self._unsub_listeners:
-            try:
-                unsub()
-            except Exception:
-                _LOGGER.exception("Error unsubscribing house guard listener")
-        self._unsub_listeners.clear()
+        self._unsubscribe_exterior_door_events()
 
         self._sealed = False
         self._occupied_rooms.clear()
         _LOGGER.info("House guard stopped")
+
+    def refresh_topology(self) -> None:
+        """Refresh exterior door bindings from the current floor plan."""
+        self._unsubscribe_exterior_door_events()
+        self._discover_exterior_doors()
+
+        if self._sealed and not self._all_exterior_doors_closed():
+            self._break_seal("exterior door topology refreshed")
+
+        if self._running:
+            self._subscribe_exterior_door_events()
 
     def on_room_state_changed(self, room_id: str, state: str) -> None:
         """Notify the guard that a room's occupancy state changed."""
@@ -176,9 +175,9 @@ class HouseOccupancyGuard:
                 for edge in floor.edges:
                     if (
                         edge.type == "door"
-                        and edge.is_exterior
                         and edge.entity_id
                         and edge.entity_id not in seen
+                        and edge_opens_to_outside(floor, edge)
                     ):
                         self._exterior_door_bindings.append(
                             SensorBinding(
@@ -190,6 +189,25 @@ class HouseOccupancyGuard:
 
         if not self._exterior_door_bindings:
             _LOGGER.debug("House guard: no exterior door sensors found in floor plan")
+
+    def _subscribe_exterior_door_events(self) -> None:
+        """Subscribe to exterior door sensor changes."""
+        for binding in self._exterior_door_bindings:
+            unsub = async_track_state_change_event(
+                self.hass,
+                binding.entity_id,
+                self._handle_exterior_door_event,
+            )
+            self._unsub_listeners.append(unsub)
+
+    def _unsubscribe_exterior_door_events(self) -> None:
+        """Unsubscribe from exterior door sensor changes."""
+        for unsub in self._unsub_listeners:
+            try:
+                unsub()
+            except Exception:
+                _LOGGER.exception("Error unsubscribing house guard listener")
+        self._unsub_listeners.clear()
 
     @callback
     def _handle_exterior_door_event(self, event: Event) -> None:
@@ -277,6 +295,9 @@ class HouseOccupancyGuard:
 
     def _all_exterior_doors_closed(self) -> bool:
         """Check if all exterior doors are closed."""
+        if not self._exterior_door_bindings:
+            return False
+
         for binding in self._exterior_door_bindings:
             state = self.hass.states.get(binding.entity_id)
             if not state or state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
@@ -294,5 +315,7 @@ class HouseOccupancyGuard:
 
     def _is_sensor_active(self, state: State, inverted: bool) -> bool:
         """Check if a sensor is in an active state."""
+        if state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+            return False
         is_on = state.state in (STATE_ON, "on", "detected", "open", "true", "1")
         return not is_on if inverted else is_on

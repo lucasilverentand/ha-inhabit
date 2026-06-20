@@ -76,6 +76,9 @@ class MmwaveTargetProcessor:
             return
         self._running = False
 
+        for placement_id in list(self._placements):
+            self._clear_placement_presence(placement_id)
+
         for unsubs in self._unsub_listeners.values():
             for unsub in unsubs:
                 unsub()

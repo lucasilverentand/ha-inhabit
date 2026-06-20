@@ -18,6 +18,15 @@ from custom_components.inhabit.engine.multi_room_reasoner import (
     MultiRoomReasoner,
     build_adjacency_graph,
 )
+from custom_components.inhabit.models.floor_plan import (
+    Coordinates,
+    Edge,
+    Floor,
+    FloorPlan,
+    Node,
+    Polygon,
+    Room,
+)
 
 
 def _make_mock_store(rooms_with_connections: dict[str, list[str]] | None = None):
@@ -45,6 +54,57 @@ def _make_mock_store(rooms_with_connections: dict[str, list[str]] | None = None)
     mock_fp.floors = [mock_floor]
 
     store.get_floor_plans.return_value = [mock_fp]
+    return store
+
+
+def _make_geometry_store() -> MagicMock:
+    """Create a store with two rooms connected only by door geometry."""
+    room_a = Room(
+        id="room_a",
+        name="Room A",
+        polygon=Polygon(
+            vertices=[
+                Coordinates(0, 0),
+                Coordinates(100, 0),
+                Coordinates(100, 100),
+                Coordinates(0, 100),
+            ]
+        ),
+    )
+    room_b = Room(
+        id="room_b",
+        name="Room B",
+        polygon=Polygon(
+            vertices=[
+                Coordinates(100, 0),
+                Coordinates(200, 0),
+                Coordinates(200, 100),
+                Coordinates(100, 100),
+            ]
+        ),
+    )
+    floor = Floor(
+        id="floor_1",
+        name="Ground",
+        rooms=[room_a, room_b],
+        nodes=[
+            Node(id="door_a", x=100, y=40),
+            Node(id="door_b", x=100, y=60),
+        ],
+        edges=[
+            Edge(
+                id="door",
+                start_node="door_a",
+                end_node="door_b",
+                type="door",
+                entity_id="binary_sensor.room_door",
+            )
+        ],
+    )
+    store = MagicMock()
+    store.get_floor_plans.return_value = [
+        FloorPlan(id="fp_1", name="Home", floors=[floor])
+    ]
     return store
 
 
@@ -76,6 +136,12 @@ class TestBuildAdjacencyGraph:
         graph = build_adjacency_graph(store)
         assert "room_b" in graph["room_a"]
         assert "room_a" in graph["room_b"]
+
+    def test_door_geometry_creates_adjacency_without_connected_rooms(self):
+        """Door geometry links adjacent rooms even without connected_rooms."""
+        graph = build_adjacency_graph(_make_geometry_store())
+        assert graph["room_a"] == {"room_b"}
+        assert graph["room_b"] == {"room_a"}
 
     def test_one_directional_connection_becomes_symmetric(self):
         """A one-directional connection is made symmetric."""
@@ -198,6 +264,28 @@ class TestTransitionInference:
         )
 
         assert len(forced) == 0
+
+    def test_geometry_adjacent_checking_pushed_to_vacant(self):
+        """Door-derived adjacency is used for transition inference."""
+        forced = []
+
+        def force_vacant(room_id, reason):
+            forced.append((room_id, reason))
+
+        store = _make_geometry_store()
+        reasoner = MultiRoomReasoner(store, force_vacant_callback=force_vacant)
+        reasoner._adjacency = build_adjacency_graph(store)
+        reasoner._running = True
+
+        reasoner.on_room_state_changed(
+            "room_a", OccupancyState.OCCUPIED, OccupancyState.CHECKING
+        )
+        reasoner.on_room_state_changed(
+            "room_b", OccupancyState.VACANT, OccupancyState.OCCUPIED
+        )
+
+        assert len(forced) == 1
+        assert forced[0][0] == "room_a"
 
     def test_outside_transition_window_not_inferred(self):
         """Transitions outside the window are not inferred."""

@@ -817,6 +817,18 @@ class TestConfigSync:
         assert "room_b" not in engine._state_machines
 
     @pytest.mark.asyncio
+    async def test_refresh_updates_house_guard_topology(self, mock_hass, patched_ha):
+        """async_refresh should refresh house-guard exterior door bindings."""
+        cfg = _make_config("room_a")
+        store = _mock_store(configs=[cfg])
+        engine = await _build_engine(mock_hass, store, patched_ha)
+        engine._house_guard.refresh_topology = MagicMock()
+
+        await engine.async_refresh()
+
+        engine._house_guard.refresh_topology.assert_called_once_with()
+
+    @pytest.mark.asyncio
     async def test_get_room_state_returns_data(self, mock_hass, patched_ha):
         """get_state should return OccupancyStateData for a known room."""
         cfg = _make_config("room_state")

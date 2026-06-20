@@ -9256,9 +9256,15 @@ export class FpbCanvas extends LitElement {
                       this._pointInPolygon(p2, r.polygon.vertices),
                   );
                   const nameA =
-                    roomA?.name || (edge.is_exterior ? "Outside" : null);
+                    roomA?.name ||
+                    (edge.is_exterior || (!roomA && !!roomB)
+                      ? "Outside"
+                      : null);
                   const nameB =
-                    roomB?.name || (edge.is_exterior ? "Outside" : null);
+                    roomB?.name ||
+                    (edge.is_exterior || (!roomB && !!roomA)
+                      ? "Outside"
+                      : null);
                   if (!nameA && !nameB) return null;
                   return html`
             <div class="wall-editor-section">

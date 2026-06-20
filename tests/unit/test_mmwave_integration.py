@@ -1157,6 +1157,46 @@ class TestMmwaveTargetProcessor:
         assert "p1" not in processor._placements
         assert "p1" not in processor._region_hits
 
+    @pytest.mark.asyncio
+    async def test_stop_clears_routed_targets(self, mock_hass, mock_store):
+        """Stopping the processor should route absent targets before clearing state."""
+        from custom_components.inhabit.engine.mmwave_target_processor import (
+            MmwaveTargetProcessor,
+        )
+        from custom_components.inhabit.models.floor_plan import Coordinates
+        from custom_components.inhabit.models.mmwave_sensor import MmwavePlacement
+
+        processor = MmwaveTargetProcessor(mock_hass, mock_store)
+
+        placement = MmwavePlacement(
+            id="p1",
+            floor_plan_id="fp1",
+            floor_id="floor1",
+            position=Coordinates(x=250, y=250),
+            angle=0.0,
+            targets=[{"x_entity_id": "sensor.x", "y_entity_id": "sensor.y"}],
+        )
+        unsub = MagicMock()
+        processor._running = True
+        processor._placements["p1"] = placement
+        processor._target_positions["p1"] = {0: Coordinates(x=300, y=300)}
+        processor._excluded_target_positions["p1"] = {}
+        processor._filtered_target_positions["p1"] = {0: Coordinates(x=300, y=300)}
+        processor._region_hits["p1"] = {0: ["room1"]}
+        processor._unsub_listeners["p1"] = [unsub]
+
+        with patch(
+            "custom_components.inhabit.engine.mmwave_target_processor.async_dispatcher_send"
+        ) as mock_dispatch:
+            await processor.async_stop()
+
+        mock_dispatch.assert_called_once()
+        call_args = mock_dispatch.call_args[0]
+        assert call_args[5] == []
+        unsub.assert_called_once()
+        assert processor._placements == {}
+        assert processor._region_hits == {}
+
     def test_fan_deadzone_hides_target_and_clears_regions(self, mock_hass, mock_store):
         """A target inside a fan deadzone should be hidden and routed as absent."""
         from custom_components.inhabit.engine.mmwave_target_processor import (

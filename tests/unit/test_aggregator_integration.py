@@ -539,6 +539,37 @@ class TestAggregatorInitialization:
             == config_with_presence.presence_sensors
         )
 
+    def test_aggregator_uses_non_default_config_timeouts(
+        self, mock_hass, config_with_presence, state_changes
+    ):
+        """Custom motion and presence timeouts are passed to the aggregator."""
+        config_with_presence.motion_timeout = 45
+        config_with_presence.presence_timeout = 180
+
+        machine, changes = _make_machine(mock_hass, config_with_presence, state_changes)
+
+        assert machine._aggregator.motion_decay_seconds == 45.0
+        assert machine._aggregator.presence_decay_seconds == 180.0
+        assert machine._aggregator.occupancy_decay_seconds == 180.0
+
+    def test_inverted_unavailable_sensor_is_not_active(
+        self, mock_hass, config_with_presence, state_changes
+    ):
+        """Unavailable inverted sensors should not become active."""
+        config_with_presence.motion_sensors[0].inverted = True
+        machine, changes = _make_machine(mock_hass, config_with_presence, state_changes)
+
+        assert (
+            machine._is_sensor_active(MagicMock(state="unavailable"), inverted=True)
+            is False
+        )
+        assert (
+            machine._aggregator._is_sensor_active(
+                MagicMock(state="unknown"), inverted=True
+            )
+            is False
+        )
+
 
 class TestConfidenceFromAggregator:
     """Test that confidence is now derived from the aggregator."""
