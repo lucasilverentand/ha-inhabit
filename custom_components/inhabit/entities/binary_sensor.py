@@ -352,13 +352,12 @@ class VirtualOccupancySensor(RestoreEntity, BinarySensorEntity):
             if restored_state_data:
                 self._state_data = restored_state_data
 
-        # Get initial state from engine. Keep restored occupied/checking states
-        # until the startup settle reconciliation republishes current engine state.
+        # Prefer the engine's startup snapshot over HA's restored state. A restored
+        # occupied value can otherwise emit a fresh "on" event during HA boot before
+        # live motion, presence, and door entities have settled.
         sensor_engine = self.hass.data[DOMAIN]["sensor_engine"]
         state = sensor_engine.get_state(self._room_id)
-        if state and (
-            restored_state_data is None or state.state != OccupancyState.VACANT
-        ):
+        if state:
             self._state_data = state
 
         # Subscribe to state changes
