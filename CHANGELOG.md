@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.13](https://github.com/lucasilverentand/ha-inhabit/compare/v0.14.12...v0.14.13) (2026-06-21)
+
+
+### Bug Fixes
+
+* delay exit checks after door activity ([ca048d8](https://github.com/lucasilverentand/ha-inhabit/commit/ca048d875da98eebcfca32d5b557814640238704))
+
 ## [0.14.12](https://github.com/lucasilverentand/ha-inhabit/compare/v0.14.11...v0.14.12) (2026-06-21)
 
 
