@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.const import STATE_ON, STATE_UNAVAILABLE, STATE_UNKNOWN
@@ -95,11 +95,13 @@ class OccupancyStateMachine:
         self._unsub_state_listeners: list[Callable[[], None]] = []
         self._checking_timer: Callable[[], None] | None = None
         self._unsealed_activity_timer: Callable[[], None] | None = None
+        self._post_close_hold_timer: Callable[[], None] | None = None
         self._checking_timeout_bump: int = 0
         self._running = False
         self._occupied_since: datetime | None = None
         self._last_unsealed_activity_at: datetime | None = None
         self._last_sustained_activity_at: datetime | None = None
+        self._post_close_hold_until: datetime | None = None
         self._sensor_last_triggered: dict[str, datetime] = {}
         self._last_known_door_states: dict[str, bool] = {}  # entity_id -> was_open
         self._awaiting_seal_confirmation = False
@@ -289,6 +291,7 @@ class OccupancyStateMachine:
 
         self._cancel_checking_timer()
         self._cancel_unsealed_activity_timer()
+        self._cancel_post_close_hold()
 
         for unsub in self._unsub_state_listeners:
             try:
@@ -337,6 +340,7 @@ class OccupancyStateMachine:
             self._state.checking_started_at = datetime.now()
             self._break_seal("manual override to CHECKING")
             self._cancel_unsealed_activity_timer()
+            self._cancel_post_close_hold()
             self._start_checking_timer()
         else:
             # VACANT
@@ -350,6 +354,7 @@ class OccupancyStateMachine:
             self._state.contributing_sensors = []
             self._last_unsealed_activity_at = None
             self._last_sustained_activity_at = None
+            self._cancel_post_close_hold()
 
         _LOGGER.info(
             "Room %s state: %s → %s (%s)",
@@ -719,6 +724,7 @@ class OccupancyStateMachine:
                 elif self._state.state == OccupancyState.OCCUPIED:
                     self._restart_unsealed_timer_from_active_signals()
             self._awaiting_seal_confirmation = False
+            self._cancel_post_close_hold()
             return
 
         is_open = self._is_sensor_active(new_state, binding.inverted)
@@ -747,6 +753,7 @@ class OccupancyStateMachine:
         if is_open:
             # Door opened — break the seal
             self._awaiting_seal_confirmation = False
+            self._cancel_post_close_hold()
             if self._seal_tracker.is_sealed:
                 self._break_seal(f"door {entity_id} opened")
 
@@ -773,6 +780,12 @@ class OccupancyStateMachine:
                     reason=f"door {entity_id} closed",
                     metadata={"door_states": self._state.door_states_at_detection},
                 )
+                if (
+                    self._state.state == OccupancyState.OCCUPIED
+                    and not self._seal_tracker.is_sealed
+                    and self._any_occupancy_signal_active()
+                ):
+                    self._start_post_close_hold(f"door {entity_id} closed")
 
     @callback
     def _handle_exit_sensor_event(self, event: Event) -> None:
@@ -1016,6 +1029,7 @@ class OccupancyStateMachine:
         self._seal_tracker.establish()
         self._awaiting_seal_confirmation = False
         self._cancel_unsealed_activity_timer()
+        self._cancel_post_close_hold()
         self._sync_seal_state()
         self._state.seal_broken_at = None
         self._snapshot_door_states()
@@ -1037,10 +1051,12 @@ class OccupancyStateMachine:
         """Break the door seal on the room."""
         if not self._seal_tracker.is_sealed:
             self._awaiting_seal_confirmation = False
+            self._cancel_post_close_hold()
             return
 
         self._seal_tracker.break_seal()
         self._awaiting_seal_confirmation = False
+        self._cancel_post_close_hold()
         self._state.sealed = False
         self._state.seal_probability = 0.0
         self._state.seal_broken_at = datetime.now()
@@ -1168,6 +1184,7 @@ class OccupancyStateMachine:
         self._state.state = OccupancyState.CHECKING
         self._state.checking_started_at = datetime.now()
         self._cancel_unsealed_activity_timer()
+        self._cancel_post_close_hold()
         self._start_checking_timer()
 
         effective_timeout = (
@@ -1268,6 +1285,7 @@ class OccupancyStateMachine:
 
         self._cancel_checking_timer()
         self._cancel_unsealed_activity_timer()
+        self._cancel_post_close_hold()
         self._seal_tracker.reset()
         self._awaiting_seal_confirmation = False
         old_state = self._state.state
@@ -1393,6 +1411,21 @@ class OccupancyStateMachine:
             )
             return
 
+        if self._post_close_hold_active():
+            _LOGGER.debug(
+                "Room %s: all sensors clear during post-close confirmation hold, "
+                "staying OCCUPIED",
+                self.config.room_id,
+            )
+            self._diagnose(
+                "transition_blocked",
+                category="seal",
+                new_state=OccupancyState.CHECKING,
+                reason="post-close confirmation hold active",
+                blockers=["post_close_hold"],
+            )
+            return
+
         # Check aggregator probability — stay OCCUPIED if still above vacant threshold
         probability = self._aggregator.get_presence_probability()
         if probability > self.config.vacant_threshold:
@@ -1490,6 +1523,10 @@ class OccupancyStateMachine:
             return
 
         now = datetime.now()
+        post_close_remaining = self._post_close_hold_remaining(now)
+        if post_close_remaining > 0:
+            return
+
         activity_remaining = self._unsealed_activity_remaining(now)
         if activity_remaining > 0:
             self._start_unsealed_activity_timer(activity_remaining)
@@ -1501,6 +1538,56 @@ class OccupancyStateMachine:
             return
 
         self._transition_to_checking("unsealed activity timeout")
+
+    def _start_post_close_hold(self, reason: str) -> None:
+        """Hold occupancy briefly after closing a previously unsealed room."""
+        self._cancel_post_close_hold()
+        timeout = self._unsealed_activity_timeout()
+        self._post_close_hold_until = datetime.now() + timedelta(seconds=timeout)
+
+        @callback
+        def _post_close_hold_timeout(_now: Any) -> None:
+            self._post_close_hold_timer = None
+            self._post_close_hold_until = None
+            if (
+                self._state.state == OccupancyState.OCCUPIED
+                and self._awaiting_seal_confirmation
+                and not self._seal_blocks_vacancy()
+            ):
+                self._handle_unsealed_activity_timeout()
+
+        self._post_close_hold_timer = async_call_later(
+            self.hass,
+            timeout,
+            _post_close_hold_timeout,
+        )
+        self._diagnose(
+            "post_close_hold_started",
+            category="seal",
+            reason=reason,
+            metadata={"timeout": timeout},
+        )
+
+    def _cancel_post_close_hold(self) -> None:
+        """Cancel a pending post-close confirmation hold."""
+        if self._post_close_hold_timer:
+            self._post_close_hold_timer()
+            self._post_close_hold_timer = None
+        self._post_close_hold_until = None
+
+    def _post_close_hold_active(self) -> bool:
+        """Return whether a post-close hold is currently blocking checking."""
+        return self._post_close_hold_remaining(datetime.now()) > 0
+
+    def _post_close_hold_remaining(self, now: datetime) -> float:
+        """Return seconds remaining on the post-close confirmation hold."""
+        if self._post_close_hold_until is None:
+            return 0.0
+        remaining = (self._post_close_hold_until - now).total_seconds()
+        if remaining <= 0:
+            self._post_close_hold_until = None
+            return 0.0
+        return remaining
 
     def _unsealed_activity_remaining(self, now: datetime) -> float:
         """Return seconds of unsealed activity trust still remaining."""
