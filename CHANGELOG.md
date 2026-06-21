@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.15](https://github.com/lucasilverentand/ha-inhabit/compare/v0.14.14...v0.14.15) (2026-06-21)
+
+
+### Bug Fixes
+
+* hold occupancy after open-door close ([7bc8dc1](https://github.com/lucasilverentand/ha-inhabit/commit/7bc8dc1f18b088fffd9c4899015b0b801c67bf36))
+
 ## [0.14.14](https://github.com/lucasilverentand/ha-inhabit/compare/v0.14.13...v0.14.14) (2026-06-21)
 
 
