@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.12](https://github.com/lucasilverentand/ha-inhabit/compare/v0.14.11...v0.14.12) (2026-06-21)
+
+
+### Bug Fixes
+
+* suppress restored occupancy at startup ([#91](https://github.com/lucasilverentand/ha-inhabit/issues/91)) ([26e9a91](https://github.com/lucasilverentand/ha-inhabit/commit/26e9a918bbf9316978f0562004e6edc61b70baa0))
+
 ## [0.14.11](https://github.com/lucasilverentand/ha-inhabit/compare/v0.14.10...v0.14.11) (2026-06-21)
 
 
