@@ -316,11 +316,23 @@ class OccupancyStateMachine:
 
         old_state = self._state.state
         self._state.state = new_state
+        is_override = "override" in reason
 
         if new_state == OccupancyState.OCCUPIED:
             self._cancel_checking_timer()
             self._state.checking_started_at = None
-            self._evaluate_seal("manual override", fresh_detection=False)
+            if (
+                is_override
+                and self.config.door_seals_room
+                and self.config.door_sensors
+                and self._all_doors_closed()
+                and not self._any_door_unavailable()
+            ):
+                self._establish_seal(reason)
+            else:
+                self._evaluate_seal(reason or "manual state set", fresh_detection=False)
+            if is_override and not self._seal_blocks_vacancy():
+                self._record_unsealed_activity("override")
         elif new_state == OccupancyState.CHECKING:
             self._state.checking_started_at = datetime.now()
             self._break_seal("manual override to CHECKING")

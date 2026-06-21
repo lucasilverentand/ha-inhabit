@@ -1055,6 +1055,85 @@ class TestDoorSealLogic:
         )
         assert machine.state.sealed is True
 
+    def test_closed_door_motion_from_checking_keeps_occupancy_on(
+        self, mock_hass, seal_config, state_changes
+    ):
+        """Fresh closed-door motion cancels CHECKING and seals the room occupied."""
+        self._setup_sensor_states(
+            mock_hass, motion_state=STATE_OFF, door_state=STATE_OFF
+        )
+        machine, _ = self._make_machine(mock_hass, seal_config, state_changes)
+        machine._state.state = OccupancyState.CHECKING
+        machine._state.checking_started_at = datetime.now()
+        checking_cancel = MagicMock()
+        machine._checking_timer = checking_cancel
+
+        self._setup_sensor_states(
+            mock_hass, motion_state=STATE_ON, door_state=STATE_OFF
+        )
+        machine._handle_motion_event(
+            self._make_event("binary_sensor.room_motion", STATE_ON)
+        )
+
+        assert machine.state.state == OccupancyState.OCCUPIED
+        assert machine.state.sealed is True
+        assert machine.state.checking_started_at is None
+        checking_cancel.assert_called_once()
+
+    def test_closed_door_override_seals_until_door_opens(
+        self, mock_hass, seal_config, state_changes
+    ):
+        """An occupied override with the door closed holds until the door opens."""
+        self._setup_sensor_states(
+            mock_hass, motion_state=STATE_OFF, door_state=STATE_OFF
+        )
+        machine, _ = self._make_machine(mock_hass, seal_config, state_changes)
+
+        with patch(
+            "custom_components.inhabit.engine.occupancy_state_machine.async_call_later",
+            lambda hass, delay, cb: MagicMock(),
+        ):
+            machine.set_state(OccupancyState.OCCUPIED, "manual override")
+            assert machine.state.state == OccupancyState.OCCUPIED
+            assert machine.state.sealed is True
+
+            machine._check_all_sensors_clear()
+            assert machine.state.state == OccupancyState.OCCUPIED
+
+            self._setup_sensor_states(
+                mock_hass, motion_state=STATE_OFF, door_state=STATE_ON
+            )
+            machine._handle_door_event(
+                self._make_event("binary_sensor.room_door", STATE_ON)
+            )
+
+            assert machine.state.sealed is False
+            assert machine.state.state == OccupancyState.CHECKING
+
+    def test_open_door_override_times_out_without_empty_signal(
+        self, mock_hass, seal_config, state_changes
+    ):
+        """An occupied override without a closed-door seal gets idle-time bounded."""
+        seal_config.unsealed_activity_timeout = 30
+        self._setup_sensor_states(
+            mock_hass, motion_state=STATE_OFF, door_state=STATE_ON
+        )
+        machine, _ = self._make_machine(mock_hass, seal_config, state_changes)
+
+        with patch(
+            "custom_components.inhabit.engine.occupancy_state_machine.async_call_later",
+            lambda hass, delay, cb: MagicMock(),
+        ):
+            machine.set_state(OccupancyState.OCCUPIED, "manual override")
+            assert machine.state.state == OccupancyState.OCCUPIED
+            assert machine.state.sealed is False
+            assert machine._last_unsealed_activity_at is not None
+
+            machine._last_unsealed_activity_at = datetime.now() - timedelta(seconds=31)
+            machine._handle_unsealed_activity_timeout()
+
+            assert machine.state.state == OccupancyState.CHECKING
+
     def test_fresh_presence_after_door_close_confirms_seal(
         self, mock_hass, seal_config, state_changes
     ):
