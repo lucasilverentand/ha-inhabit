@@ -285,8 +285,8 @@ class TestSensorRestoreState:
         assert entity.is_on is True
         assert entity._state_data.state == OccupancyState.OCCUPIED
 
-    async def test_added_keeps_restored_occupied_until_reconcile(self, mock_hass):
-        """A startup VACANT engine state should not clear restored occupancy."""
+    async def test_added_prefers_engine_vacant_over_restored_occupied(self, mock_hass):
+        """A startup VACANT engine state should suppress restored occupied state."""
         sensor_engine = MagicMock()
         sensor_engine.get_state.return_value = OccupancyStateData(
             state=OccupancyState.VACANT
@@ -308,8 +308,8 @@ class TestSensorRestoreState:
         ):
             await entity.async_added_to_hass()
 
-        assert entity.is_on is True
-        assert entity._state_data.state == OccupancyState.OCCUPIED
+        assert entity.is_on is False
+        assert entity._state_data.state == OccupancyState.VACANT
 
 
 class TestOutsideExposureSensor:
