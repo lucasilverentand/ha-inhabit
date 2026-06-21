@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.14](https://github.com/lucasilverentand/ha-inhabit/compare/v0.14.13...v0.14.14) (2026-06-21)
+
+
+### Bug Fixes
+
+* revert delayed exit checks ([#96](https://github.com/lucasilverentand/ha-inhabit/issues/96)) ([1672b5f](https://github.com/lucasilverentand/ha-inhabit/commit/1672b5f740683a86881cdaefe12f5fefbfb9d1f5))
+
 ## [0.14.13](https://github.com/lucasilverentand/ha-inhabit/compare/v0.14.12...v0.14.13) (2026-06-21)
 
 
