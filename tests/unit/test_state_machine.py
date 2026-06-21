@@ -1134,6 +1134,258 @@ class TestDoorSealLogic:
 
             assert machine.state.state == OccupancyState.CHECKING
 
+    def test_long_occupied_quick_door_cycle_motion_clear_delays_checking(
+        self, mock_hass, seal_config, state_changes
+    ):
+        """A likely exit after a quick door cycle gets a short grace delay."""
+        self._setup_sensor_states(
+            mock_hass, motion_state=STATE_ON, door_state=STATE_OFF
+        )
+        machine, _ = self._make_machine(mock_hass, seal_config, state_changes)
+        scheduled: list[tuple[float, object, MagicMock]] = []
+
+        def mock_async_call_later(hass, delay, callback):
+            cancel = MagicMock()
+            scheduled.append((delay, callback, cancel))
+            return cancel
+
+        with patch(
+            "custom_components.inhabit.engine.occupancy_state_machine.async_call_later",
+            mock_async_call_later,
+        ):
+            machine._handle_motion_event(
+                self._make_event("binary_sensor.room_motion", STATE_ON)
+            )
+            machine._occupied_since = datetime.now() - timedelta(seconds=121)
+
+            self._setup_sensor_states(
+                mock_hass, motion_state=STATE_ON, door_state=STATE_ON
+            )
+            machine._handle_door_event(
+                self._make_event("binary_sensor.room_door", STATE_ON)
+            )
+
+            self._setup_sensor_states(
+                mock_hass, motion_state=STATE_ON, door_state=STATE_OFF
+            )
+            machine._handle_door_event(
+                self._make_event("binary_sensor.room_door", STATE_OFF)
+            )
+
+            self._setup_sensor_states(
+                mock_hass, motion_state=STATE_OFF, door_state=STATE_OFF
+            )
+            machine._handle_motion_event(
+                self._make_event("binary_sensor.room_motion", STATE_OFF)
+            )
+
+            exit_timer = next(item for item in scheduled if item[0] == 15)
+            assert machine.state.state == OccupancyState.OCCUPIED
+
+            exit_timer[1](None)
+
+            assert machine.state.state == OccupancyState.CHECKING
+
+    def test_long_occupied_door_left_open_motion_clear_delays_checking(
+        self, mock_hass, seal_config, state_changes
+    ):
+        """A likely exit also gets checked when the door is left open."""
+        self._setup_sensor_states(
+            mock_hass, motion_state=STATE_ON, door_state=STATE_OFF
+        )
+        machine, _ = self._make_machine(mock_hass, seal_config, state_changes)
+        scheduled: list[tuple[float, object, MagicMock]] = []
+
+        def mock_async_call_later(hass, delay, callback):
+            cancel = MagicMock()
+            scheduled.append((delay, callback, cancel))
+            return cancel
+
+        with patch(
+            "custom_components.inhabit.engine.occupancy_state_machine.async_call_later",
+            mock_async_call_later,
+        ):
+            machine._handle_motion_event(
+                self._make_event("binary_sensor.room_motion", STATE_ON)
+            )
+            machine._occupied_since = datetime.now() - timedelta(seconds=121)
+
+            self._setup_sensor_states(
+                mock_hass, motion_state=STATE_ON, door_state=STATE_ON
+            )
+            machine._handle_door_event(
+                self._make_event("binary_sensor.room_door", STATE_ON)
+            )
+
+            self._setup_sensor_states(
+                mock_hass, motion_state=STATE_OFF, door_state=STATE_ON
+            )
+            machine._handle_motion_event(
+                self._make_event("binary_sensor.room_motion", STATE_OFF)
+            )
+
+            exit_timer = next(item for item in scheduled if item[0] == 15)
+            assert machine.state.state == OccupancyState.OCCUPIED
+
+            exit_timer[1](None)
+
+            assert machine.state.state == OccupancyState.CHECKING
+
+    def test_short_occupied_door_activity_does_not_start_exit_check(
+        self, mock_hass, seal_config, state_changes
+    ):
+        """Recent occupancy uses the existing clear-sensor path, not exit inference."""
+        self._setup_sensor_states(
+            mock_hass, motion_state=STATE_ON, door_state=STATE_OFF
+        )
+        machine, _ = self._make_machine(mock_hass, seal_config, state_changes)
+        scheduled: list[tuple[float, object, MagicMock]] = []
+
+        def mock_async_call_later(hass, delay, callback):
+            cancel = MagicMock()
+            scheduled.append((delay, callback, cancel))
+            return cancel
+
+        with patch(
+            "custom_components.inhabit.engine.occupancy_state_machine.async_call_later",
+            mock_async_call_later,
+        ):
+            machine._handle_motion_event(
+                self._make_event("binary_sensor.room_motion", STATE_ON)
+            )
+            machine._occupied_since = datetime.now() - timedelta(seconds=60)
+
+            self._setup_sensor_states(
+                mock_hass, motion_state=STATE_ON, door_state=STATE_ON
+            )
+            machine._handle_door_event(
+                self._make_event("binary_sensor.room_door", STATE_ON)
+            )
+
+            self._setup_sensor_states(
+                mock_hass, motion_state=STATE_OFF, door_state=STATE_ON
+            )
+            machine._handle_motion_event(
+                self._make_event("binary_sensor.room_motion", STATE_OFF)
+            )
+
+            assert all(delay != 15 for delay, _, _ in scheduled)
+
+    def test_exit_check_cancelled_by_fresh_motion(
+        self, mock_hass, seal_config, state_changes
+    ):
+        """Fresh motion cancels a pending likely-exit check."""
+        self._setup_sensor_states(
+            mock_hass, motion_state=STATE_ON, door_state=STATE_OFF
+        )
+        machine, _ = self._make_machine(mock_hass, seal_config, state_changes)
+        scheduled: list[tuple[float, object, MagicMock]] = []
+
+        def mock_async_call_later(hass, delay, callback):
+            cancel = MagicMock()
+            scheduled.append((delay, callback, cancel))
+            return cancel
+
+        with patch(
+            "custom_components.inhabit.engine.occupancy_state_machine.async_call_later",
+            mock_async_call_later,
+        ):
+            machine._handle_motion_event(
+                self._make_event("binary_sensor.room_motion", STATE_ON)
+            )
+            machine._occupied_since = datetime.now() - timedelta(seconds=121)
+
+            self._setup_sensor_states(
+                mock_hass, motion_state=STATE_ON, door_state=STATE_ON
+            )
+            machine._handle_door_event(
+                self._make_event("binary_sensor.room_door", STATE_ON)
+            )
+
+            self._setup_sensor_states(
+                mock_hass, motion_state=STATE_OFF, door_state=STATE_ON
+            )
+            machine._handle_motion_event(
+                self._make_event("binary_sensor.room_motion", STATE_OFF)
+            )
+            exit_timer = next(item for item in scheduled if item[0] == 15)
+
+            self._setup_sensor_states(
+                mock_hass, motion_state=STATE_ON, door_state=STATE_ON
+            )
+            machine._handle_motion_event(
+                self._make_event("binary_sensor.room_motion", STATE_ON)
+            )
+
+            exit_timer[2].assert_called_once()
+            exit_timer[1](None)
+            assert machine.state.state == OccupancyState.OCCUPIED
+
+    def test_exit_check_blocked_by_active_presence(
+        self, mock_hass, seal_config, state_changes
+    ):
+        """Live presence at the end of the delay keeps occupancy on."""
+        seal_config.presence_sensors = [
+            SensorBinding(
+                entity_id="binary_sensor.room_presence",
+                sensor_type="presence",
+                weight=1.0,
+            )
+        ]
+        self._setup_sensor_states(
+            mock_hass,
+            motion_state=STATE_ON,
+            door_state=STATE_OFF,
+            presence_state=STATE_OFF,
+        )
+        machine, _ = self._make_machine(mock_hass, seal_config, state_changes)
+        scheduled: list[tuple[float, object, MagicMock]] = []
+
+        def mock_async_call_later(hass, delay, callback):
+            cancel = MagicMock()
+            scheduled.append((delay, callback, cancel))
+            return cancel
+
+        with patch(
+            "custom_components.inhabit.engine.occupancy_state_machine.async_call_later",
+            mock_async_call_later,
+        ):
+            machine._handle_motion_event(
+                self._make_event("binary_sensor.room_motion", STATE_ON)
+            )
+            machine._occupied_since = datetime.now() - timedelta(seconds=121)
+
+            self._setup_sensor_states(
+                mock_hass,
+                motion_state=STATE_ON,
+                door_state=STATE_ON,
+                presence_state=STATE_OFF,
+            )
+            machine._handle_door_event(
+                self._make_event("binary_sensor.room_door", STATE_ON)
+            )
+
+            self._setup_sensor_states(
+                mock_hass,
+                motion_state=STATE_OFF,
+                door_state=STATE_ON,
+                presence_state=STATE_OFF,
+            )
+            machine._handle_motion_event(
+                self._make_event("binary_sensor.room_motion", STATE_OFF)
+            )
+            exit_timer = next(item for item in scheduled if item[0] == 15)
+
+            self._setup_sensor_states(
+                mock_hass,
+                motion_state=STATE_OFF,
+                door_state=STATE_ON,
+                presence_state=STATE_ON,
+            )
+            exit_timer[1](None)
+
+            assert machine.state.state == OccupancyState.OCCUPIED
+
     def test_fresh_presence_after_door_close_confirms_seal(
         self, mock_hass, seal_config, state_changes
     ):

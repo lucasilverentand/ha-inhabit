@@ -27,6 +27,9 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
+EXIT_CHECK_MIN_OCCUPIED_SECONDS = 120
+EXIT_CHECK_DELAY_SECONDS = 15
+
 
 class OccupancyStateMachine:
     """
@@ -95,6 +98,7 @@ class OccupancyStateMachine:
         self._unsub_state_listeners: list[Callable[[], None]] = []
         self._checking_timer: Callable[[], None] | None = None
         self._unsealed_activity_timer: Callable[[], None] | None = None
+        self._exit_check_timer: Callable[[], None] | None = None
         self._checking_timeout_bump: int = 0
         self._running = False
         self._occupied_since: datetime | None = None
@@ -103,6 +107,7 @@ class OccupancyStateMachine:
         self._sensor_last_triggered: dict[str, datetime] = {}
         self._last_known_door_states: dict[str, bool] = {}  # entity_id -> was_open
         self._awaiting_seal_confirmation = False
+        self._exit_candidate_active = False
 
         # Presence aggregator for weighted temporal-decay probability
         self._aggregator = PresenceAggregator(
@@ -289,6 +294,7 @@ class OccupancyStateMachine:
 
         self._cancel_checking_timer()
         self._cancel_unsealed_activity_timer()
+        self._clear_exit_candidate()
 
         for unsub in self._unsub_state_listeners:
             try:
@@ -315,6 +321,7 @@ class OccupancyStateMachine:
             return
 
         old_state = self._state.state
+        self._clear_exit_candidate()
         self._state.state = new_state
         is_override = "override" in reason
 
@@ -393,6 +400,7 @@ class OccupancyStateMachine:
         )
 
         if is_active:
+            self._clear_exit_candidate()
             self._state.last_presence_at = datetime.now()
             self._record_unsealed_activity("spatial")
             self._transition_to_occupied(
@@ -561,6 +569,7 @@ class OccupancyStateMachine:
             self._reliability_tracker.on_sensor_deactivation(entity_id)
 
         if is_active:
+            self._clear_exit_candidate()
             self._state.last_motion_at = datetime.now()
             self._sensor_last_triggered[entity_id] = datetime.now()
             self._update_contributing_sensors(entity_id, add=True)
@@ -570,6 +579,14 @@ class OccupancyStateMachine:
             )
         else:
             self._update_contributing_sensors(entity_id, add=False)
+            if (
+                self._exit_candidate_active
+                and self._state.state == OccupancyState.OCCUPIED
+            ):
+                self._start_exit_check_timer(
+                    f"motion {entity_id} cleared after door activity"
+                )
+                return
             self._check_all_sensors_clear()
 
     @callback
@@ -611,6 +628,7 @@ class OccupancyStateMachine:
         )
 
         if is_active:
+            self._clear_exit_candidate()
             self._state.last_presence_at = datetime.now()
             self._sensor_last_triggered[entity_id] = datetime.now()
             self._update_contributing_sensors(entity_id, add=True)
@@ -661,6 +679,7 @@ class OccupancyStateMachine:
         )
 
         if is_active:
+            self._clear_exit_candidate()
             self._state.last_presence_at = datetime.now()
             self._sensor_last_triggered[entity_id] = datetime.now()
             self._update_contributing_sensors(entity_id, add=True)
@@ -747,6 +766,13 @@ class OccupancyStateMachine:
         if is_open:
             # Door opened — break the seal
             self._awaiting_seal_confirmation = False
+            if (
+                self._state.state == OccupancyState.OCCUPIED
+                and self._occupied_long_enough_for_exit_check()
+            ):
+                self._start_exit_candidate(f"door {entity_id} opened")
+            else:
+                self._clear_exit_candidate()
             if self._seal_tracker.is_sealed:
                 self._break_seal(f"door {entity_id} opened")
 
@@ -1016,6 +1042,7 @@ class OccupancyStateMachine:
         self._seal_tracker.establish()
         self._awaiting_seal_confirmation = False
         self._cancel_unsealed_activity_timer()
+        self._clear_exit_candidate()
         self._sync_seal_state()
         self._state.seal_broken_at = None
         self._snapshot_door_states()
@@ -1168,6 +1195,7 @@ class OccupancyStateMachine:
         self._state.state = OccupancyState.CHECKING
         self._state.checking_started_at = datetime.now()
         self._cancel_unsealed_activity_timer()
+        self._clear_exit_candidate()
         self._start_checking_timer()
 
         effective_timeout = (
@@ -1268,6 +1296,7 @@ class OccupancyStateMachine:
 
         self._cancel_checking_timer()
         self._cancel_unsealed_activity_timer()
+        self._clear_exit_candidate()
         self._seal_tracker.reset()
         self._awaiting_seal_confirmation = False
         old_state = self._state.state
@@ -1415,6 +1444,137 @@ class OccupancyStateMachine:
             return
 
         self._transition_to_checking("all sensors clear")
+
+    # ------------------------------------------------------------------
+    # Delayed exit check
+    # ------------------------------------------------------------------
+
+    def _occupied_long_enough_for_exit_check(self, now: datetime | None = None) -> bool:
+        """Return whether current occupancy is old enough for exit inference."""
+        if self._occupied_since is None:
+            return False
+
+        check_time = now or datetime.now()
+        age = (check_time - self._occupied_since).total_seconds()
+        return age >= EXIT_CHECK_MIN_OCCUPIED_SECONDS
+
+    def _start_exit_candidate(self, reason: str) -> None:
+        """Mark the room as eligible for a delayed exit check."""
+        if self._exit_candidate_active:
+            return
+
+        self._exit_candidate_active = True
+        self._diagnose(
+            "exit_candidate_started",
+            reason=reason,
+            thresholds={"min_occupied_seconds": EXIT_CHECK_MIN_OCCUPIED_SECONDS},
+        )
+
+    def _start_exit_check_timer(self, reason: str) -> None:
+        """Schedule the short grace period before checking for a likely exit."""
+        self._cancel_exit_check_timer()
+
+        @callback
+        def _exit_check_timeout(_now: Any) -> None:
+            self._exit_check_timer = None
+            self._handle_exit_check_timeout()
+
+        self._exit_check_timer = async_call_later(
+            self.hass,
+            EXIT_CHECK_DELAY_SECONDS,
+            _exit_check_timeout,
+        )
+        self._diagnose(
+            "exit_check_scheduled",
+            reason=reason,
+            metadata={"delay_seconds": EXIT_CHECK_DELAY_SECONDS},
+        )
+
+    def _cancel_exit_check_timer(self) -> None:
+        """Cancel any pending delayed exit check timer."""
+        if self._exit_check_timer:
+            self._exit_check_timer()
+            self._exit_check_timer = None
+
+    def _clear_exit_candidate(self) -> None:
+        """Clear pending delayed exit inference state."""
+        self._exit_candidate_active = False
+        self._cancel_exit_check_timer()
+
+    def _handle_exit_check_timeout(self) -> None:
+        """Move likely exits to CHECKING after the brief departure grace period."""
+        if not self._exit_candidate_active:
+            return
+
+        if self._state.state != OccupancyState.OCCUPIED:
+            self._clear_exit_candidate()
+            return
+
+        if self._any_occupancy_signal_active():
+            self._diagnose(
+                "exit_check_cancelled",
+                reason="live occupancy signal active",
+                blockers=["active_signal"],
+            )
+            self._clear_exit_candidate()
+            return
+
+        if self.config.hold_until_exit and self.config.exit_sensors:
+            self._diagnose(
+                "transition_blocked",
+                new_state=OccupancyState.CHECKING,
+                reason="hold_until_exit waits for exit sensor",
+                blockers=["hold_until_exit"],
+            )
+            self._clear_exit_candidate()
+            return
+
+        if self._is_occupied_by_children and self._is_occupied_by_children(
+            self.config.room_id
+        ):
+            self._diagnose(
+                "transition_blocked",
+                new_state=OccupancyState.CHECKING,
+                reason="occupied child zone",
+                blockers=["child_zone"],
+            )
+            self._clear_exit_candidate()
+            return
+
+        if self._has_phantom_hold and self._has_phantom_hold(self.config.room_id):
+            self._diagnose(
+                "transition_blocked",
+                new_state=OccupancyState.CHECKING,
+                reason="phantom hold active",
+                blockers=["phantom_hold"],
+            )
+            self._clear_exit_candidate()
+            return
+
+        if self._seal_blocks_vacancy():
+            self._diagnose(
+                "transition_blocked",
+                category="seal",
+                new_state=OccupancyState.CHECKING,
+                reason="confirmed closed-door seal blocks checking",
+                probability=self._seal_tracker.probability,
+                blockers=["seal"],
+            )
+            self._clear_exit_candidate()
+            return
+
+        if self._can_go_vacant and not self._can_go_vacant(self.config.room_id):
+            self._diagnose(
+                "transition_blocked",
+                new_state=OccupancyState.CHECKING,
+                reason="house guard blocked vacancy",
+                blockers=["house_guard"],
+            )
+            self._clear_exit_candidate()
+            return
+
+        self._exit_candidate_active = False
+        self._transition_to_checking("exit check after door activity and motion clear")
 
     # ------------------------------------------------------------------
     # Unsealed activity timer
