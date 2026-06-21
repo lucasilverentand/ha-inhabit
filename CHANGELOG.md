@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.11](https://github.com/lucasilverentand/ha-inhabit/compare/v0.14.10...v0.14.11) (2026-06-21)
+
+
+### Bug Fixes
+
+* hold closed-door occupancy overrides ([#88](https://github.com/lucasilverentand/ha-inhabit/issues/88)) ([4bfd43d](https://github.com/lucasilverentand/ha-inhabit/commit/4bfd43df0943440e62c1cc74cd6145ef6967b381))
+
 ## [0.14.10](https://github.com/lucasilverentand/ha-inhabit/compare/v0.14.9...v0.14.10) (2026-06-20)
 
 
