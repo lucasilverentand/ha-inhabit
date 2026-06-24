@@ -24,16 +24,16 @@ from custom_components.inhabit.models.virtual_sensor import (
     VirtualSensorConfig,
 )
 from custom_components.inhabit.occupancy_policy import (
-    PROFILE_LONG_STAY,
-    PROFILE_OPEN_AREA,
-    PROFILE_SHORT_STAY,
-    PROFILE_SLEEP,
-    PROFILE_TRANSIT,
-    PROFILE_UTILITY,
     apply_occupancy_profile,
 )
 
 from .house_simulator import FakeHouseSimulator, FakeRoomSpec, SensorType
+from .local_home_layout import (
+    LOCAL_HOME_PHANTOM_HOLD_SECONDS_BY_ROOM,
+    LOCAL_HOME_PROFILE_BY_ROOM,
+    LOCAL_HOME_ROOM_SPECS,
+    LOCAL_HOME_TRANSIT_ROOM_IDS,
+)
 
 
 @dataclass
@@ -257,125 +257,14 @@ class AlgorithmScenarioSimulator:
         policy_overrides_by_room: dict[str, dict[str, Any]] | None = None,
     ) -> AlgorithmScenarioSimulator:
         """Create a neutral multi-area topology for local house-level testing."""
-        room_specs = [
-            FakeRoomSpec(
-                "level0_entry",
-                "Entry Node",
-                "level_0",
-                ["level0_transit"],
-            ),
-            FakeRoomSpec(
-                "level0_transit",
-                "Transit Core",
-                "level_0",
-                [
-                    "level0_entry",
-                    "level0_open_area",
-                    "level0_cooking",
-                    "level0_short_stay",
-                    "level0_utility",
-                    "vertical_link",
-                ],
-            ),
-            FakeRoomSpec(
-                "level0_open_area",
-                "Open Area Alpha",
-                "level_0",
-                ["level0_transit", "level0_cooking"],
-            ),
-            FakeRoomSpec(
-                "level0_cooking",
-                "Open Area Beta",
-                "level_0",
-                ["level0_transit", "level0_open_area"],
-            ),
-            FakeRoomSpec(
-                "level0_short_stay",
-                "Short Stay Alpha",
-                "level_0",
-                ["level0_transit"],
-            ),
-            FakeRoomSpec(
-                "level0_utility",
-                "Utility Alpha",
-                "level_0",
-                ["level0_transit"],
-            ),
-            FakeRoomSpec(
-                "vertical_link",
-                "Vertical Link",
-                "level_0",
-                ["level0_transit", "level1_transit"],
-            ),
-            FakeRoomSpec(
-                "level1_transit",
-                "Transit Upper",
-                "level_1",
-                [
-                    "vertical_link",
-                    "level1_sleep_primary",
-                    "level1_sleep_secondary",
-                    "level1_short_stay",
-                    "level1_wash",
-                ],
-            ),
-            FakeRoomSpec(
-                "level1_sleep_primary",
-                "Sleep Zone Alpha",
-                "level_1",
-                ["level1_transit"],
-            ),
-            FakeRoomSpec(
-                "level1_sleep_secondary",
-                "Sleep Zone Beta",
-                "level_1",
-                ["level1_transit"],
-            ),
-            FakeRoomSpec(
-                "level1_short_stay",
-                "Short Stay Beta",
-                "level_1",
-                ["level1_transit"],
-            ),
-            FakeRoomSpec(
-                "level1_wash",
-                "Wash Zone Alpha",
-                "level_1",
-                ["level1_transit"],
-            ),
-        ]
-        profile_by_room = {
-            "level0_entry": PROFILE_TRANSIT,
-            "level0_transit": PROFILE_TRANSIT,
-            "level0_open_area": PROFILE_LONG_STAY,
-            "level0_cooking": PROFILE_OPEN_AREA,
-            "level0_short_stay": PROFILE_SHORT_STAY,
-            "level0_utility": PROFILE_UTILITY,
-            "vertical_link": PROFILE_TRANSIT,
-            "level1_transit": PROFILE_TRANSIT,
-            "level1_sleep_primary": PROFILE_SLEEP,
-            "level1_sleep_secondary": PROFILE_SLEEP,
-            "level1_short_stay": PROFILE_SHORT_STAY,
-            "level1_wash": PROFILE_SHORT_STAY,
-        }
         return cls(
-            room_ids=[spec.id for spec in room_specs],
-            room_specs=room_specs,
+            room_ids=[spec.id for spec in LOCAL_HOME_ROOM_SPECS],
+            room_specs=LOCAL_HOME_ROOM_SPECS,
             enable_transition_predictor=True,
-            transit_room_ids={
-                "level0_entry",
-                "level0_transit",
-                "vertical_link",
-                "level1_transit",
-            },
-            presence_room_ids={spec.id for spec in room_specs},
-            phantom_hold_seconds_by_room={
-                "level0_entry": DEFAULT_TRANSIT_PHANTOM_HOLD,
-                "level0_transit": DEFAULT_TRANSIT_PHANTOM_HOLD,
-                "vertical_link": DEFAULT_TRANSIT_PHANTOM_HOLD,
-                "level1_transit": DEFAULT_TRANSIT_PHANTOM_HOLD,
-            },
-            profile_by_room=profile_by_room,
+            transit_room_ids=LOCAL_HOME_TRANSIT_ROOM_IDS,
+            presence_room_ids={spec.id for spec in LOCAL_HOME_ROOM_SPECS},
+            phantom_hold_seconds_by_room=LOCAL_HOME_PHANTOM_HOLD_SECONDS_BY_ROOM,
+            profile_by_room=LOCAL_HOME_PROFILE_BY_ROOM,
             policy_overrides_by_room=policy_overrides_by_room,
         )
 

@@ -1567,6 +1567,19 @@ class OccupancyStateMachine:
         if post_close_remaining > 0:
             return
 
+        if self._spatial_presence_active():
+            self._last_unsealed_activity_at = now
+            self._last_sustained_activity_at = now
+            self._state.confidence = self._calculate_confidence()
+            self._start_unsealed_activity_timer()
+            self._diagnose(
+                "transition_blocked",
+                new_state=OccupancyState.CHECKING,
+                reason="sustained presence still active",
+                blockers=["sustained_presence"],
+            )
+            return
+
         activity_remaining = self._unsealed_activity_remaining(now)
         if activity_remaining > 0:
             self._start_unsealed_activity_timer(activity_remaining)
@@ -1656,6 +1669,10 @@ class OccupancyStateMachine:
         if self._any_presence_sensor_active():
             return True
 
+        return self._spatial_presence_active()
+
+    def _spatial_presence_active(self) -> bool:
+        """Check whether any spatial presence source currently has a target."""
         return any(
             sensor_id.startswith("_spatial_")
             for sensor_id in self._state.contributing_sensors

@@ -4,6 +4,12 @@ from __future__ import annotations
 
 from custom_components.inhabit.const import DEFAULT_TRANSIT_PHANTOM_HOLD, OccupancyState
 from tests.fake_house.algorithm_simulator import AlgorithmScenarioSimulator
+from tests.fake_house.local_home_layout import local_home_layout_summary
+from tests.fake_house.local_home_scenarios import (
+    hallway_left_open_to_short_stay_then_close,
+    hallway_multi_mmwave_clears_after_last_target,
+    short_stay_exit_back_to_hallway,
+)
 
 
 def test_open_toilet_door_hallway_walk_in_then_close_with_mmwave_reseals():
@@ -226,3 +232,45 @@ def test_anonymized_local_home_vertical_transit_phantom_expires():
 
         sim.wait(30)
         sim.assert_room("level0_transit", OccupancyState.VACANT, sealed=False)
+
+
+def test_anonymized_local_home_layout_has_segmented_hallways_and_mmwave_sources():
+    """The local fixture mirrors the hallway topology needed for regressions."""
+    layout = local_home_layout_summary()
+    rooms = {room["id"]: room for room in layout["rooms"]}
+
+    assert "level0_front_hall" in rooms
+    assert "level0_short_stay_lobby" in rooms
+    assert "level1_transit" in rooms
+    assert "level0_short_stay" in rooms["level0_transit"]["connected_rooms"]
+    assert "level0_short_stay" in rooms["level0_short_stay_lobby"]["connected_rooms"]
+    assert rooms["level0_transit"]["mmwave_sources"] == [
+        "hallway_ceiling_mmwave",
+        "hallway_wall_mmwave",
+    ]
+
+
+def test_local_home_scenario_hallway_left_open_to_short_stay_then_close():
+    """A door-left-open walk into short stay settles the hallway."""
+    result = hallway_left_open_to_short_stay_then_close()
+
+    assert (
+        result["final_states"]["level0_short_stay"]["state"] == OccupancyState.OCCUPIED
+    )
+    assert result["final_states"]["level0_short_stay"]["sealed"] is True
+    assert result["final_states"]["level0_transit"]["state"] == OccupancyState.VACANT
+
+
+def test_local_home_scenario_hallway_multi_mmwave_clears_after_last_target():
+    """A multi-mmWave hallway only clears when the last target source clears."""
+    result = hallway_multi_mmwave_clears_after_last_target()
+
+    assert result["final_states"]["level0_transit"]["state"] == OccupancyState.VACANT
+
+
+def test_local_home_scenario_short_stay_exit_back_to_hallway():
+    """A settled short-stay exit does not leave hallway occupancy stuck."""
+    result = short_stay_exit_back_to_hallway()
+
+    assert result["final_states"]["level0_short_stay"]["state"] == OccupancyState.VACANT
+    assert result["final_states"]["level0_transit"]["state"] == OccupancyState.VACANT
