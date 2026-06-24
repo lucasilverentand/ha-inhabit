@@ -53,6 +53,7 @@ class FakeRoomSpec:
     name: str
     floor: str
     connected_rooms: list[str] = field(default_factory=list)
+    door_sensor_connected_rooms: list[str] | None = None
 
 
 @dataclass

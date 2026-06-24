@@ -18,6 +18,7 @@ LOCAL_HOME_ROOM_SPECS: list[FakeRoomSpec] = [
         spec.name,
         spec.floor,
         list(spec.connected_rooms),
+        list(spec.door_sensor_connected_rooms),
     )
     for spec in LOCAL_SIMULATOR_ROOM_SPECS
 ]
