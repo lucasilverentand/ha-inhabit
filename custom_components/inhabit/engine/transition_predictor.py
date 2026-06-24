@@ -162,6 +162,14 @@ class TransitionPredictor:
         """Get active phantom presences."""
         return dict(self._phantoms)
 
+    def clear_phantoms(self) -> None:
+        """Clear active phantom holds without revalidating target rooms."""
+        for cancel in self._phantom_timers.values():
+            cancel()
+        self._phantom_timers.clear()
+        self._phantoms.clear()
+        self._expiring_phantom_targets.clear()
+
     @property
     def door_links(self) -> dict[str, DoorLink]:
         """Get door-room links (keyed by entity_id)."""

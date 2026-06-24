@@ -83,6 +83,7 @@ class VirtualSensorEngine:
             ),
             on_phantom_expired=self._handle_phantom_expired,
         )
+        self._transition_prediction_ready = False
         self._transition_learner = TransitionLearner()
         self._running = False
         self._unsub_mmwave: Callable[[], None] | None = None
@@ -360,10 +361,13 @@ class VirtualSensorEngine:
 
     def recalculate_current_states(self) -> None:
         """Recalculate and dispatch current state for every managed room or zone."""
+        self._transition_prediction_ready = False
         for room_id, machine in self._state_machines.items():
             machine.recalculate_from_current_state("startup settled refresh")
             self._reconcile_spatial_presence_for_region(room_id)
 
+        self._transition_predictor.clear_phantoms()
+        self._transition_prediction_ready = True
         self.republish_current_states()
 
     def set_room_occupancy(self, room_id: str, state: str) -> bool:
@@ -1118,13 +1122,17 @@ class VirtualSensorEngine:
             confidence=state.confidence,
         )
 
-        # Transition prediction (phantom presence)
-        self._transition_predictor.on_room_state_changed(
-            room_id=room_id,
-            old_state=previous_state or OccupancyState.VACANT,
-            new_state=state.state,
-            confidence=state.confidence,
-        )
+        # Transition prediction (phantom presence). During startup HA restores
+        # previous entity states before all source sensors have settled; creating
+        # phantoms from that bootstrap noise can turn rooms and lights on after a
+        # reboot. Enable prediction only after the delayed settled refresh.
+        if self._transition_prediction_ready:
+            self._transition_predictor.on_room_state_changed(
+                room_id=room_id,
+                old_state=previous_state or OccupancyState.VACANT,
+                new_state=state.state,
+                confidence=state.confidence,
+            )
 
         # Transition learning
         if state.state == OccupancyState.OCCUPIED:
