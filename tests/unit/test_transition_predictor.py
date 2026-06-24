@@ -327,7 +327,10 @@ class TestTransitionPredictorPhantom:
 
         # Real presence detected in bathroom
         predictor.on_room_state_changed(
-            "bathroom", OccupancyState.VACANT, OccupancyState.OCCUPIED
+            "bathroom",
+            OccupancyState.VACANT,
+            OccupancyState.OCCUPIED,
+            confidence=0.8,
         )
         assert not predictor.has_active_phantom("bathroom")
 

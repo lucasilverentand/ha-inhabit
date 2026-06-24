@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from ..occupancy_policy import DEFAULT_ZONE_PROFILE, normalize_occupancy_profile
 from .floor_plan import Polygon, _generate_id
 
 
@@ -21,6 +22,7 @@ class Zone:
     rotation: float = 0.0
     ha_area_id: str | None = None
     occupancy_sensor_enabled: bool = False
+    occupancy_profile: str = DEFAULT_ZONE_PROFILE
     motion_timeout: int = 120
     checking_timeout: int = 30
     long_stay: bool = False  # Zone where occupants stay for hours (couch, bed, etc.)
@@ -39,6 +41,10 @@ class Zone:
             "rotation": self.rotation,
             "ha_area_id": self.ha_area_id,
             "occupancy_sensor_enabled": self.occupancy_sensor_enabled,
+            "occupancy_profile": normalize_occupancy_profile(
+                self.occupancy_profile,
+                default=DEFAULT_ZONE_PROFILE,
+            ),
             "motion_timeout": self.motion_timeout,
             "checking_timeout": self.checking_timeout,
             "long_stay": self.long_stay,
@@ -59,6 +65,10 @@ class Zone:
             rotation=float(data.get("rotation", 0.0)),
             ha_area_id=data.get("ha_area_id"),
             occupancy_sensor_enabled=data.get("occupancy_sensor_enabled", False),
+            occupancy_profile=normalize_occupancy_profile(
+                data.get("occupancy_profile"),
+                default=DEFAULT_ZONE_PROFILE,
+            ),
             motion_timeout=int(data.get("motion_timeout", 120)),
             checking_timeout=int(data.get("checking_timeout", 30)),
             long_stay=data.get("long_stay", False),

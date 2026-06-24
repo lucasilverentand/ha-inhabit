@@ -11,6 +11,7 @@ from homeassistant.core import HomeAssistant, callback
 from ...const import DOMAIN, WS_PREFIX
 from ...models.floor_plan import BackgroundLayer, Polygon, Room
 from ...models.virtual_sensor import VirtualSensorConfig
+from ...occupancy_policy import DEFAULT_ROOM_PROFILE
 from ._helpers import (
     _disable_region_sensor,
     _normalize_ha_area_id,
@@ -39,6 +40,7 @@ def register(hass: HomeAssistant) -> None:
         vol.Required("polygon"): dict,
         vol.Optional("color", default="#e8e8e8"): str,
         vol.Optional("occupancy_sensor_enabled", default=True): bool,
+        vol.Optional("occupancy_profile", default=DEFAULT_ROOM_PROFILE): str,
         vol.Optional("motion_timeout", default=120): int,
         vol.Optional("checking_timeout", default=30): int,
         vol.Optional("long_stay", default=False): bool,
@@ -70,6 +72,7 @@ def ws_rooms_add(
         polygon=Polygon.from_dict(msg["polygon"]),
         color=msg["color"],
         occupancy_sensor_enabled=msg["occupancy_sensor_enabled"],
+        occupancy_profile=msg["occupancy_profile"],
         motion_timeout=msg["motion_timeout"],
         checking_timeout=msg["checking_timeout"],
         long_stay=msg["long_stay"],
@@ -80,18 +83,14 @@ def ws_rooms_add(
         # Add room to sensor engine if enabled
         if room.occupancy_sensor_enabled:
             sensor_engine = hass.data[DOMAIN]["sensor_engine"]
+            config = store.get_sensor_config(room.id) or VirtualSensorConfig(
+                room_id=room.id,
+                floor_plan_id=msg["floor_plan_id"],
+                occupancy_profile=room.occupancy_profile,
+            )
             hass.async_create_task(
                 _safe_engine_op(
-                    sensor_engine.async_add_room(
-                        VirtualSensorConfig(
-                            room_id=room.id,
-                            floor_plan_id=msg["floor_plan_id"],
-                            motion_timeout=room.motion_timeout,
-                            checking_timeout=room.checking_timeout,
-                            long_stay=room.long_stay,
-                            phantom_hold_seconds=room.phantom_hold_seconds,
-                        )
-                    ),
+                    sensor_engine.async_add_room(config),
                     "add",
                     room.id,
                 )
@@ -112,6 +111,7 @@ def ws_rooms_add(
         vol.Optional("polygon"): dict,
         vol.Optional("color"): str,
         vol.Optional("occupancy_sensor_enabled"): bool,
+        vol.Optional("occupancy_profile"): str,
         vol.Optional("motion_timeout"): int,
         vol.Optional("checking_timeout"): int,
         vol.Optional("is_transit"): vol.Any(bool, None),
@@ -144,6 +144,8 @@ def ws_rooms_update(
         room.color = msg["color"]
     if "occupancy_sensor_enabled" in msg:
         room.occupancy_sensor_enabled = msg["occupancy_sensor_enabled"]
+    if "occupancy_profile" in msg:
+        room.occupancy_profile = msg["occupancy_profile"]
     if "motion_timeout" in msg:
         room.motion_timeout = msg["motion_timeout"]
     if "checking_timeout" in msg:
@@ -182,16 +184,13 @@ def ws_rooms_update(
         room_config_fields = {
             "motion_timeout",
             "checking_timeout",
+            "occupancy_profile",
             "long_stay",
             "phantom_hold_seconds",
         }
         if room.occupancy_sensor_enabled and room_config_fields & msg.keys():
             config = store.get_sensor_config(room.id)
             if config:
-                config.motion_timeout = room.motion_timeout
-                config.checking_timeout = room.checking_timeout
-                config.long_stay = room.long_stay
-                config.phantom_hold_seconds = room.phantom_hold_seconds
                 sensor_engine = hass.data[DOMAIN]["sensor_engine"]
                 hass.async_create_task(
                     _safe_engine_op(
@@ -210,6 +209,7 @@ def ws_rooms_update(
                     config = VirtualSensorConfig(
                         room_id=room.id,
                         floor_plan_id=msg["floor_plan_id"],
+                        occupancy_profile=room.occupancy_profile,
                         motion_timeout=room.motion_timeout,
                         checking_timeout=room.checking_timeout,
                         long_stay=room.long_stay,

@@ -10,14 +10,236 @@ import type {
   HomeAssistant,
   OccupancyDiagnosticEvent,
   OccupancyDiagnosticsResponse,
+  OccupancyProfile,
   OccupancyStateData,
   SensorBinding,
-  SensorConfigPatchResult,
   VirtualSensorConfig,
 } from "../../types";
 import "../shared/fpb-entity-picker";
 
-type AreaSensorBindingType = "motion" | "door";
+type AreaSensorBindingType =
+  | "motion"
+  | "presence"
+  | "occupancy"
+  | "door"
+  | "window"
+  | "exit";
+
+type PolicyOverrideValue = number | boolean;
+
+type PolicyOverrideKey =
+  | "motion_timeout"
+  | "checking_timeout"
+  | "presence_timeout"
+  | "unsealed_activity_timeout"
+  | "exit_check_delay"
+  | "override_safety_timeout"
+  | "closed_door_hybrid_check"
+  | "phantom_hold_seconds"
+  | "door_seals_room"
+  | "long_stay"
+  | "hold_until_exit";
+
+type PolicyNumberField = {
+  key: PolicyOverrideKey;
+  label: string;
+  suffix: string;
+  min: number;
+  max: number;
+  step: number;
+};
+
+const POLICY_NUMBER_FIELDS: PolicyNumberField[] = [
+  {
+    key: "motion_timeout",
+    label: "Motion hold",
+    suffix: "s",
+    min: 5,
+    max: 1800,
+    step: 5,
+  },
+  {
+    key: "checking_timeout",
+    label: "Empty check",
+    suffix: "s",
+    min: 5,
+    max: 900,
+    step: 5,
+  },
+  {
+    key: "presence_timeout",
+    label: "Presence hold",
+    suffix: "s",
+    min: 15,
+    max: 7200,
+    step: 15,
+  },
+  {
+    key: "unsealed_activity_timeout",
+    label: "Open-door hold",
+    suffix: "s",
+    min: 5,
+    max: 1800,
+    step: 5,
+  },
+  {
+    key: "exit_check_delay",
+    label: "Exit delay",
+    suffix: "s",
+    min: 0,
+    max: 120,
+    step: 1,
+  },
+  {
+    key: "override_safety_timeout",
+    label: "Override safety",
+    suffix: "s",
+    min: 60,
+    max: 14400,
+    step: 60,
+  },
+  {
+    key: "closed_door_hybrid_check",
+    label: "Closed-door check",
+    suffix: "s",
+    min: 60,
+    max: 7200,
+    step: 60,
+  },
+  {
+    key: "phantom_hold_seconds",
+    label: "Transit phantom",
+    suffix: "s",
+    min: 0,
+    max: 300,
+    step: 5,
+  },
+];
+
+const POLICY_TOGGLE_FIELDS: Array<{
+  key: PolicyOverrideKey;
+  label: string;
+  description: string;
+}> = [
+  {
+    key: "door_seals_room",
+    label: "Closed door holds occupancy",
+    description:
+      "Door closure can keep this area occupied until evidence clears it.",
+  },
+  {
+    key: "long_stay",
+    label: "Long-stay behavior",
+    description:
+      "Use slower quiet-period behavior for couches, beds, and living areas.",
+  },
+  {
+    key: "hold_until_exit",
+    label: "Hold until leave confirmation",
+    description: "Keep occupied until a leave sensor confirms someone left.",
+  },
+];
+
+const FALLBACK_OCCUPANCY_PROFILES: OccupancyProfile[] = [
+  {
+    id: "transit",
+    label: "Transit",
+    description:
+      "Fast hallway and pass-through behavior with a short path hold.",
+    motion_timeout: 30,
+    checking_timeout: 15,
+    presence_timeout: 60,
+    unsealed_activity_timeout: 30,
+    door_seals_room: false,
+    long_stay: false,
+    hold_until_exit: false,
+    phantom_hold_seconds: 30,
+    exit_check_delay: 15,
+    override_safety_timeout: 1800,
+    closed_door_hybrid_check: 600,
+  },
+  {
+    id: "short_stay",
+    label: "Short Stay",
+    description: "Bathroom/toilet behavior with door-aware confirmation.",
+    motion_timeout: 45,
+    checking_timeout: 30,
+    presence_timeout: 300,
+    unsealed_activity_timeout: 45,
+    door_seals_room: true,
+    long_stay: false,
+    hold_until_exit: false,
+    phantom_hold_seconds: 0,
+    exit_check_delay: 15,
+    override_safety_timeout: 1800,
+    closed_door_hybrid_check: 600,
+  },
+  {
+    id: "long_stay",
+    label: "Long Stay",
+    description:
+      "Living/dining behavior that tolerates quiet occupied periods.",
+    motion_timeout: 120,
+    checking_timeout: 60,
+    presence_timeout: 600,
+    unsealed_activity_timeout: 300,
+    door_seals_room: true,
+    long_stay: true,
+    hold_until_exit: false,
+    phantom_hold_seconds: 0,
+    exit_check_delay: 15,
+    override_safety_timeout: 1800,
+    closed_door_hybrid_check: 600,
+  },
+  {
+    id: "open_area",
+    label: "Open Area",
+    description: "Doorless spaces using evidence decay instead of sealing.",
+    motion_timeout: 120,
+    checking_timeout: 30,
+    presence_timeout: 300,
+    unsealed_activity_timeout: 180,
+    door_seals_room: false,
+    long_stay: false,
+    hold_until_exit: false,
+    phantom_hold_seconds: 0,
+    exit_check_delay: 15,
+    override_safety_timeout: 1800,
+    closed_door_hybrid_check: 600,
+  },
+  {
+    id: "sleep",
+    label: "Sleep",
+    description: "Bedroom/bed behavior that holds until an exit signal.",
+    motion_timeout: 300,
+    checking_timeout: 60,
+    presence_timeout: 1800,
+    unsealed_activity_timeout: 600,
+    door_seals_room: true,
+    long_stay: true,
+    hold_until_exit: true,
+    phantom_hold_seconds: 0,
+    exit_check_delay: 15,
+    override_safety_timeout: 1800,
+    closed_door_hybrid_check: 600,
+  },
+  {
+    id: "utility",
+    label: "Utility",
+    description: "Fast but safe behavior for closets and utility rooms.",
+    motion_timeout: 30,
+    checking_timeout: 15,
+    presence_timeout: 120,
+    unsealed_activity_timeout: 60,
+    door_seals_room: true,
+    long_stay: false,
+    hold_until_exit: false,
+    phantom_hold_seconds: 0,
+    exit_check_delay: 15,
+    override_safety_timeout: 1800,
+    closed_door_hybrid_check: 600,
+  },
+];
 
 export class FpbOccupancyPanel extends LitElement {
   @property({ attribute: false })
@@ -39,6 +261,9 @@ export class FpbOccupancyPanel extends LitElement {
   private _occupancyState: OccupancyStateData | null = null;
 
   @state()
+  private _profiles: OccupancyProfile[] = FALLBACK_OCCUPANCY_PROFILES;
+
+  @state()
   private _loading = true;
 
   @state()
@@ -54,16 +279,7 @@ export class FpbOccupancyPanel extends LitElement {
   private _diagnosticsLoading = false;
 
   @state()
-  private _patchText = "";
-
-  @state()
-  private _patchPreview: SensorConfigPatchResult | null = null;
-
-  @state()
-  private _patchError = "";
-
-  @state()
-  private _patchApplying = false;
+  private _policyEditorOpen = false;
 
   private _pollTimer?: number;
 
@@ -336,6 +552,105 @@ export class FpbOccupancyPanel extends LitElement {
       font-size: 13px;
     }
 
+    .policy-summary {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 6px;
+    }
+
+    .policy-chip {
+      padding: 7px 8px;
+      border-radius: 8px;
+      background: var(--primary-background-color, #fafafa);
+      font-size: 12px;
+      line-height: 1.3;
+    }
+
+    .policy-chip strong {
+      display: block;
+      font-size: 11px;
+      color: var(--secondary-text-color);
+      font-weight: 500;
+    }
+
+    .policy-actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+    }
+
+    .policy-status {
+      color: var(--secondary-text-color);
+      font-size: 12px;
+    }
+
+    .policy-editor {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding: 10px;
+      border: 1px solid var(--divider-color);
+      border-radius: 8px;
+      background: var(--card-background-color, #fff);
+    }
+
+    .policy-field-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .policy-field {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      min-width: 0;
+    }
+
+    .policy-field label {
+      font-size: 12px;
+      color: var(--secondary-text-color);
+    }
+
+    .policy-input {
+      width: 100%;
+      min-width: 0;
+      box-sizing: border-box;
+      padding: 7px 8px;
+      border: 1px solid var(--divider-color);
+      border-radius: 6px;
+      background: var(--primary-background-color, #fafafa);
+      color: var(--primary-text-color);
+      font: inherit;
+      font-size: 13px;
+    }
+
+    .policy-toggle-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .policy-toggle {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .policy-toggle label {
+      display: block;
+      font-size: 13px;
+      font-weight: 500;
+    }
+
+    .policy-toggle .sublabel {
+      margin-top: 2px;
+      font-size: 12px;
+    }
+
     .diagnostic-list,
     .diff-list {
       display: flex;
@@ -424,9 +739,8 @@ export class FpbOccupancyPanel extends LitElement {
     if (!this.hass || !this.targetId) return;
     this._loading = true;
     this._diagnostics = [];
-    this._patchPreview = null;
-    this._patchError = "";
     try {
+      await this._loadProfiles();
       const config = await this.hass.callWS<VirtualSensorConfig>({
         type: "inhabit/sensor_config/get",
         room_id: this.targetId,
@@ -439,6 +753,23 @@ export class FpbOccupancyPanel extends LitElement {
     await this._loadOccupancyState();
     await this._loadDiagnostics();
     this._loading = false;
+  }
+
+  private async _loadProfiles(): Promise<void> {
+    if (!this.hass) return;
+    try {
+      const response = await this.hass.callWS<{ profiles: OccupancyProfile[] }>(
+        {
+          type: "inhabit/occupancy_profiles",
+        },
+      );
+      if (Array.isArray(response.profiles) && response.profiles.length > 0) {
+        this._profiles = response.profiles;
+      }
+    } catch (err) {
+      console.warn("Falling back to bundled occupancy profiles:", err);
+      this._profiles = FALLBACK_OCCUPANCY_PROFILES;
+    }
   }
 
   private async _loadOccupancyState(): Promise<void> {
@@ -491,68 +822,6 @@ export class FpbOccupancyPanel extends LitElement {
     }
   }
 
-  private _parsePatch(): Record<string, unknown> | null {
-    this._patchError = "";
-    const text = this._patchText.trim();
-    if (!text) {
-      this._patchError = "Paste a JSON object with config fields to change.";
-      return null;
-    }
-    try {
-      const parsed = JSON.parse(text) as unknown;
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-        this._patchError = "Patch must be a JSON object.";
-        return null;
-      }
-      return parsed as Record<string, unknown>;
-    } catch (err) {
-      this._patchError = err instanceof Error ? err.message : String(err);
-      return null;
-    }
-  }
-
-  private async _previewConfigPatch(): Promise<void> {
-    if (!this.hass) return;
-    const patch = this._parsePatch();
-    if (!patch) return;
-    try {
-      this._patchPreview = await this.hass.callWS<SensorConfigPatchResult>({
-        type: "inhabit/sensor_config/preview_patch",
-        room_id: this.targetId,
-        patch,
-        reason: "AI config patch preview",
-      });
-    } catch (err) {
-      this._patchPreview = null;
-      this._patchError =
-        err instanceof Error ? err.message : "Could not preview patch.";
-    }
-  }
-
-  private async _applyConfigPatch(): Promise<void> {
-    if (!this.hass || !this._patchPreview?.valid) return;
-    const patch = this._parsePatch();
-    if (!patch) return;
-    this._patchApplying = true;
-    try {
-      const result = await this.hass.callWS<SensorConfigPatchResult>({
-        type: "inhabit/sensor_config/apply_patch",
-        room_id: this.targetId,
-        patch,
-        reason: "Applied from occupancy panel AI config patch",
-        confirm: true,
-      });
-      this._patchPreview = result;
-      if (result.config) this._config = result.config;
-      await this._loadDiagnostics();
-    } catch (err) {
-      this._patchError =
-        err instanceof Error ? err.message : "Could not apply patch.";
-    } finally {
-      this._patchApplying = false;
-    }
-  }
-
   private async _copyDiagnostics(): Promise<void> {
     const payload = JSON.stringify(
       {
@@ -565,12 +834,6 @@ export class FpbOccupancyPanel extends LitElement {
       2,
     );
     await navigator.clipboard?.writeText(payload);
-  }
-
-  private _formatValue(value: unknown): string {
-    if (value === null || value === undefined) return "null";
-    if (typeof value === "string") return value;
-    return JSON.stringify(value);
   }
 
   private _latestWhy(): string {
@@ -592,13 +855,109 @@ export class FpbOccupancyPanel extends LitElement {
     return `${latest.previous_state ?? "unknown"} -> ${latest.new_state ?? "unknown"}: ${latest.reason ?? latest.event}`;
   }
 
+  private _selectedProfile(): OccupancyProfile {
+    const id = this._config?.occupancy_profile ?? "short_stay";
+    return (
+      this._profiles.find((profile) => profile.id === id) ??
+      FALLBACK_OCCUPANCY_PROFILES.find((profile) => profile.id === id) ??
+      FALLBACK_OCCUPANCY_PROFILES[1]
+    );
+  }
+
+  private _policyOverrides(): Record<string, PolicyOverrideValue> {
+    return this._config?.policy_overrides ?? {};
+  }
+
+  private _hasPolicyOverrides(): boolean {
+    return Object.keys(this._policyOverrides()).length > 0;
+  }
+
+  private async _selectPolicyProfile(profileId: string): Promise<void> {
+    await this._updateConfig({
+      occupancy_profile: profileId,
+      policy_overrides: {},
+    });
+  }
+
+  private async _updatePolicyOverride(
+    key: PolicyOverrideKey,
+    value: PolicyOverrideValue,
+  ): Promise<void> {
+    if (!this._config) return;
+    await this._updateConfig({
+      policy_overrides: {
+        ...this._policyOverrides(),
+        [key]: value,
+      },
+    });
+  }
+
+  private async _resetPolicyOverrides(): Promise<void> {
+    await this._updateConfig({ policy_overrides: {} });
+  }
+
+  private _renderPolicyEditor() {
+    if (!this._config) return nothing;
+    return html`
+      <div class="policy-editor">
+        <div class="policy-field-grid">
+          ${POLICY_NUMBER_FIELDS.map(
+            (field) => html`
+              <div class="policy-field">
+                <label>${field.label}</label>
+                <input
+                  class="policy-input"
+                  type="number"
+                  min=${field.min}
+                  max=${field.max}
+                  step=${field.step}
+                  .value=${String(this._config?.[field.key] ?? 0)}
+                  @change=${(e: Event) => {
+                    const input = e.target as HTMLInputElement;
+                    const value = Number(input.value);
+                    if (Number.isFinite(value)) {
+                      this._updatePolicyOverride(
+                        field.key,
+                        Math.max(field.min, value),
+                      );
+                    }
+                  }}
+                />
+              </div>
+            `,
+          )}
+        </div>
+        <div class="policy-toggle-list">
+          ${POLICY_TOGGLE_FIELDS.map(
+            (field) => html`
+              <div class="policy-toggle">
+                <div>
+                  <label>${field.label}</label>
+                  <div class="sublabel">${field.description}</div>
+                </div>
+                <ha-switch
+                  .checked=${Boolean(this._config?.[field.key])}
+                  @change=${(e: Event) =>
+                    this._updatePolicyOverride(
+                      field.key,
+                      (e.target as HTMLInputElement).checked,
+                    )}
+                ></ha-switch>
+              </div>
+            `,
+          )}
+        </div>
+      </div>
+    `;
+  }
+
   private async _addSensors(
     type: AreaSensorBindingType,
     entityIds: string[],
   ): Promise<void> {
     if (!this._config || entityIds.length === 0) return;
     const key = `${type}_sensors` as const;
-    const existing = this._config[key] as SensorBinding[];
+    const existing = (this._config[key] as SensorBinding[] | undefined) ?? [];
     const existingIds = new Set(existing.map((s) => s.entity_id));
     const newBindings = entityIds
       .filter((eid) => eid && !existingIds.has(eid))
@@ -618,7 +977,7 @@ export class FpbOccupancyPanel extends LitElement {
   ): Promise<void> {
     if (!this._config) return;
     const key = `${type}_sensors` as const;
-    const existing = this._config[key] as SensorBinding[];
+    const existing = (this._config[key] as SensorBinding[] | undefined) ?? [];
     const updated = existing.filter((s) => s.entity_id !== entityId);
     await this._updateConfig({ [key]: updated });
   }
@@ -666,8 +1025,11 @@ export class FpbOccupancyPanel extends LitElement {
     if (!this._config) return [];
     const ids: string[] = [];
     for (const s of this._config.motion_sensors ?? []) ids.push(s.entity_id);
+    for (const s of this._config.presence_sensors ?? []) ids.push(s.entity_id);
     for (const s of this._config.occupancy_sensors ?? []) ids.push(s.entity_id);
     for (const s of this._config.door_sensors ?? []) ids.push(s.entity_id);
+    for (const s of this._config.window_sensors ?? []) ids.push(s.entity_id);
+    for (const s of this._config.exit_sensors ?? []) ids.push(s.entity_id);
     if (this._config.override_trigger_entity)
       ids.push(this._config.override_trigger_entity);
     return ids;
@@ -676,9 +1038,22 @@ export class FpbOccupancyPanel extends LitElement {
   private _renderSensorSection(
     title: string,
     type: AreaSensorBindingType,
-    sensors: SensorBinding[],
+    sensors: SensorBinding[] = [],
+    addLabel?: string,
+    searchLabel?: string,
   ) {
-    const icon = type === "motion" ? "mdi:motion-sensor" : "mdi:door";
+    const icon =
+      type === "motion"
+        ? "mdi:motion-sensor"
+        : type === "presence"
+          ? "mdi:radar"
+          : type === "occupancy"
+            ? "mdi:account-check-outline"
+            : type === "window"
+              ? "mdi:window-closed-variant"
+              : type === "exit"
+                ? "mdi:exit-run"
+                : "mdi:door";
     return html`
       <div class="section">
         <div class="section-title">${title}</div>
@@ -696,7 +1071,7 @@ export class FpbOccupancyPanel extends LitElement {
         <button class="add-btn" @click=${() => {
           this._activePicker = type;
         }}>
-          Add ${type} sensor
+          ${addLabel ?? `Add ${type} sensor`}
         </button>
         ${
           this._activePicker === type
@@ -707,7 +1082,7 @@ export class FpbOccupancyPanel extends LitElement {
             .exclude=${this._getAllBoundEntityIds()}
             .multi=${true}
             title="Add ${title}"
-            placeholder="Search ${type} sensors..."
+            placeholder="Search ${searchLabel ?? type} sensors..."
             @entities-confirmed=${(e: CustomEvent) => {
               this._addSensors(type, e.detail.entityIds);
               this._activePicker = null;
@@ -801,106 +1176,46 @@ export class FpbOccupancyPanel extends LitElement {
             </button>
           </div>
           <div class="diagnostic-list">
-            ${this._diagnostics.length === 0
-              ? html`<div class="message-box">No diagnostics recorded yet.</div>`
-              : this._diagnostics.slice(-6).map(
-                  (event) => html`
+            ${
+              this._diagnostics.length === 0
+                ? html`<div class="message-box">No diagnostics recorded yet.</div>`
+                : this._diagnostics.slice(-6).map(
+                    (event) => html`
                     <div class="diagnostic-item">
                       <div class="diagnostic-meta">
                         <span>${event.category}</span>
                         <span>${new Date(event.timestamp).toLocaleTimeString()}</span>
                       </div>
                       <div class="diagnostic-title">${event.event}</div>
-                      ${event.reason
-                        ? html`<div class="diagnostic-reason">
+                      ${
+                        event.reason
+                          ? html`<div class="diagnostic-reason">
                             ${event.reason}
                           </div>`
-                        : nothing}
-                      ${event.blockers.length > 0
-                        ? html`<div class="diagnostic-reason">
+                          : nothing
+                      }
+                      ${
+                        event.blockers.length > 0
+                          ? html`<div class="diagnostic-reason">
                             Blockers: ${event.blockers.join(", ")}
                           </div>`
-                        : nothing}
+                          : nothing
+                      }
                     </div>
                   `,
-                )}
+                  )
+            }
           </div>
         </div>
       </div>
     `;
   }
 
-  private _renderConfigPatchTools() {
-    const preview = this._patchPreview;
-    return html`
-      <div class="section">
-        <div class="section-title">AI Config Patch</div>
-        <textarea
-          class="action-input textarea-input"
-          placeholder='{"checking_timeout": 45, "occupied_threshold": 0.6}'
-          .value=${this._patchText}
-          @input=${(e: Event) => {
-            this._patchText = (e.target as HTMLTextAreaElement).value;
-            this._patchPreview = null;
-            this._patchError = "";
-          }}
-        ></textarea>
-        <div class="button-row">
-          <button class="secondary-btn" @click=${() => this._previewConfigPatch()}>
-            Preview
-          </button>
-          <button
-            class="add-btn"
-            ?disabled=${!preview?.valid || this._patchApplying}
-            @click=${() => this._applyConfigPatch()}
-          >
-            Apply Patch
-          </button>
-        </div>
-        ${this._patchError
-          ? html`<div class="message-box error">${this._patchError}</div>`
-          : nothing}
-        ${preview?.warnings?.length
-          ? html`<div class="message-box warning">
-              ${preview.warnings.join(" ")}
-            </div>`
-          : nothing}
-        ${preview?.errors?.length
-          ? html`<div class="message-box error">
-              ${preview.errors.join(" ")}
-            </div>`
-          : nothing}
-        ${preview
-          ? html`
-              <div class="diff-list">
-                ${preview.diff.length === 0
-                  ? html`<div class="message-box">No config changes.</div>`
-                  : preview.diff.map(
-                      (item) => html`
-                        <div class="diff-item">
-                          <strong>${item.field}</strong>
-                          <div class="diff-value">
-                            ${this._formatValue(item.before)} -> ${this._formatValue(
-                              item.after,
-                            )}
-                          </div>
-                        </div>
-                      `,
-                    )}
-              </div>
-            `
-          : nothing}
-      </div>
-    `;
-  }
-
   override render() {
-    const hasDoorSensors = (this._config?.door_sensors ?? []).length > 0;
-    const doorSealsRoom =
-      this._config?.door_seals_room ?? this._config?.door_blocks_vacancy;
     const spatialPresenceDelay =
       this._config?.spatial_presence_delay ??
       (this.targetType === "zone" ? 5 : 0);
+    const selectedProfile = this._selectedProfile();
 
     return html`
       <div class="panel-header">
@@ -944,41 +1259,68 @@ export class FpbOccupancyPanel extends LitElement {
 
             ${this._renderStatus()}
 
-            <!-- Timing -->
+            <!-- Policy -->
             <div class="section">
-              <div class="section-title">Timing</div>
-
-              <div class="slider-row">
-                <label>Motion Timeout <span>${this._config.motion_timeout}s</span></label>
-                <input type="range" min="10" max="600" step="10"
-                  .value=${String(this._config.motion_timeout)}
-                  @change=${(e: Event) => this._updateConfig({ motion_timeout: Number((e.target as HTMLInputElement).value) })}
-                />
+              <div class="section-title">Policy</div>
+              <select
+                class="select-input"
+                .value=${this._config.occupancy_profile}
+                @change=${(e: Event) => this._selectPolicyProfile((e.target as HTMLSelectElement).value)}
+              >
+                ${this._profiles.map(
+                  (profile) => html`
+                    <option value=${profile.id}>${profile.label}</option>
+                  `,
+                )}
+              </select>
+              <div class="message-box">${selectedProfile.description}</div>
+              <div class="policy-summary">
+                <div class="policy-chip">
+                  <strong>Open check</strong>
+                  ${this._config.unsealed_activity_timeout}s
+                </div>
+                <div class="policy-chip">
+                  <strong>Exit delay</strong>
+                  ${this._config.exit_check_delay}s
+                </div>
+                <div class="policy-chip">
+                  <strong>Override safety</strong>
+                  ${Math.round(this._config.override_safety_timeout / 60)}m
+                </div>
+                <div class="policy-chip">
+                  <strong>Closed door</strong>
+                  ${this._config.door_seals_room ? "Hold with confirmation" : "Evidence decay"}
+                </div>
               </div>
-
-              <div class="slider-row">
-                <label>Checking Timeout <span>${this._config.checking_timeout}s</span></label>
-                <input type="range" min="5" max="120" step="5"
-                  .value=${String(this._config.checking_timeout)}
-                  @change=${(e: Event) => this._updateConfig({ checking_timeout: Number((e.target as HTMLInputElement).value) })}
-                />
+              <div class="policy-actions">
+                <span class="policy-status">
+                  ${
+                    this._hasPolicyOverrides()
+                      ? "Customized for this area"
+                      : "Using profile defaults"
+                  }
+                </span>
+                <div style="display: flex; gap: 8px;">
+                  ${
+                    this._hasPolicyOverrides()
+                      ? html`
+                          <button class="add-btn" @click=${() => this._resetPolicyOverrides()}>
+                            Reset defaults
+                          </button>
+                        `
+                      : nothing
+                  }
+                  <button
+                    class="add-btn"
+                    @click=${() => {
+                      this._policyEditorOpen = !this._policyEditorOpen;
+                    }}
+                  >
+                    ${this._policyEditorOpen ? "Done" : "Edit policy"}
+                  </button>
+                </div>
               </div>
-
-              <div class="slider-row">
-                <label>Presence Timeout <span>${this._config.presence_timeout}s</span></label>
-                <input type="range" min="30" max="900" step="30"
-                  .value=${String(this._config.presence_timeout)}
-                  @change=${(e: Event) => this._updateConfig({ presence_timeout: Number((e.target as HTMLInputElement).value) })}
-                />
-              </div>
-
-              <div class="slider-row">
-                <label>Open/unsealed idle <span>${this._config.unsealed_activity_timeout}s</span></label>
-                <input type="range" min="10" max="900" step="10"
-                  .value=${String(this._config.unsealed_activity_timeout)}
-                  @change=${(e: Event) => this._updateConfig({ unsealed_activity_timeout: Number((e.target as HTMLInputElement).value) })}
-                />
-              </div>
+              ${this._policyEditorOpen ? this._renderPolicyEditor() : nothing}
 
               ${
                 this.targetType === "zone"
@@ -996,37 +1338,26 @@ export class FpbOccupancyPanel extends LitElement {
             </div>
 
             <!-- Sensor Bindings -->
-            ${this._renderSensorSection("Motion Sensors", "motion", this._config.motion_sensors)}
-            ${this._renderSensorSection("Door Sensors", "door", this._config.door_sensors)}
-
-            <!-- Door Logic -->
+            ${this._renderSensorSection("Motion / PIR", "motion", this._config.motion_sensors)}
+            ${this._renderSensorSection("Presence / mmWave", "presence", this._config.presence_sensors)}
+            ${this._renderSensorSection("Occupancy Signals", "occupancy", this._config.occupancy_sensors)}
+            ${this._renderSensorSection("Doors / Openings", "door", this._config.door_sensors)}
+            ${this._renderSensorSection("Windows / Exterior", "window", this._config.window_sensors ?? [])}
             ${
-              hasDoorSensors
-                ? html`<div class="section">
-              <div class="section-title">Door Logic</div>
-
-              <div class="toggle-row">
-                <div>
-                  <label>Closed-door hold</label>
-                  <div class="sublabel">Requires a fresh detection after closing</div>
-                </div>
-                <ha-switch
-                  .checked=${Boolean(doorSealsRoom)}
-                  @change=${(e: Event) => this._updateConfig({ door_seals_room: (e.target as HTMLInputElement).checked })}
-                ></ha-switch>
-              </div>
-
-              <div class="toggle-row">
-                <div>
-                  <label>Door open resets checking</label>
-                  <div class="sublabel">Opening door restarts CHECKING timer</div>
-                </div>
-                <ha-switch
-                  .checked=${this._config.door_open_resets_checking}
-                  @change=${(e: Event) => this._updateConfig({ door_open_resets_checking: (e.target as HTMLInputElement).checked })}
-                ></ha-switch>
-              </div>
-            </div>`
+              selectedProfile.hold_until_exit ||
+              (this._config.exit_sensors ?? []).length > 0
+                ? html`
+                    ${this._renderSensorSection(
+                      "Leave Confirmation",
+                      "exit",
+                      this._config.exit_sensors ?? [],
+                      "Add leave sensor",
+                      "leave confirmation",
+                    )}
+                    <div class="message-box">
+                      Used by sleep-style policies to release occupancy when another sensor proves the person left.
+                    </div>
+                  `
                 : nothing
             }
 
@@ -1096,29 +1427,7 @@ export class FpbOccupancyPanel extends LitElement {
               }
             </div>
 
-            <!-- Thresholds -->
-            <div class="section">
-              <div class="section-title">Thresholds</div>
-
-              <div class="slider-row">
-                <label>Occupied Threshold <span>${(this._config.occupied_threshold * 100).toFixed(0)}%</span></label>
-                <input type="range" min="0.1" max="1.0" step="0.05"
-                  .value=${String(this._config.occupied_threshold)}
-                  @change=${(e: Event) => this._updateConfig({ occupied_threshold: Number((e.target as HTMLInputElement).value) })}
-                />
-              </div>
-
-              <div class="slider-row">
-                <label>Vacant Threshold <span>${(this._config.vacant_threshold * 100).toFixed(0)}%</span></label>
-                <input type="range" min="0.0" max="0.5" step="0.05"
-                  .value=${String(this._config.vacant_threshold)}
-                  @change=${(e: Event) => this._updateConfig({ vacant_threshold: Number((e.target as HTMLInputElement).value) })}
-                />
-              </div>
-            </div>
-
             ${this._renderDiagnostics()}
-            ${this._renderConfigPatchTools()}
           `
               : nothing
           }

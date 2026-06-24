@@ -35,6 +35,11 @@ from custom_components.inhabit.models.virtual_sensor import (
     VirtualSensorConfig,
 )
 from custom_components.inhabit.models.zone import Zone
+from custom_components.inhabit.occupancy_policy import (
+    PROFILE_SLEEP,
+    PROFILE_TRANSIT,
+    apply_occupancy_profile,
+)
 
 
 class TestCoordinates:
@@ -802,12 +807,20 @@ class TestVirtualSensorConfig:
                     entity_id="binary_sensor.door1", sensor_type="door", weight=1.0
                 ),
             ],
+            window_sensors=[
+                SensorBinding(
+                    entity_id="binary_sensor.window1",
+                    sensor_type="window",
+                    weight=1.0,
+                ),
+            ],
         )
         ids = config.get_all_sensor_entity_ids()
-        assert len(ids) == 4
+        assert len(ids) == 5
         assert "binary_sensor.motion1" in ids
         assert "binary_sensor.presence1" in ids
         assert "binary_sensor.door1" in ids
+        assert "binary_sensor.window1" in ids
 
     def test_to_dict(self):
         """Test serialization."""
@@ -835,6 +848,79 @@ class TestVirtualSensorConfig:
         )
         restored = VirtualSensorConfig.from_dict(config.to_dict())
         assert restored.unsealed_activity_timeout == 45
+
+    def test_policy_fields_round_trip(self):
+        """Policy-level fields and extra sensor roles round-trip."""
+        config = VirtualSensorConfig(
+            room_id="room_1",
+            floor_plan_id="fp_1",
+            occupancy_profile=PROFILE_SLEEP,
+            policy_overrides={
+                "motion_timeout": 420,
+                "door_seals_room": False,
+                "unsupported": "ignored",
+            },
+            window_sensors=[
+                SensorBinding(
+                    entity_id="binary_sensor.window",
+                    sensor_type="window",
+                )
+            ],
+            mmwave_exit_areas=[{"id": "door_threshold", "door_entity_id": "door.a"}],
+            exit_check_delay=15,
+            override_safety_timeout=1800,
+        )
+
+        restored = VirtualSensorConfig.from_dict(config.to_dict())
+
+        assert restored.occupancy_profile == PROFILE_SLEEP
+        assert restored.policy_overrides == {
+            "motion_timeout": 420,
+            "door_seals_room": False,
+        }
+        assert restored.window_sensors[0].entity_id == "binary_sensor.window"
+        assert restored.mmwave_exit_areas[0]["id"] == "door_threshold"
+        assert restored.exit_check_delay == 15
+        assert restored.override_safety_timeout == 1800
+
+    def test_apply_profile_sets_engine_fields(self):
+        """A profile maps to the low-level fields consumed by the engine."""
+        config = VirtualSensorConfig(
+            room_id="hallway",
+            floor_plan_id="fp_1",
+            occupancy_profile=PROFILE_TRANSIT,
+            motion_timeout=600,
+            checking_timeout=120,
+            door_seals_room=True,
+        )
+
+        apply_occupancy_profile(config)
+
+        assert config.motion_timeout == 30
+        assert config.checking_timeout == 15
+        assert config.door_seals_room is False
+        assert config.phantom_hold_seconds == 30
+
+    def test_apply_profile_keeps_policy_overrides(self):
+        """Area-specific policy edits apply after the selected base profile."""
+        config = VirtualSensorConfig(
+            room_id="hallway",
+            floor_plan_id="fp_1",
+            occupancy_profile=PROFILE_TRANSIT,
+            policy_overrides={
+                "motion_timeout": 90,
+                "door_seals_room": True,
+                "hold_until_exit": True,
+            },
+        )
+
+        apply_occupancy_profile(config)
+
+        assert config.motion_timeout == 90
+        assert config.checking_timeout == 15
+        assert config.door_seals_room is True
+        assert config.door_blocks_vacancy is True
+        assert config.hold_until_exit is True
 
 
 class TestOccupancyStateData:

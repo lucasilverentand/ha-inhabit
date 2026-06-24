@@ -660,6 +660,7 @@ class TestSensorConfigOperations:
                 room_id="room_1",
                 floor_plan_id="fp_1",
                 motion_timeout=120,
+                policy_overrides={"motion_timeout": 120},
                 motion_sensors=[
                     SensorBinding(
                         entity_id="binary_sensor.motion",
@@ -728,6 +729,7 @@ class TestSensorConfigOperations:
             updated = store.update_sensor_config(config)
 
             assert updated.motion_timeout == 120
+            assert updated.policy_overrides["motion_timeout"] == 120
 
     @pytest.mark.asyncio
     async def test_delete_sensor_config(self, mock_hass):

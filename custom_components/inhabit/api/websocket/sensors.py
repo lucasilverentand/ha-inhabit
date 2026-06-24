@@ -11,6 +11,7 @@ from homeassistant.core import HomeAssistant, callback
 from ...config_patch import apply_sensor_config_patch, preview_sensor_config_patch
 from ...const import DOMAIN, WS_PREFIX
 from ...models.virtual_sensor import SensorBinding, VirtualSensorConfig
+from ...occupancy_policy import POLICY_OVERRIDE_FIELDS, occupancy_profiles_payload
 from ._helpers import _require_admin
 
 
@@ -18,6 +19,7 @@ def register(hass: HomeAssistant) -> None:
     """Register sensor WebSocket commands."""
     websocket_api.async_register_command(hass, ws_sensor_config_get)
     websocket_api.async_register_command(hass, ws_sensor_config_update)
+    websocket_api.async_register_command(hass, ws_occupancy_profiles)
     websocket_api.async_register_command(hass, ws_occupancy_states)
     websocket_api.async_register_command(hass, ws_outside_exposure_states)
     websocket_api.async_register_command(hass, ws_occupancy_history)
@@ -61,17 +63,41 @@ def ws_sensor_config_get(
 
 @websocket_api.websocket_command(
     {
+        vol.Required("type"): f"{WS_PREFIX}/occupancy_profiles",
+    }
+)
+@callback
+def ws_occupancy_profiles(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Return available global occupancy profiles."""
+    connection.send_result(msg["id"], occupancy_profiles_payload())
+
+
+@websocket_api.websocket_command(
+    {
         vol.Required("type"): f"{WS_PREFIX}/sensor_config/update",
         vol.Required("room_id"): str,
         vol.Optional("enabled"): bool,
+        vol.Optional("occupancy_profile"): str,
+        vol.Optional("policy_overrides"): dict,
         vol.Optional("motion_timeout"): int,
         vol.Optional("checking_timeout"): int,
         vol.Optional("presence_timeout"): int,
         vol.Optional("unsealed_activity_timeout"): int,
+        vol.Optional("exit_check_delay"): int,
+        vol.Optional("override_safety_timeout"): int,
+        vol.Optional("closed_door_hybrid_check"): int,
+        vol.Optional("phantom_hold_seconds"): int,
         vol.Optional("motion_sensors"): list,
         vol.Optional("presence_sensors"): list,
         vol.Optional("occupancy_sensors"): list,
         vol.Optional("door_sensors"): list,
+        vol.Optional("window_sensors"): list,
+        vol.Optional("hint_sensors"): list,
+        vol.Optional("mmwave_exit_areas"): list,
         vol.Optional("exit_sensors"): list,
         vol.Optional("hold_until_exit"): bool,
         vol.Optional("occupies_parent"): bool,
@@ -115,6 +141,11 @@ def ws_sensor_config_update(
 
     if "enabled" in msg:
         config.enabled = msg["enabled"]
+    if "occupancy_profile" in msg:
+        config.occupancy_profile = msg["occupancy_profile"]
+        config.policy_overrides = {}
+    if "policy_overrides" in msg:
+        config.policy_overrides = dict(msg["policy_overrides"])
     if "motion_timeout" in msg:
         config.motion_timeout = msg["motion_timeout"]
     if "checking_timeout" in msg:
@@ -123,6 +154,14 @@ def ws_sensor_config_update(
         config.presence_timeout = msg["presence_timeout"]
     if "unsealed_activity_timeout" in msg:
         config.unsealed_activity_timeout = msg["unsealed_activity_timeout"]
+    if "exit_check_delay" in msg:
+        config.exit_check_delay = msg["exit_check_delay"]
+    if "override_safety_timeout" in msg:
+        config.override_safety_timeout = msg["override_safety_timeout"]
+    if "closed_door_hybrid_check" in msg:
+        config.closed_door_hybrid_check = msg["closed_door_hybrid_check"]
+    if "phantom_hold_seconds" in msg:
+        config.phantom_hold_seconds = msg["phantom_hold_seconds"]
     if "motion_sensors" in msg:
         config.motion_sensors = [
             SensorBinding.from_dict(s) for s in msg["motion_sensors"]
@@ -137,6 +176,14 @@ def ws_sensor_config_update(
         ]
     if "door_sensors" in msg:
         config.door_sensors = [SensorBinding.from_dict(s) for s in msg["door_sensors"]]
+    if "window_sensors" in msg:
+        config.window_sensors = [
+            SensorBinding.from_dict(s) for s in msg["window_sensors"]
+        ]
+    if "hint_sensors" in msg:
+        config.hint_sensors = [SensorBinding.from_dict(s) for s in msg["hint_sensors"]]
+    if "mmwave_exit_areas" in msg:
+        config.mmwave_exit_areas = list(msg["mmwave_exit_areas"])
     if "exit_sensors" in msg:
         config.exit_sensors = [SensorBinding.from_dict(s) for s in msg["exit_sensors"]]
     if "hold_until_exit" in msg:
@@ -168,6 +215,10 @@ def ws_sensor_config_update(
         config.occupied_threshold = msg["occupied_threshold"]
     if "vacant_threshold" in msg:
         config.vacant_threshold = msg["vacant_threshold"]
+
+    for key in POLICY_OVERRIDE_FIELDS:
+        if key in msg:
+            config.policy_overrides[key] = msg[key]
 
     # Validate threshold bounds
     if not (0.0 <= config.vacant_threshold <= config.occupied_threshold <= 1.0):
