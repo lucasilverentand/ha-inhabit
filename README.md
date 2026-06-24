@@ -153,12 +153,20 @@ touching a live Home Assistant instance.
 
 ```bash
 uv run --no-sync python -m tests.fake_house.local_home_scenarios --scenario all
+uv run --no-sync python -m tests.fake_house.local_home_scenarios --show-layout
 ```
 
 Available scenarios:
 
 - `hallway_to_short_stay`: open area -> transit -> short-stay room, door left
   open, then closed with spatial confirmation.
+- `hallway_left_open_to_short_stay_then_close`: entry -> segmented hallway ->
+  short-stay room with the door left open, then closed and resealed by mmWave.
+- `hallway_multi_mmwave_clears_after_last_target`: hallway occupancy stays on
+  while any hallway mmWave source still has a target and clears after the last
+  target drops.
+- `short_stay_exit_back_to_hallway`: settled short-stay occupancy exits into
+  the hallway and both rooms settle cleanly.
 - `quick_exit_after_settled_occupancy`: settled occupancy, quick door
   open/close, then an empty signal.
 - `closed_door_override_hold`: closed-door override survives safety expiry and

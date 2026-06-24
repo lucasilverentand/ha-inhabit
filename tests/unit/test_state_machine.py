@@ -1059,6 +1059,30 @@ class TestDoorSealLogic:
             assert machine.state.state == OccupancyState.OCCUPIED
             assert machine.state.sealed is False
 
+    def test_open_door_active_spatial_presence_survives_presence_timeout(
+        self, mock_hass, seal_config, state_changes
+    ):
+        """Active spatial targets remain current until the target source clears."""
+        seal_config.unsealed_activity_timeout = 30
+        seal_config.presence_timeout = 60
+        self._setup_sensor_states(
+            mock_hass, motion_state=STATE_OFF, door_state=STATE_ON
+        )
+        machine, _ = self._make_machine(mock_hass, seal_config, state_changes)
+
+        with patch(
+            "custom_components.inhabit.engine.occupancy_state_machine.async_call_later",
+            lambda hass, delay, cb: MagicMock(),
+        ):
+            machine.update_spatial_presence(1, source="test")
+            machine._last_unsealed_activity_at = datetime.now() - timedelta(seconds=31)
+            machine._last_sustained_activity_at = datetime.now() - timedelta(seconds=61)
+
+            machine._handle_unsealed_activity_timeout()
+
+            assert machine.state.state == OccupancyState.OCCUPIED
+            assert machine.state.sealed is False
+
     def test_multi_door_open_room_uses_unsealed_timeout(self, mock_hass, state_changes):
         """Any open door keeps the room unsealed and covered by idle timeout."""
         config = VirtualSensorConfig(
