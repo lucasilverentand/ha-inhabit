@@ -109,32 +109,32 @@ def test_anonymized_local_home_walks_from_open_area_to_short_stay():
     with AlgorithmScenarioSimulator.anonymized_local_home() as sim:
         sim.add_person("subject", "Subject")
 
-        sim.enter_room("subject", "level0_open_area", spatial_targets=1)
-        sim.open_door("level0_open_area", "level0_transit")
-        sim.enter_room("subject", "level0_transit", spatial_targets=1)
-        sim.clear_room("level0_open_area")
+        sim.enter_room("subject", "open_east", spatial_targets=1)
+        sim.open_door("open_east", "transit_hall")
+        sim.enter_room("subject", "transit_hall", spatial_targets=1)
+        sim.clear_room("open_east")
 
-        sim.open_door("level0_transit", "level0_short_stay")
-        sim.enter_room("subject", "level0_short_stay", spatial_targets=1)
-        sim.clear_room("level0_transit")
+        sim.open_door("transit_hall", "short_stay")
+        sim.enter_room("subject", "short_stay", spatial_targets=1)
+        sim.clear_room("transit_hall")
 
-        sim.assert_room("level0_short_stay", OccupancyState.OCCUPIED, sealed=False)
-        sim.assert_room("level0_transit", OccupancyState.CHECKING, sealed=False)
+        sim.assert_room("short_stay", OccupancyState.OCCUPIED, sealed=False)
+        sim.assert_room("transit_hall", OccupancyState.CHECKING, sealed=False)
 
         sim.wait(90)
-        sim.assert_room("level0_short_stay", OccupancyState.OCCUPIED, sealed=False)
+        sim.assert_room("short_stay", OccupancyState.OCCUPIED, sealed=False)
 
-        sim.close_door("level0_transit", "level0_short_stay")
-        sim.clear_pir("level0_short_stay")
-        sim.assert_room("level0_short_stay", OccupancyState.OCCUPIED, sealed=False)
+        sim.close_door("transit_hall", "short_stay")
+        sim.clear_pir("short_stay")
+        sim.assert_room("short_stay", OccupancyState.OCCUPIED, sealed=False)
 
-        sim.set_spatial_targets("level0_short_stay", 1, source="post_close_mmwave")
-        sim.assert_room("level0_short_stay", OccupancyState.OCCUPIED, sealed=True)
+        sim.set_spatial_targets("short_stay", 1, source="post_close_mmwave")
+        sim.assert_room("short_stay", OccupancyState.OCCUPIED, sealed=True)
 
         sim.wait(DEFAULT_TRANSIT_PHANTOM_HOLD + 30)
-        sim.assert_room("level0_short_stay", OccupancyState.OCCUPIED, sealed=True)
-        sim.assert_room("level0_transit", OccupancyState.VACANT, sealed=False)
-        sim.assert_room("level0_open_area", OccupancyState.VACANT, sealed=False)
+        sim.assert_room("short_stay", OccupancyState.OCCUPIED, sealed=True)
+        sim.assert_room("transit_hall", OccupancyState.VACANT, sealed=False)
+        sim.assert_room("open_east", OccupancyState.VACANT, sealed=False)
 
 
 def test_anonymized_local_home_quick_exit_after_settled_occupancy_checks_empty():
@@ -142,96 +142,97 @@ def test_anonymized_local_home_quick_exit_after_settled_occupancy_checks_empty()
     with AlgorithmScenarioSimulator.anonymized_local_home() as sim:
         sim.add_person("subject", "Subject")
 
-        sim.open_door("level0_transit", "level0_short_stay")
-        sim.enter_room("subject", "level0_short_stay", spatial_targets=1)
-        sim.close_door("level0_transit", "level0_short_stay")
-        sim.set_spatial_targets("level0_short_stay", 1, source="post_close_mmwave")
-        sim.assert_room("level0_short_stay", OccupancyState.OCCUPIED, sealed=True)
+        sim.open_door("transit_hall", "short_stay")
+        sim.enter_room("subject", "short_stay", spatial_targets=1)
+        sim.close_door("transit_hall", "short_stay")
+        sim.set_spatial_targets("short_stay", 1, source="post_close_mmwave")
+        sim.assert_room("short_stay", OccupancyState.OCCUPIED, sealed=True)
 
         sim.wait(180)
-        sim.open_door("level0_transit", "level0_short_stay")
-        sim.close_door("level0_transit", "level0_short_stay")
-        sim.clear_room("level0_short_stay")
+        sim.open_door("transit_hall", "short_stay")
+        sim.close_door("transit_hall", "short_stay")
+        sim.clear_room("short_stay")
 
         sim.wait(14)
-        sim.assert_room("level0_short_stay", OccupancyState.OCCUPIED, sealed=False)
+        sim.assert_room("short_stay", OccupancyState.OCCUPIED, sealed=False)
 
         sim.wait(1)
-        sim.assert_room("level0_short_stay", OccupancyState.CHECKING, sealed=False)
+        sim.assert_room("short_stay", OccupancyState.CHECKING, sealed=False)
 
         sim.wait(30)
-        sim.assert_room("level0_short_stay", OccupancyState.VACANT, sealed=False)
+        sim.assert_room("short_stay", OccupancyState.VACANT, sealed=False)
 
         sim.wait(DEFAULT_TRANSIT_PHANTOM_HOLD + 30)
-        sim.assert_room("level0_transit", OccupancyState.VACANT, sealed=False)
+        sim.assert_room("transit_hall", OccupancyState.VACANT, sealed=False)
 
 
 def test_anonymized_local_home_closed_door_override_waits_for_door_open():
     """A closed-door override is not cleared by the safety timer."""
     with AlgorithmScenarioSimulator.anonymized_local_home(
-        policy_overrides_by_room={"level0_short_stay": {"override_safety_timeout": 5}}
+        policy_overrides_by_room={"short_stay": {"override_safety_timeout": 5}}
     ) as sim:
-        sim.override_room("level0_short_stay")
-        sim.assert_room("level0_short_stay", OccupancyState.OCCUPIED, sealed=True)
+        sim.override_room("short_stay")
+        sim.assert_room("short_stay", OccupancyState.OCCUPIED, sealed=True)
 
         sim.wait(10)
-        sim.assert_room("level0_short_stay", OccupancyState.OCCUPIED, sealed=True)
+        sim.assert_room("short_stay", OccupancyState.OCCUPIED, sealed=True)
 
-        sim.open_door("level0_transit", "level0_short_stay")
-        sim.assert_room("level0_short_stay", OccupancyState.CHECKING, sealed=False)
+        sim.open_door("transit_hall", "short_stay")
+        sim.assert_room("short_stay", OccupancyState.CHECKING, sealed=False)
 
         sim.wait(30)
-        sim.assert_room("level0_short_stay", OccupancyState.VACANT, sealed=False)
+        sim.assert_room("short_stay", OccupancyState.VACANT, sealed=False)
 
         sim.wait(DEFAULT_TRANSIT_PHANTOM_HOLD + 30)
-        sim.assert_room("level0_transit", OccupancyState.VACANT, sealed=False)
+        sim.assert_room("transit_hall", OccupancyState.VACANT, sealed=False)
 
 
 def test_anonymized_local_home_open_door_override_safety_timer_clears():
     """An open-door override is bounded by the override safety timer."""
     with AlgorithmScenarioSimulator.anonymized_local_home(
-        policy_overrides_by_room={"level0_short_stay": {"override_safety_timeout": 5}}
+        policy_overrides_by_room={"short_stay": {"override_safety_timeout": 5}}
     ) as sim:
-        sim.open_door("level0_transit", "level0_short_stay")
-        sim.override_room("level0_short_stay")
-        sim.assert_room("level0_short_stay", OccupancyState.OCCUPIED, sealed=False)
+        sim.open_door("transit_hall", "short_stay")
+        sim.override_room("short_stay")
+        sim.assert_room("short_stay", OccupancyState.OCCUPIED, sealed=False)
 
         sim.wait(5)
-        sim.assert_room("level0_short_stay", OccupancyState.CHECKING, sealed=False)
+        sim.assert_room("short_stay", OccupancyState.CHECKING, sealed=False)
 
         sim.wait(30)
-        sim.assert_room("level0_short_stay", OccupancyState.VACANT, sealed=False)
+        sim.assert_room("short_stay", OccupancyState.VACANT, sealed=False)
 
         sim.wait(DEFAULT_TRANSIT_PHANTOM_HOLD + 30)
-        sim.assert_room("level0_transit", OccupancyState.VACANT, sealed=False)
+        sim.assert_room("transit_hall", OccupancyState.VACANT, sealed=False)
 
 
-def test_anonymized_local_home_vertical_transit_phantom_expires():
-    """Moving through the vertical link creates and clears transit phantoms."""
+def test_anonymized_local_home_transit_phantom_expires():
+    """Moving through the mirrored transit hall creates and clears phantoms."""
     with AlgorithmScenarioSimulator.anonymized_local_home() as sim:
         sim.add_person("subject", "Subject")
 
-        sim.open_door("level0_transit", "vertical_link")
+        sim.open_door("open_west", "transit_hall")
         sim.enter_room(
             "subject",
-            "vertical_link",
+            "transit_hall",
             pir=False,
             mmwave=True,
             spatial_targets=1,
         )
-        sim.clear_room("vertical_link")
+        sim.open_door("transit_hall", "open_east")
+        sim.enter_room("subject", "open_east", spatial_targets=1)
+        sim.clear_room("transit_hall")
 
-        sim.assert_room("vertical_link", OccupancyState.CHECKING, sealed=False)
-        sim.assert_room("level0_transit", OccupancyState.OCCUPIED, sealed=False)
+        sim.assert_room("transit_hall", OccupancyState.CHECKING, sealed=False)
 
         assert sim.transition_predictor is not None
-        assert sim.transition_predictor.has_active_phantom("level0_transit")
+        assert sim.transition_predictor.has_active_phantom("transit_hall")
 
-        sim.wait(DEFAULT_TRANSIT_PHANTOM_HOLD)
-        sim.assert_room("level0_transit", OccupancyState.CHECKING, sealed=False)
+        sim.wait(DEFAULT_TRANSIT_PHANTOM_HOLD - 1)
+        sim.assert_room("transit_hall", OccupancyState.CHECKING, sealed=False)
 
-        sim.wait(30)
-        sim.assert_room("level0_transit", OccupancyState.VACANT, sealed=False)
+        sim.wait(20)
+        sim.assert_room("transit_hall", OccupancyState.VACANT, sealed=False)
 
 
 def test_anonymized_local_home_layout_has_segmented_hallways_and_mmwave_sources():
@@ -239,14 +240,15 @@ def test_anonymized_local_home_layout_has_segmented_hallways_and_mmwave_sources(
     layout = local_home_layout_summary()
     rooms = {room["id"]: room for room in layout["rooms"]}
 
-    assert "level0_front_hall" in rooms
-    assert "level0_short_stay_lobby" in rooms
-    assert "level1_transit" in rooms
-    assert "level0_short_stay" in rooms["level0_transit"]["connected_rooms"]
-    assert "level0_short_stay" in rooms["level0_short_stay_lobby"]["connected_rooms"]
-    assert rooms["level0_transit"]["mmwave_sources"] == [
-        "hallway_ceiling_mmwave",
-        "hallway_wall_mmwave",
+    assert "transit_hall" in rooms
+    assert "short_stay" in rooms["transit_hall"]["connected_rooms"]
+    assert "side_room_alpha" in rooms["transit_hall"]["connected_rooms"]
+    assert "open_east" in rooms["transit_hall"]["door_sensor_connected_rooms"]
+    assert "open_west" in rooms["transit_hall"]["door_sensor_connected_rooms"]
+    assert "short_stay" not in rooms["transit_hall"]["door_sensor_connected_rooms"]
+    assert rooms["transit_hall"]["mmwave_sources"] == [
+        "hall_mmwave_east",
+        "hall_mmwave_west",
     ]
 
 
@@ -254,23 +256,21 @@ def test_local_home_scenario_hallway_left_open_to_short_stay_then_close():
     """A door-left-open walk into short stay settles the hallway."""
     result = hallway_left_open_to_short_stay_then_close()
 
-    assert (
-        result["final_states"]["level0_short_stay"]["state"] == OccupancyState.OCCUPIED
-    )
-    assert result["final_states"]["level0_short_stay"]["sealed"] is True
-    assert result["final_states"]["level0_transit"]["state"] == OccupancyState.VACANT
+    assert result["final_states"]["short_stay"]["state"] == OccupancyState.OCCUPIED
+    assert result["final_states"]["short_stay"]["sealed"] is True
+    assert result["final_states"]["transit_hall"]["state"] == OccupancyState.VACANT
 
 
 def test_local_home_scenario_hallway_multi_mmwave_clears_after_last_target():
     """A multi-mmWave hallway only clears when the last target source clears."""
     result = hallway_multi_mmwave_clears_after_last_target()
 
-    assert result["final_states"]["level0_transit"]["state"] == OccupancyState.VACANT
+    assert result["final_states"]["transit_hall"]["state"] == OccupancyState.VACANT
 
 
 def test_local_home_scenario_short_stay_exit_back_to_hallway():
     """A settled short-stay exit does not leave hallway occupancy stuck."""
     result = short_stay_exit_back_to_hallway()
 
-    assert result["final_states"]["level0_short_stay"]["state"] == OccupancyState.VACANT
-    assert result["final_states"]["level0_transit"]["state"] == OccupancyState.VACANT
+    assert result["final_states"]["short_stay"]["state"] == OccupancyState.VACANT
+    assert result["final_states"]["transit_hall"]["state"] == OccupancyState.VACANT

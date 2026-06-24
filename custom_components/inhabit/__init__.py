@@ -25,6 +25,7 @@ from .api import http as http_api
 from .api import services
 from .api import websocket as ws_api
 from .const import DOMAIN
+from .device_registry import ensure_floor_plan_device
 from .engine.mmwave_target_processor import MmwaveTargetProcessor
 from .engine.outside_exposure import OutsideExposureEngine
 from .engine.simulated_target_processor import SimulatedTargetProcessor
@@ -47,10 +48,14 @@ RESTORED_OCCUPANCY_RECONCILE_DELAY = 60
 def _sync_all_devices(
     hass: HomeAssistant,
     store: FloorPlanStore,
+    config_entry: ConfigEntry,
     dev_reg: dr.DeviceRegistry,
 ) -> None:
     """Sync HA area and name from stored rooms/zones to the device registry."""
     synced = 0
+
+    for fp in store.get_floor_plans():
+        ensure_floor_plan_device(hass, config_entry.entry_id, fp.id, fp.name)
 
     def _sync_device(region_id: str, name: str, ha_area_id: str | None) -> None:
         nonlocal synced
@@ -107,18 +112,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     dev_reg = dr.async_get(hass)
     occupancy_region_ids: set[str] = set()
     outside_exposure_region_ids: set[str] = set()
-    device_region_ids: set[str] = set()
+    device_ids: set[str] = set()
     for fp in floor_plan_store.get_floor_plans():
+        device_ids.add(fp.id)
+        ensure_floor_plan_device(hass, entry.entry_id, fp.id, fp.name)
         for room in fp.get_all_rooms():
             outside_exposure_region_ids.add(room.id)
-            device_region_ids.add(room.id)
+            device_ids.add(room.id)
             if room.occupancy_sensor_enabled:
                 occupancy_region_ids.add(room.id)
         for floor in fp.floors:
             for zone in floor.zones:
                 if zone.occupancy_sensor_enabled:
                     occupancy_region_ids.add(zone.id)
-                    device_region_ids.add(zone.id)
+                    device_ids.add(zone.id)
 
     def _should_remove_entity(unique_id: str) -> bool:
         """Check if a unique_id belongs to an inactive or deleted region."""
@@ -146,7 +153,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Clean up orphaned devices (devices whose region_id no longer exists)
     for device in dr.async_entries_for_config_entry(dev_reg, entry.entry_id):
         for _, identifier in device.identifiers:
-            if identifier not in device_region_ids:
+            if identifier not in device_ids:
                 _LOGGER.info("Removing orphaned device %s (%s)", device.name, device.id)
                 dev_reg.async_remove_device(device.id)
                 break
@@ -220,7 +227,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS_LIST)
 
     # Sync device areas and names from stored model to device registry
-    _sync_all_devices(hass, floor_plan_store, dev_reg)
+    _sync_all_devices(hass, floor_plan_store, entry, dev_reg)
 
     # Start the sensor engine
     await sensor_engine.async_start()

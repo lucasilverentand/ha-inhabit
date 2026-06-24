@@ -35,6 +35,7 @@ from ..const import (
     DOMAIN,
     OccupancyState,
 )
+from ..device_registry import ensure_floor_plan_device
 from ..engine.outside_exposure import (
     SIGNAL_OUTSIDE_EXPOSURE_CHANGED,
     SIGNAL_OUTSIDE_EXPOSURE_ROOM_ADDED,
@@ -115,6 +116,9 @@ async def async_setup_entry(
     # Create entities for all existing rooms and zones with occupancy enabled
     entities: list[BinarySensorEntity] = []
     for floor_plan in store.get_floor_plans():
+        ensure_floor_plan_device(
+            hass, config_entry.entry_id, floor_plan.id, floor_plan.name
+        )
         for room in floor_plan.get_all_rooms():
             if room.occupancy_sensor_enabled:
                 config = store.get_sensor_config(room.id)
@@ -168,6 +172,9 @@ async def async_setup_entry(
             result = floor_plan.get_room(region_id)
             if result:
                 _floor, room = result
+                ensure_floor_plan_device(
+                    hass, config_entry.entry_id, floor_plan.id, floor_plan.name
+                )
                 entity = VirtualOccupancySensor(
                     hass,
                     floor_plan.id,
@@ -184,6 +191,9 @@ async def async_setup_entry(
             for floor in floor_plan.floors:
                 zone = floor.get_zone(region_id)
                 if zone:
+                    ensure_floor_plan_device(
+                        hass, config_entry.entry_id, floor_plan.id, floor_plan.name
+                    )
                     entity = VirtualOccupancySensor(
                         hass,
                         floor_plan.id,
@@ -234,6 +244,9 @@ async def async_setup_entry(
             if not result:
                 continue
             _floor, room = result
+            ensure_floor_plan_device(
+                hass, config_entry.entry_id, floor_plan.id, floor_plan.name
+            )
             entity = VirtualOutsideExposureSensor(
                 hass,
                 floor_plan.id,

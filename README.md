@@ -160,7 +160,7 @@ Available scenarios:
 
 - `hallway_to_short_stay`: open area -> transit -> short-stay room, door left
   open, then closed with spatial confirmation.
-- `hallway_left_open_to_short_stay_then_close`: entry -> segmented hallway ->
+- `hallway_left_open_to_short_stay_then_close`: entry -> transit hallway ->
   short-stay room with the door left open, then closed and resealed by mmWave.
 - `hallway_multi_mmwave_clears_after_last_target`: hallway occupancy stays on
   while any hallway mmWave source still has a target and clears after the last
@@ -173,7 +173,7 @@ Available scenarios:
   releases when the door opens.
 - `open_door_override_safety`: open-door override releases through the safety
   timer.
-- `vertical_transit_phantom`: cross-level transit phantom creation and expiry.
+- `vertical_transit_phantom`: mirrored transit phantom creation and expiry.
 
 ### Project Structure
 

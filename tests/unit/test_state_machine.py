@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import sys
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
@@ -1860,6 +1861,68 @@ class TestSensorUnavailability:
 
         # Cache should still have False (unchanged)
         assert machine._last_known_door_states["binary_sensor.room_door"] is False
+
+    def test_unsealed_door_unavailable_does_not_warn(
+        self, mock_hass, seal_config, state_changes, caplog
+    ):
+        """Startup door availability churn should not warn when no seal exists."""
+        machine, _ = self._make_machine(mock_hass, seal_config, state_changes)
+
+        event = MagicMock()
+        event.data = {
+            "entity_id": "binary_sensor.room_door",
+            "new_state": MagicMock(state=STATE_UNAVAILABLE),
+        }
+
+        with caplog.at_level(
+            logging.WARNING,
+            logger="custom_components.inhabit.engine.occupancy_state_machine",
+        ):
+            machine._handle_door_event(event)
+
+        assert "breaking seal" not in caplog.text
+
+    def test_sealed_door_unavailable_still_warns_and_breaks_seal(
+        self, mock_hass, seal_config, state_changes, caplog
+    ):
+        """A real sealed room still emits warning-level evidence when seal breaks."""
+        self._setup_sensor_states(
+            mock_hass, motion_state=STATE_ON, door_state=STATE_OFF
+        )
+        machine, _ = self._make_machine(mock_hass, seal_config, state_changes)
+
+        with patch(
+            "custom_components.inhabit.engine.occupancy_state_machine.async_call_later",
+            lambda hass, delay, cb: MagicMock(),
+        ):
+            machine._aggregator.update_reading(
+                "binary_sensor.room_motion", True, "motion", 1.0
+            )
+            machine._transition_to_occupied("motion detected")
+            assert machine.state.sealed is True
+
+            self._setup_sensor_states(
+                mock_hass, motion_state=STATE_OFF, door_state=STATE_UNAVAILABLE
+            )
+            machine._aggregator.update_reading(
+                "binary_sensor.room_motion", False, "motion", 1.0
+            )
+
+            with caplog.at_level(
+                logging.WARNING,
+                logger="custom_components.inhabit.engine.occupancy_state_machine",
+            ):
+                machine._handle_door_event(
+                    MagicMock(
+                        data={
+                            "entity_id": "binary_sensor.room_door",
+                            "new_state": MagicMock(state=STATE_UNAVAILABLE),
+                        }
+                    )
+                )
+
+        assert "breaking seal" in caplog.text
+        assert machine.state.sealed is False
 
     def test_motion_sensor_unavailable_while_occupied_stays_occupied(
         self, mock_hass, seal_config, state_changes

@@ -64,25 +64,25 @@ def hallway_to_short_stay() -> dict[str, Any]:
     with AlgorithmScenarioSimulator.anonymized_local_home() as sim:
         sim.add_person("subject", "Subject")
 
-        sim.enter_room("subject", "level0_open_area", spatial_targets=1)
-        sim.open_door("level0_open_area", "level0_transit")
-        sim.enter_room("subject", "level0_transit", spatial_targets=1)
-        sim.clear_room("level0_open_area")
+        sim.enter_room("subject", "open_east", spatial_targets=1)
+        sim.open_door("open_east", "transit_hall")
+        sim.enter_room("subject", "transit_hall", spatial_targets=1)
+        sim.clear_room("open_east")
 
-        sim.open_door("level0_transit", "level0_short_stay")
-        sim.enter_room("subject", "level0_short_stay", spatial_targets=1)
-        sim.clear_room("level0_transit")
+        sim.open_door("transit_hall", "short_stay")
+        sim.enter_room("subject", "short_stay", spatial_targets=1)
+        sim.clear_room("transit_hall")
         sim.wait(90)
 
-        sim.close_door("level0_transit", "level0_short_stay")
-        sim.clear_pir("level0_short_stay")
-        sim.set_spatial_targets("level0_short_stay", 1, source="post_close_mmwave")
+        sim.close_door("transit_hall", "short_stay")
+        sim.clear_pir("short_stay")
+        sim.set_spatial_targets("short_stay", 1, source="post_close_mmwave")
 
-        sim.assert_room("level0_short_stay", OccupancyState.OCCUPIED, sealed=True)
+        sim.assert_room("short_stay", OccupancyState.OCCUPIED, sealed=True)
         sim.wait(DEFAULT_TRANSIT_PHANTOM_HOLD + 30)
-        sim.assert_room("level0_short_stay", OccupancyState.OCCUPIED, sealed=True)
-        sim.assert_room("level0_transit", OccupancyState.VACANT, sealed=False)
-        sim.assert_room("level0_open_area", OccupancyState.VACANT, sealed=False)
+        sim.assert_room("short_stay", OccupancyState.OCCUPIED, sealed=True)
+        sim.assert_room("transit_hall", OccupancyState.VACANT, sealed=False)
+        sim.assert_room("open_east", OccupancyState.VACANT, sealed=False)
         return _result(sim, "hallway_to_short_stay")
 
 
@@ -91,35 +91,31 @@ def hallway_left_open_to_short_stay_then_close() -> dict[str, Any]:
     with AlgorithmScenarioSimulator.anonymized_local_home() as sim:
         sim.add_person("subject", "Subject")
 
-        sim.enter_room("subject", "level0_entry", spatial_targets=1)
-        sim.open_door("level0_entry", "level0_front_hall")
-        sim.enter_room("subject", "level0_front_hall", spatial_targets=1)
-        sim.clear_room("level0_entry")
+        sim.enter_room("subject", "entry_nook", spatial_targets=1)
+        sim.open_door("entry_nook", "transit_hall")
+        sim.enter_room("subject", "transit_hall", spatial_targets=1)
+        sim.clear_room("entry_nook")
 
-        sim.open_door("level0_front_hall", "level0_transit")
-        sim.enter_room("subject", "level0_transit", spatial_targets=1)
-        sim.set_spatial_targets("level0_transit", 1, source="hallway_ceiling_mmwave")
-        sim.set_spatial_targets("level0_transit", 1, source="hallway_wall_mmwave")
-        sim.clear_room("level0_front_hall")
+        sim.set_spatial_targets("transit_hall", 1, source="hall_mmwave_east")
+        sim.set_spatial_targets("transit_hall", 1, source="hall_mmwave_west")
 
-        sim.open_door("level0_transit", "level0_short_stay")
-        sim.enter_room("subject", "level0_short_stay", spatial_targets=1)
-        sim.set_spatial_targets("level0_transit", 0, source="hallway_ceiling_mmwave")
-        sim.set_spatial_targets("level0_transit", 0, source="hallway_wall_mmwave")
-        sim.clear_room("level0_transit")
+        sim.open_door("transit_hall", "short_stay")
+        sim.enter_room("subject", "short_stay", spatial_targets=1)
+        sim.set_spatial_targets("transit_hall", 0, source="hall_mmwave_east")
+        sim.set_spatial_targets("transit_hall", 0, source="hall_mmwave_west")
+        sim.clear_room("transit_hall")
 
         sim.wait(90)
-        sim.assert_room("level0_short_stay", OccupancyState.OCCUPIED, sealed=False)
+        sim.assert_room("short_stay", OccupancyState.OCCUPIED, sealed=False)
 
-        sim.close_door("level0_transit", "level0_short_stay")
-        sim.clear_pir("level0_short_stay")
-        sim.set_spatial_targets("level0_short_stay", 1, source="short_stay_mmwave")
+        sim.close_door("transit_hall", "short_stay")
+        sim.clear_pir("short_stay")
+        sim.set_spatial_targets("short_stay", 1, source="short_stay_spatial")
 
-        sim.assert_room("level0_short_stay", OccupancyState.OCCUPIED, sealed=True)
+        sim.assert_room("short_stay", OccupancyState.OCCUPIED, sealed=True)
         sim.wait(DEFAULT_TRANSIT_PHANTOM_HOLD + 30)
-        sim.assert_room("level0_transit", OccupancyState.VACANT, sealed=False)
-        sim.assert_room("level0_front_hall", OccupancyState.VACANT, sealed=False)
-        sim.assert_room("level0_entry", OccupancyState.VACANT, sealed=False)
+        sim.assert_room("transit_hall", OccupancyState.VACANT, sealed=False)
+        sim.assert_room("entry_nook", OccupancyState.VACANT, sealed=False)
         return _result(sim, "hallway_left_open_to_short_stay_then_close")
 
 
@@ -128,25 +124,25 @@ def hallway_multi_mmwave_clears_after_last_target() -> dict[str, Any]:
     with AlgorithmScenarioSimulator.anonymized_local_home() as sim:
         sim.add_person("subject", "Subject")
 
-        sim.enter_room("subject", "level0_transit", spatial_targets=1)
-        sim.set_spatial_targets("level0_transit", 1, source="hallway_ceiling_mmwave")
-        sim.set_spatial_targets("level0_transit", 1, source="hallway_wall_mmwave")
-        sim.set_spatial_targets("level0_transit", 0, source="scenario")
-        sim.clear_pir("level0_transit")
-        sim.set_mmwave("level0_transit", False, spatial_targets=None)
+        sim.enter_room("subject", "transit_hall", spatial_targets=1)
+        sim.set_spatial_targets("transit_hall", 1, source="hall_mmwave_east")
+        sim.set_spatial_targets("transit_hall", 1, source="hall_mmwave_west")
+        sim.set_spatial_targets("transit_hall", 0, source="scenario")
+        sim.clear_pir("transit_hall")
+        sim.set_mmwave("transit_hall", False, spatial_targets=None)
 
         sim.wait(120)
-        sim.assert_room("level0_transit", OccupancyState.OCCUPIED)
+        sim.assert_room("transit_hall", OccupancyState.OCCUPIED)
 
-        sim.set_spatial_targets("level0_transit", 0, source="hallway_ceiling_mmwave")
+        sim.set_spatial_targets("transit_hall", 0, source="hall_mmwave_east")
         sim.wait(120)
-        sim.assert_room("level0_transit", OccupancyState.OCCUPIED)
+        sim.assert_room("transit_hall", OccupancyState.OCCUPIED)
 
-        sim.set_spatial_targets("level0_transit", 0, source="hallway_wall_mmwave")
+        sim.set_spatial_targets("transit_hall", 0, source="hall_mmwave_west")
         sim.wait(15)
-        sim.assert_room("level0_transit", OccupancyState.CHECKING, sealed=False)
+        sim.assert_room("transit_hall", OccupancyState.CHECKING, sealed=False)
         sim.wait(DEFAULT_TRANSIT_PHANTOM_HOLD + 30)
-        sim.assert_room("level0_transit", OccupancyState.VACANT, sealed=False)
+        sim.assert_room("transit_hall", OccupancyState.VACANT, sealed=False)
         return _result(sim, "hallway_multi_mmwave_clears_after_last_target")
 
 
@@ -155,29 +151,29 @@ def short_stay_exit_back_to_hallway() -> dict[str, Any]:
     with AlgorithmScenarioSimulator.anonymized_local_home() as sim:
         sim.add_person("subject", "Subject")
 
-        sim.open_door("level0_transit", "level0_short_stay")
-        sim.enter_room("subject", "level0_short_stay", spatial_targets=1)
-        sim.close_door("level0_transit", "level0_short_stay")
-        sim.set_spatial_targets("level0_short_stay", 1, source="short_stay_mmwave")
+        sim.open_door("transit_hall", "short_stay")
+        sim.enter_room("subject", "short_stay", spatial_targets=1)
+        sim.close_door("transit_hall", "short_stay")
+        sim.set_spatial_targets("short_stay", 1, source="short_stay_spatial")
         sim.wait(180)
 
-        sim.open_door("level0_transit", "level0_short_stay")
-        sim.enter_room("subject", "level0_transit", spatial_targets=1)
-        sim.set_spatial_targets("level0_transit", 1, source="hallway_ceiling_mmwave")
-        sim.clear_room("level0_short_stay")
-        sim.close_door("level0_transit", "level0_short_stay")
+        sim.open_door("transit_hall", "short_stay")
+        sim.enter_room("subject", "transit_hall", spatial_targets=1)
+        sim.set_spatial_targets("transit_hall", 1, source="hall_mmwave_east")
+        sim.clear_room("short_stay")
+        sim.close_door("transit_hall", "short_stay")
 
         sim.wait(15)
-        sim.assert_room("level0_short_stay", OccupancyState.CHECKING, sealed=False)
-        sim.assert_room("level0_transit", OccupancyState.OCCUPIED)
+        sim.assert_room("short_stay", OccupancyState.CHECKING, sealed=False)
+        sim.assert_room("transit_hall", OccupancyState.OCCUPIED)
 
         sim.wait(30)
-        sim.assert_room("level0_short_stay", OccupancyState.VACANT, sealed=False)
+        sim.assert_room("short_stay", OccupancyState.VACANT, sealed=False)
 
-        sim.set_spatial_targets("level0_transit", 0, source="hallway_ceiling_mmwave")
-        sim.clear_room("level0_transit")
+        sim.set_spatial_targets("transit_hall", 0, source="hall_mmwave_east")
+        sim.clear_room("transit_hall")
         sim.wait(DEFAULT_TRANSIT_PHANTOM_HOLD + 30)
-        sim.assert_room("level0_transit", OccupancyState.VACANT, sealed=False)
+        sim.assert_room("transit_hall", OccupancyState.VACANT, sealed=False)
         return _result(sim, "short_stay_exit_back_to_hallway")
 
 
@@ -186,83 +182,85 @@ def quick_exit_after_settled_occupancy() -> dict[str, Any]:
     with AlgorithmScenarioSimulator.anonymized_local_home() as sim:
         sim.add_person("subject", "Subject")
 
-        sim.open_door("level0_transit", "level0_short_stay")
-        sim.enter_room("subject", "level0_short_stay", spatial_targets=1)
-        sim.close_door("level0_transit", "level0_short_stay")
-        sim.set_spatial_targets("level0_short_stay", 1, source="post_close_mmwave")
+        sim.open_door("transit_hall", "short_stay")
+        sim.enter_room("subject", "short_stay", spatial_targets=1)
+        sim.close_door("transit_hall", "short_stay")
+        sim.set_spatial_targets("short_stay", 1, source="post_close_mmwave")
         sim.wait(180)
 
-        sim.open_door("level0_transit", "level0_short_stay")
-        sim.close_door("level0_transit", "level0_short_stay")
-        sim.clear_room("level0_short_stay")
+        sim.open_door("transit_hall", "short_stay")
+        sim.close_door("transit_hall", "short_stay")
+        sim.clear_room("short_stay")
         sim.wait(15)
 
-        sim.assert_room("level0_short_stay", OccupancyState.CHECKING, sealed=False)
+        sim.assert_room("short_stay", OccupancyState.CHECKING, sealed=False)
         sim.wait(30)
-        sim.assert_room("level0_short_stay", OccupancyState.VACANT, sealed=False)
+        sim.assert_room("short_stay", OccupancyState.VACANT, sealed=False)
         sim.wait(DEFAULT_TRANSIT_PHANTOM_HOLD + 30)
-        sim.assert_room("level0_transit", OccupancyState.VACANT, sealed=False)
+        sim.assert_room("transit_hall", OccupancyState.VACANT, sealed=False)
         return _result(sim, "quick_exit_after_settled_occupancy")
 
 
 def closed_door_override_hold() -> dict[str, Any]:
     """Trigger an override behind a closed door and verify door-open release."""
     with AlgorithmScenarioSimulator.anonymized_local_home(
-        policy_overrides_by_room={"level0_short_stay": {"override_safety_timeout": 5}}
+        policy_overrides_by_room={"short_stay": {"override_safety_timeout": 5}}
     ) as sim:
-        sim.override_room("level0_short_stay")
+        sim.override_room("short_stay")
         sim.wait(10)
 
-        sim.assert_room("level0_short_stay", OccupancyState.OCCUPIED, sealed=True)
+        sim.assert_room("short_stay", OccupancyState.OCCUPIED, sealed=True)
 
-        sim.open_door("level0_transit", "level0_short_stay")
-        sim.assert_room("level0_short_stay", OccupancyState.CHECKING, sealed=False)
+        sim.open_door("transit_hall", "short_stay")
+        sim.assert_room("short_stay", OccupancyState.CHECKING, sealed=False)
         sim.wait(30)
-        sim.assert_room("level0_short_stay", OccupancyState.VACANT, sealed=False)
+        sim.assert_room("short_stay", OccupancyState.VACANT, sealed=False)
         sim.wait(DEFAULT_TRANSIT_PHANTOM_HOLD + 30)
-        sim.assert_room("level0_transit", OccupancyState.VACANT, sealed=False)
+        sim.assert_room("transit_hall", OccupancyState.VACANT, sealed=False)
         return _result(sim, "closed_door_override_hold")
 
 
 def open_door_override_safety() -> dict[str, Any]:
     """Trigger an override with an open door and verify timer release."""
     with AlgorithmScenarioSimulator.anonymized_local_home(
-        policy_overrides_by_room={"level0_short_stay": {"override_safety_timeout": 5}}
+        policy_overrides_by_room={"short_stay": {"override_safety_timeout": 5}}
     ) as sim:
-        sim.open_door("level0_transit", "level0_short_stay")
-        sim.override_room("level0_short_stay")
+        sim.open_door("transit_hall", "short_stay")
+        sim.override_room("short_stay")
         sim.wait(5)
 
-        sim.assert_room("level0_short_stay", OccupancyState.CHECKING, sealed=False)
+        sim.assert_room("short_stay", OccupancyState.CHECKING, sealed=False)
         sim.wait(30)
-        sim.assert_room("level0_short_stay", OccupancyState.VACANT, sealed=False)
+        sim.assert_room("short_stay", OccupancyState.VACANT, sealed=False)
         sim.wait(DEFAULT_TRANSIT_PHANTOM_HOLD + 30)
-        sim.assert_room("level0_transit", OccupancyState.VACANT, sealed=False)
+        sim.assert_room("transit_hall", OccupancyState.VACANT, sealed=False)
         return _result(sim, "open_door_override_safety")
 
 
 def vertical_transit_phantom() -> dict[str, Any]:
-    """Cross the vertical link and verify transit phantom expiry."""
+    """Cross from one open area through transit and verify phantom expiry."""
     with AlgorithmScenarioSimulator.anonymized_local_home() as sim:
         sim.add_person("subject", "Subject")
 
-        sim.open_door("level0_transit", "vertical_link")
+        sim.open_door("open_west", "transit_hall")
         sim.enter_room(
             "subject",
-            "vertical_link",
+            "transit_hall",
             pir=False,
             mmwave=True,
             spatial_targets=1,
         )
-        sim.clear_room("vertical_link")
+        sim.open_door("transit_hall", "open_east")
+        sim.enter_room("subject", "open_east", spatial_targets=1)
+        sim.clear_room("transit_hall")
 
         assert sim.transition_predictor is not None
-        assert sim.transition_predictor.has_active_phantom("level0_transit")
-        sim.wait(DEFAULT_TRANSIT_PHANTOM_HOLD)
+        assert sim.transition_predictor.has_active_phantom("transit_hall")
+        sim.wait(DEFAULT_TRANSIT_PHANTOM_HOLD - 1)
+        sim.assert_room("transit_hall", OccupancyState.CHECKING, sealed=False)
 
-        sim.assert_room("level0_transit", OccupancyState.CHECKING, sealed=False)
-        sim.wait(30)
-        sim.assert_room("level0_transit", OccupancyState.VACANT, sealed=False)
+        sim.wait(20)
+        sim.assert_room("transit_hall", OccupancyState.VACANT, sealed=False)
         return _result(sim, "vertical_transit_phantom")
 
 
@@ -279,7 +277,7 @@ SCENARIOS: dict[str, LocalScenario] = {
     ),
     "hallway_left_open_to_short_stay_then_close": LocalScenario(
         id="hallway_left_open_to_short_stay_then_close",
-        description="Entry -> segmented hallway -> short-stay room with the door left open, then closed and resealed by mmWave.",
+        description="Entry -> transit hallway -> short-stay room with the door left open, then closed and resealed by mmWave.",
         run=hallway_left_open_to_short_stay_then_close,
     ),
     "hallway_multi_mmwave_clears_after_last_target": LocalScenario(
@@ -304,7 +302,7 @@ SCENARIOS: dict[str, LocalScenario] = {
     ),
     "vertical_transit_phantom": LocalScenario(
         id="vertical_transit_phantom",
-        description="Movement through vertical transit creates a hallway phantom that expires cleanly.",
+        description="Movement through the mirrored transit hallway creates a phantom that expires cleanly.",
         run=vertical_transit_phantom,
     ),
 }

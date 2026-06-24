@@ -163,6 +163,7 @@ class AlgorithmScenarioSimulator:
         self.hass.bus.async_fire = MagicMock()
         self.house = FakeHouseSimulator(self.hass, room_specs=room_specs)
         self.hass.states.get.side_effect = self._get_state
+        self._room_specs_by_id = {spec.id: spec for spec in room_specs or []}
 
         self.room_ids = room_ids or list(self.house.rooms)
         self.transit_room_ids = transit_room_ids or set()
@@ -289,7 +290,13 @@ class AlgorithmScenarioSimulator:
         presence_timeout: int,
     ) -> VirtualSensorConfig:
         door_sensors = []
-        for connected_id in self.house.rooms[room_id].connected_rooms:
+        room_spec = self._room_specs_by_id.get(room_id)
+        configured_door_rooms = (
+            room_spec.door_sensor_connected_rooms
+            if room_spec and room_spec.door_sensor_connected_rooms is not None
+            else self.house.rooms[room_id].connected_rooms
+        )
+        for connected_id in configured_door_rooms:
             door_id = self.house._find_door_sensor(room_id, connected_id)
             if door_id:
                 door_sensors.append(

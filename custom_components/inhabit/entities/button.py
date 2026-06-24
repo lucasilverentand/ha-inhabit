@@ -12,6 +12,7 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from ..const import DOMAIN, OccupancyState
+from ..device_registry import ensure_floor_plan_device
 from .const import ENTITY_PREFIX, SUFFIX_OVERRIDE
 
 _LOGGER = logging.getLogger(__name__)
@@ -29,6 +30,9 @@ async def async_setup_entry(
 
     entities: list[OccupancyOverrideButton] = []
     for floor_plan in store.get_floor_plans():
+        ensure_floor_plan_device(
+            hass, config_entry.entry_id, floor_plan.id, floor_plan.name
+        )
         for room in floor_plan.get_all_rooms():
             if room.occupancy_sensor_enabled:
                 config = store.get_sensor_config(room.id)
@@ -71,6 +75,9 @@ async def async_setup_entry(
             result = floor_plan.get_room(region_id)
             if result:
                 _floor, room = result
+                ensure_floor_plan_device(
+                    hass, config_entry.entry_id, floor_plan.id, floor_plan.name
+                )
                 entity = OccupancyOverrideButton(
                     hass,
                     floor_plan.id,
@@ -85,6 +92,9 @@ async def async_setup_entry(
             for floor in floor_plan.floors:
                 zone = floor.get_zone(region_id)
                 if zone:
+                    ensure_floor_plan_device(
+                        hass, config_entry.entry_id, floor_plan.id, floor_plan.name
+                    )
                     entity = OccupancyOverrideButton(
                         hass,
                         floor_plan.id,
