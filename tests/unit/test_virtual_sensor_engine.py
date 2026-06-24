@@ -939,3 +939,45 @@ class TestConfigSync:
             "room_presence",
             state,
         )
+
+    @pytest.mark.asyncio
+    async def test_transition_prediction_waits_for_startup_reconcile(
+        self, mock_hass, patched_ha
+    ):
+        """Restored startup states must not create transition phantoms."""
+        cfg = _make_config("room_a")
+        store = _mock_store(configs=[cfg])
+        engine = await _build_engine(mock_hass, store, patched_ha)
+        engine._transition_predictor.on_room_state_changed = MagicMock()
+
+        engine._on_state_change(
+            "room_a",
+            OccupancyStateData(state=OccupancyState.OCCUPIED),
+            "initial state evaluation",
+        )
+
+        engine._transition_predictor.on_room_state_changed.assert_not_called()
+
+        engine.recalculate_current_states()
+        engine._on_state_change(
+            "room_a",
+            OccupancyStateData(state=OccupancyState.CHECKING),
+            "all sensors clear",
+        )
+
+        engine._transition_predictor.on_room_state_changed.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_startup_reconcile_clears_existing_phantoms(
+        self, mock_hass, patched_ha
+    ):
+        """Any phantom made before settled startup reconciliation is discarded."""
+        cfg = _make_config("room_a")
+        store = _mock_store(configs=[cfg])
+        engine = await _build_engine(mock_hass, store, patched_ha)
+        engine._transition_predictor.clear_phantoms = MagicMock()
+
+        engine.recalculate_current_states()
+
+        engine._transition_predictor.clear_phantoms.assert_called_once()
+        assert engine._transition_prediction_ready is True
