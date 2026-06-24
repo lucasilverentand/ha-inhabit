@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.17](https://github.com/lucasilverentand/ha-inhabit/compare/v0.14.16...v0.14.17) (2026-06-24)
+
+
+### Bug Fixes
+
+* keep active spatial targets occupied ([#103](https://github.com/lucasilverentand/ha-inhabit/issues/103)) ([98bc5e4](https://github.com/lucasilverentand/ha-inhabit/commit/98bc5e4e3f87f0adccac2f143d6eeb556f77344e))
+
 ## [0.14.16](https://github.com/lucasilverentand/ha-inhabit/compare/v0.14.15...v0.14.16) (2026-06-24)
 
 
