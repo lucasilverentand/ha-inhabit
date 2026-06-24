@@ -10,17 +10,115 @@ from homeassistant.core import HomeAssistant, callback
 
 from ...const import DOMAIN, WS_PREFIX
 from ...engine.simulated_target_processor import SimulatedTargetProcessor
+from ...fixtures.local_simulator_house import (
+    LOCAL_SIMULATOR_FLOOR_PLAN_ID,
+    LOCAL_SIMULATOR_FLOOR_PLAN_NAME,
+    build_local_simulator_house,
+    local_simulator_house_summary,
+)
 from ...models.floor_plan import Coordinates
 from ._helpers import _require_admin
 
 
 def register(hass: HomeAssistant) -> None:
     """Register simulation WebSocket commands."""
+    websocket_api.async_register_command(hass, ws_simulate_local_house_get)
+    websocket_api.async_register_command(hass, ws_simulate_local_house_create)
     websocket_api.async_register_command(hass, ws_simulate_target_add)
     websocket_api.async_register_command(hass, ws_simulate_target_move)
     websocket_api.async_register_command(hass, ws_simulate_target_remove)
     websocket_api.async_register_command(hass, ws_simulate_target_clear)
     websocket_api.async_register_command(hass, ws_simulate_target_list)
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{WS_PREFIX}/simulate/local_house/get",
+    }
+)
+@callback
+def ws_simulate_local_house_get(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Return the anonymized local simulator house summary."""
+    store = hass.data[DOMAIN]["store"]
+    floor_plan = store.get_floor_plan(LOCAL_SIMULATOR_FLOOR_PLAN_ID)
+    payload = local_simulator_house_summary()
+    payload["installed"] = floor_plan is not None
+    connection.send_result(msg["id"], payload)
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{WS_PREFIX}/simulate/local_house/create",
+        vol.Optional("replace_existing", default=False): bool,
+    }
+)
+@callback
+def ws_simulate_local_house_create(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Create or refresh the anonymized local simulator house floor plan."""
+    if not _require_admin(connection, msg):
+        return
+
+    store = hass.data[DOMAIN]["store"]
+    existing = store.get_floor_plan(LOCAL_SIMULATOR_FLOOR_PLAN_ID)
+    if existing and not msg["replace_existing"]:
+        connection.send_result(
+            msg["id"],
+            {
+                "created": False,
+                "floor_plan": existing.to_dict(),
+                "summary": local_simulator_house_summary(),
+            },
+        )
+        return
+
+    old_mmwave_ids: list[str] = []
+    if existing:
+        old_mmwave_ids = [
+            placement.id
+            for placement in store.get_mmwave_placements(LOCAL_SIMULATOR_FLOOR_PLAN_ID)
+        ]
+        store.delete_floor_plan(LOCAL_SIMULATOR_FLOOR_PLAN_ID)
+
+    floor_plan, configs, mmwave_placements = build_local_simulator_house()
+    created = store.create_floor_plan(floor_plan)
+    for config in configs:
+        store.create_sensor_config(config)
+    for placement in mmwave_placements:
+        store.create_mmwave_placement(placement)
+
+    sim: SimulatedTargetProcessor = hass.data[DOMAIN]["sim_processor"]
+    sim.clear_all()
+
+    sensor_engine = hass.data[DOMAIN].get("sensor_engine")
+    if sensor_engine:
+        hass.async_create_task(sensor_engine.async_refresh())
+
+    mmwave_processor = hass.data[DOMAIN].get("mmwave_processor")
+    if mmwave_processor:
+        for placement_id in old_mmwave_ids:
+            hass.async_create_task(
+                mmwave_processor.async_remove_placement(placement_id)
+            )
+        for placement in mmwave_placements:
+            hass.async_create_task(mmwave_processor.async_add_placement(placement))
+
+    connection.send_result(
+        msg["id"],
+        {
+            "created": True,
+            "floor_plan": created.to_dict(),
+            "summary": local_simulator_house_summary(),
+            "message": f"Created {LOCAL_SIMULATOR_FLOOR_PLAN_NAME}",
+        },
+    )
 
 
 @websocket_api.websocket_command(
