@@ -940,6 +940,16 @@ export class FpbToolbar extends LitElement {
     );
   }
 
+  private _loadLocalSimulator(): void {
+    this._floorMenuOpen = false;
+    this.dispatchEvent(
+      new CustomEvent("load-local-simulator", {
+        bubbles: true,
+        composed: true,
+      }),
+    );
+  }
+
   private _toggleFloorMenu(): void {
     this._floorMenuOpen = !this._floorMenuOpen;
     if (this._floorMenuOpen) {
@@ -1188,7 +1198,7 @@ export class FpbToolbar extends LitElement {
     const menuItems = getModeTools(mode).map((toolId) => TOOL_ITEMS[toolId]);
     const actions = this._toolbarActions(menuItems, mode, modeDef);
     const { direct, overflow } = this._splitActions(actions);
-    const showMapActions = mode !== "occupancy" && actions.length > 0;
+    const showMapActions = actions.length > 0;
 
     return html`
       <!-- Left: Floor Selector -->
@@ -1255,6 +1265,10 @@ export class FpbToolbar extends LitElement {
                 <button class="floor-option action-item" @click=${this._openImportExport}>
                   <ha-icon icon="mdi:swap-horizontal"></ha-icon>
                   Import / Export
+                </button>
+                <button class="floor-option action-item" @click=${this._loadLocalSimulator}>
+                  <ha-icon icon="mdi:home-analytics"></ha-icon>
+                  Load simulator house
                 </button>
               </div>
             `

@@ -684,6 +684,45 @@ export class HaFloorplanPanel extends LitElement {
     }
   }
 
+  private async _loadLocalSimulatorHouse(
+    replaceExisting = false,
+  ): Promise<void> {
+    if (!this.hass) return;
+
+    try {
+      const result = await this.hass.callWS<{
+        created: boolean;
+        floor_plan: FloorPlan;
+      }>({
+        type: "inhabit/simulate/local_house/create",
+        replace_existing: replaceExisting,
+      });
+
+      const floorPlan = result.floor_plan;
+      this._floorPlans = [
+        floorPlan,
+        ...this._floorPlans.filter((plan) => plan.id !== floorPlan.id),
+      ];
+      currentFloorPlan.value = floorPlan;
+      currentFloor.value = floorPlan.floors[0] ?? null;
+      gridSize.value = floorPlan.grid_size;
+      this._detectFloorConflicts(floorPlan);
+      await this._loadDevicePlacements(floorPlan.id);
+      clearHistory();
+      this._editorMode = true;
+      canvasMode.value = "occupancy";
+      activeTool.value = "select";
+      showGrid.value = false;
+    } catch (err) {
+      console.error("Error loading simulator house:", err);
+      alert(
+        `Failed to load simulator house: ${
+          err instanceof Error ? err.message : err
+        }`,
+      );
+    }
+  }
+
   private async _addFloor(): Promise<void> {
     if (!this.hass) return;
 
@@ -981,6 +1020,9 @@ export class HaFloorplanPanel extends LitElement {
               }}
             />
             <button @click=${() => this._initializeFloors(this._floorCount)}>Get Started</button>
+            <button @click=${() => this._loadLocalSimulatorHouse()}>
+              Load simulator house
+            </button>
           </div>
         </div>
       `;
@@ -1005,6 +1047,7 @@ export class HaFloorplanPanel extends LitElement {
                 @rename-floor=${(e: CustomEvent) =>
                   this._renameFloor(e.detail.id, e.detail.name)}
                 @open-import-export=${this._openImportExport}
+                @load-local-simulator=${() => this._loadLocalSimulatorHouse(true)}
                 @exit-editor=${this._toggleEditorMode}
               ></fpb-toolbar>
             `
