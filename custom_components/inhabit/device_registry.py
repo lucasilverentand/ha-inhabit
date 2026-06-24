@@ -19,10 +19,13 @@ def ensure_floor_plan_device(
         dev_reg = dr.async_get(hass)
     except (AttributeError, KeyError):
         return
-    dev_reg.async_get_or_create(
-        config_entry_id=config_entry_id,
-        identifiers={(DOMAIN, floor_plan_id)},
-        manufacturer="Inhabit",
-        model="Floor Plan",
-        name=floor_plan_name,
-    )
+    try:
+        dev_reg.async_get_or_create(
+            config_entry_id=config_entry_id,
+            identifiers={(DOMAIN, floor_plan_id)},
+            manufacturer="Inhabit",
+            model="Floor Plan",
+            name=floor_plan_name,
+        )
+    except AttributeError:
+        return
