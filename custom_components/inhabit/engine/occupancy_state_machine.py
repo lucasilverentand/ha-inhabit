@@ -737,12 +737,21 @@ class OccupancyStateMachine:
 
         # Door sensor became unavailable — break the seal (can't trust it)
         if new_state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
-            _LOGGER.warning(
-                "Room %s: door sensor %s became %s, breaking seal",
-                self.config.room_id,
-                entity_id,
-                new_state.state,
-            )
+            message = "Room %s: door sensor %s became %s"
+            if self._seal_tracker.is_sealed:
+                _LOGGER.warning(
+                    message + ", breaking seal",
+                    self.config.room_id,
+                    entity_id,
+                    new_state.state,
+                )
+            else:
+                _LOGGER.debug(
+                    message + " while unsealed",
+                    self.config.room_id,
+                    entity_id,
+                    new_state.state,
+                )
             self._diagnose(
                 "sensor_unavailable",
                 category="sensor",
