@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.14.16](https://github.com/lucasilverentand/ha-inhabit/compare/v0.14.15...v0.14.16) (2026-06-24)
+
+
+### Bug Fixes
+
+* stabilize occupancy policies and simulator ([3bca563](https://github.com/lucasilverentand/ha-inhabit/commit/3bca563353158f152137855170c61662ceb2591c))
+
+
+### Tests
+
+* add real occupancy scenario simulator ([a5d2bf9](https://github.com/lucasilverentand/ha-inhabit/commit/a5d2bf9714ee6dba80e4903c04449b79ef259476))
+
 ## [0.14.15](https://github.com/lucasilverentand/ha-inhabit/compare/v0.14.14...v0.14.15) (2026-06-21)
 
 

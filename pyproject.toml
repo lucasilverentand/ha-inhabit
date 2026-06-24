@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "inhabit"
-version = "0.14.15"
+version = "0.14.16"
 description = "Home Assistant Floor Plan Builder with Virtual Occupancy Sensors"
 readme = "README.md"
 license = {text = "MIT"}
