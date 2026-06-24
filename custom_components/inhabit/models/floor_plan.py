@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
+from ..occupancy_policy import DEFAULT_ROOM_PROFILE, normalize_occupancy_profile
+
 if TYPE_CHECKING:
     from .zone import Zone
 
@@ -406,6 +408,7 @@ class Room:
     floor_id: str = ""
     color: str = "#e8e8e8"
     occupancy_sensor_enabled: bool = True
+    occupancy_profile: str = DEFAULT_ROOM_PROFILE
     motion_timeout: int = 120  # Seconds before CHECKING state
     checking_timeout: int = 30  # Seconds in CHECKING before VACANT
     connected_rooms: list[str] = field(
@@ -430,6 +433,7 @@ class Room:
             "floor_id": self.floor_id,
             "color": self.color,
             "occupancy_sensor_enabled": self.occupancy_sensor_enabled,
+            "occupancy_profile": normalize_occupancy_profile(self.occupancy_profile),
             "motion_timeout": self.motion_timeout,
             "checking_timeout": self.checking_timeout,
             "connected_rooms": self.connected_rooms,
@@ -461,6 +465,9 @@ class Room:
             floor_id=data.get("floor_id", ""),
             color=data.get("color", "#e8e8e8"),
             occupancy_sensor_enabled=data.get("occupancy_sensor_enabled", True),
+            occupancy_profile=normalize_occupancy_profile(
+                data.get("occupancy_profile")
+            ),
             motion_timeout=int(data.get("motion_timeout", 120)),
             checking_timeout=int(data.get("checking_timeout", 30)),
             connected_rooms=data.get("connected_rooms", []),

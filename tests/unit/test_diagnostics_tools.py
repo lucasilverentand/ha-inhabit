@@ -100,6 +100,33 @@ class TestConfigPatchTools:
             "before": 0.5,
             "after": 0.6,
         } in result.diff
+        assert result.proposed["policy_overrides"]["checking_timeout"] == 45
+
+    def test_preview_policy_overrides_apply_after_profile(self):
+        config = VirtualSensorConfig(room_id="room_a", floor_plan_id="fp_test")
+        store = _store_with_config(config)
+
+        result = preview_sensor_config_patch(
+            store,
+            "room_a",
+            {
+                "occupancy_profile": "transit",
+                "policy_overrides": {
+                    "motion_timeout": 90,
+                    "door_seals_room": True,
+                    "unsupported": "ignored",
+                },
+            },
+        )
+
+        assert result.valid is True
+        assert result.proposed["occupancy_profile"] == "transit"
+        assert result.proposed["motion_timeout"] == 90
+        assert result.proposed["door_seals_room"] is True
+        assert result.proposed["policy_overrides"] == {
+            "motion_timeout": 90,
+            "door_seals_room": True,
+        }
 
     def test_preview_rejects_invalid_threshold_order(self):
         config = VirtualSensorConfig(room_id="room_a", floor_plan_id="fp_test")

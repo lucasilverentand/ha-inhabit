@@ -113,6 +113,7 @@ export interface Room {
   floor_id: string;
   color: string;
   occupancy_sensor_enabled: boolean;
+  occupancy_profile?: string;
   motion_timeout: number;
   checking_timeout: number;
   connected_rooms: string[];
@@ -130,6 +131,7 @@ export interface Zone {
   rotation: number;
   ha_area_id?: string;
   occupancy_sensor_enabled: boolean;
+  occupancy_profile?: string;
   motion_timeout: number;
   checking_timeout: number;
   spatial_presence_delay?: number | null;
@@ -197,19 +199,46 @@ export interface SensorBinding {
   inverted: boolean;
 }
 
-export interface VirtualSensorConfig {
-  room_id: string;
-  floor_plan_id: string;
-  enabled: boolean;
+export interface OccupancyProfile {
+  id: string;
+  label: string;
+  description: string;
   motion_timeout: number;
   checking_timeout: number;
   presence_timeout: number;
   unsealed_activity_timeout: number;
+  door_seals_room: boolean;
+  long_stay: boolean;
+  hold_until_exit: boolean;
+  phantom_hold_seconds: number;
+  exit_check_delay: number;
+  override_safety_timeout: number;
+  closed_door_hybrid_check: number;
+}
+
+export type PolicyOverrideValue = number | boolean;
+
+export interface VirtualSensorConfig {
+  room_id: string;
+  floor_plan_id: string;
+  enabled: boolean;
+  occupancy_profile: string;
+  policy_overrides?: Record<string, PolicyOverrideValue>;
+  motion_timeout: number;
+  checking_timeout: number;
+  presence_timeout: number;
+  unsealed_activity_timeout: number;
+  exit_check_delay: number;
+  override_safety_timeout: number;
+  closed_door_hybrid_check: number;
+  restart_history_lookback: number;
   motion_sensors: SensorBinding[];
   presence_sensors: SensorBinding[];
   occupancy_sensors: SensorBinding[];
   door_sensors: SensorBinding[];
+  window_sensors?: SensorBinding[];
   hint_sensors?: SensorBinding[];
+  mmwave_exit_areas?: Array<Record<string, unknown>>;
   exit_sensors?: SensorBinding[];
   hold_until_exit?: boolean;
   occupies_parent?: boolean;
@@ -219,6 +248,7 @@ export interface VirtualSensorConfig {
   seal_max_duration: number;
   seal_half_life: number;
   long_stay: boolean;
+  phantom_hold_seconds: number;
   door_blocks_vacancy: boolean;
   door_open_resets_checking: boolean;
   override_trigger_entity: string;

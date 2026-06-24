@@ -45,6 +45,16 @@ class FakeRoom:
     connected_rooms: list[str] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class FakeRoomSpec:
+    """An anonymized room layout specification for scenario tests."""
+
+    id: str
+    name: str
+    floor: str
+    connected_rooms: list[str] = field(default_factory=list)
+
+
 @dataclass
 class FakePerson:
     """Fake person moving through the house."""
@@ -72,14 +82,30 @@ class FakeHouseSimulator:
     Doors have contact sensors connecting rooms.
     """
 
-    def __init__(self, hass: HomeAssistant) -> None:
+    def __init__(
+        self, hass: HomeAssistant, room_specs: list[FakeRoomSpec] | None = None
+    ) -> None:
         """Initialize the simulator."""
         self.hass = hass
         self.rooms: dict[str, FakeRoom] = {}
         self.sensors: dict[str, FakeSensor] = {}
         self.persons: dict[str, FakePerson] = {}
         self._state_change_callbacks: list[Callable] = []
-        self._setup_house()
+        if room_specs is None:
+            self._setup_house()
+        else:
+            self._setup_from_specs(room_specs)
+
+    def _setup_from_specs(self, room_specs: list[FakeRoomSpec]) -> None:
+        """Set up a custom anonymized house structure."""
+        for spec in room_specs:
+            self._add_room(
+                spec.id,
+                spec.name,
+                spec.floor,
+                list(spec.connected_rooms),
+            )
+        self._add_door_sensors()
 
     def _setup_house(self) -> None:
         """Set up the fake house structure."""

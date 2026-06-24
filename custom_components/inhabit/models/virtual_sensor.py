@@ -7,6 +7,15 @@ from datetime import datetime
 from typing import Any
 
 from ..const import OccupancyState
+from ..occupancy_policy import (
+    CLOSED_DOOR_HYBRID_CHECK_SECONDS,
+    DEFAULT_ROOM_PROFILE,
+    EXIT_CHECK_DELAY_SECONDS,
+    OVERRIDE_SAFETY_TIMEOUT_SECONDS,
+    RESTART_HISTORY_LOOKBACK_SECONDS,
+    normalize_occupancy_profile,
+    normalize_policy_overrides,
+)
 
 
 @dataclass
@@ -190,19 +199,27 @@ class VirtualSensorConfig:
     room_id: str = ""
     floor_plan_id: str = ""
     enabled: bool = True
+    occupancy_profile: str = DEFAULT_ROOM_PROFILE
 
     # Timing configuration
     motion_timeout: int = 120  # Seconds after last motion to start CHECKING
     checking_timeout: int = 30  # Seconds in CHECKING before VACANT
     presence_timeout: int = 300  # Seconds to trust presence sensor alone
     unsealed_activity_timeout: int = 120  # Seconds to trust unsealed activity
+    exit_check_delay: int = EXIT_CHECK_DELAY_SECONDS
+    override_safety_timeout: int = OVERRIDE_SAFETY_TIMEOUT_SECONDS
+    closed_door_hybrid_check: int = CLOSED_DOOR_HYBRID_CHECK_SECONDS
+    restart_history_lookback: int = RESTART_HISTORY_LOOKBACK_SECONDS
+    policy_overrides: dict[str, Any] = field(default_factory=dict)
 
     # Sensor bindings
     motion_sensors: list[SensorBinding] = field(default_factory=list)
     presence_sensors: list[SensorBinding] = field(default_factory=list)
     occupancy_sensors: list[SensorBinding] = field(default_factory=list)
     door_sensors: list[SensorBinding] = field(default_factory=list)
+    window_sensors: list[SensorBinding] = field(default_factory=list)
     hint_sensors: list[SensorBinding] = field(default_factory=list)
+    mmwave_exit_areas: list[dict[str, Any]] = field(default_factory=list)
 
     # Spatial presence detection
     presence_affects: bool = False  # Spatial presence targets affect this room/zone
@@ -228,6 +245,7 @@ class VirtualSensorConfig:
     seal_max_duration: int = 14400  # Max seconds for seal probability metadata
     seal_half_life: int = 3600  # Half-life for seal probability metadata
     long_stay: bool = False  # Uses slower diagnostic decay for couches, beds, etc.
+    phantom_hold_seconds: int = 0  # Used by transition prediction for transit holds
 
     # Legacy door-aware logic (mapped to door_seals_room on load)
     door_blocks_vacancy: bool = True  # Deprecated: use door_seals_room
@@ -276,15 +294,23 @@ class VirtualSensorConfig:
             "room_id": self.room_id,
             "floor_plan_id": self.floor_plan_id,
             "enabled": self.enabled,
+            "occupancy_profile": normalize_occupancy_profile(self.occupancy_profile),
             "motion_timeout": self.motion_timeout,
             "checking_timeout": self.checking_timeout,
             "presence_timeout": self.presence_timeout,
             "unsealed_activity_timeout": self.unsealed_activity_timeout,
+            "exit_check_delay": self.exit_check_delay,
+            "override_safety_timeout": self.override_safety_timeout,
+            "closed_door_hybrid_check": self.closed_door_hybrid_check,
+            "restart_history_lookback": self.restart_history_lookback,
+            "policy_overrides": normalize_policy_overrides(self.policy_overrides),
             "motion_sensors": [s.to_dict() for s in self.motion_sensors],
             "presence_sensors": [s.to_dict() for s in self.presence_sensors],
             "occupancy_sensors": [s.to_dict() for s in self.occupancy_sensors],
             "door_sensors": [s.to_dict() for s in self.door_sensors],
+            "window_sensors": [s.to_dict() for s in self.window_sensors],
             "hint_sensors": [s.to_dict() for s in self.hint_sensors],
+            "mmwave_exit_areas": self.mmwave_exit_areas,
             "exit_sensors": [s.to_dict() for s in self.exit_sensors],
             "hold_until_exit": self.hold_until_exit,
             "occupies_parent": self.occupies_parent,
@@ -295,6 +321,7 @@ class VirtualSensorConfig:
             "seal_max_duration": self.seal_max_duration,
             "seal_half_life": self.seal_half_life,
             "long_stay": self.long_stay,
+            "phantom_hold_seconds": self.phantom_hold_seconds,
             "override_trigger_entity": self.override_trigger_entity,
             "override_trigger_action": self.override_trigger_action,
             # Legacy fields kept for backward compatibility
@@ -318,10 +345,28 @@ class VirtualSensorConfig:
             room_id=data.get("room_id", ""),
             floor_plan_id=data.get("floor_plan_id", ""),
             enabled=data.get("enabled", True),
+            occupancy_profile=normalize_occupancy_profile(
+                data.get("occupancy_profile")
+            ),
             motion_timeout=int(data.get("motion_timeout", 120)),
             checking_timeout=int(data.get("checking_timeout", 30)),
             presence_timeout=int(data.get("presence_timeout", 300)),
             unsealed_activity_timeout=int(data.get("unsealed_activity_timeout", 120)),
+            exit_check_delay=int(
+                data.get("exit_check_delay", EXIT_CHECK_DELAY_SECONDS)
+            ),
+            override_safety_timeout=int(
+                data.get("override_safety_timeout", OVERRIDE_SAFETY_TIMEOUT_SECONDS)
+            ),
+            closed_door_hybrid_check=int(
+                data.get("closed_door_hybrid_check", CLOSED_DOOR_HYBRID_CHECK_SECONDS)
+            ),
+            restart_history_lookback=int(
+                data.get("restart_history_lookback", RESTART_HISTORY_LOOKBACK_SECONDS)
+            ),
+            policy_overrides=normalize_policy_overrides(
+                data.get("policy_overrides", {})
+            ),
             motion_sensors=[
                 SensorBinding.from_dict(s) for s in data.get("motion_sensors", [])
             ],
@@ -334,9 +379,13 @@ class VirtualSensorConfig:
             door_sensors=[
                 SensorBinding.from_dict(s) for s in data.get("door_sensors", [])
             ],
+            window_sensors=[
+                SensorBinding.from_dict(s) for s in data.get("window_sensors", [])
+            ],
             hint_sensors=[
                 SensorBinding.from_dict(s) for s in data.get("hint_sensors", [])
             ],
+            mmwave_exit_areas=data.get("mmwave_exit_areas", []),
             exit_sensors=[
                 SensorBinding.from_dict(s) for s in data.get("exit_sensors", [])
             ],
@@ -353,6 +402,7 @@ class VirtualSensorConfig:
             seal_max_duration=int(data.get("seal_max_duration", 14400)),
             seal_half_life=int(data.get("seal_half_life", 3600)),
             long_stay=data.get("long_stay", False),
+            phantom_hold_seconds=int(data.get("phantom_hold_seconds", 0)),
             override_trigger_entity=data.get("override_trigger_entity", ""),
             override_trigger_action=data.get("override_trigger_action", ""),
             door_blocks_vacancy=door_seals_room,
@@ -373,6 +423,8 @@ class VirtualSensorConfig:
         for binding in self.occupancy_sensors:
             entity_ids.append(binding.entity_id)
         for binding in self.door_sensors:
+            entity_ids.append(binding.entity_id)
+        for binding in self.window_sensors:
             entity_ids.append(binding.entity_id)
         for binding in self.exit_sensors:
             entity_ids.append(binding.entity_id)

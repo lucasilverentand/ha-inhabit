@@ -81,6 +81,7 @@ class VirtualSensorEngine:
             get_learned_weight=lambda fr, to, hr: self._transition_learner.get_transition_weight(
                 fr, to, hr
             ),
+            on_phantom_expired=self._handle_phantom_expired,
         )
         self._transition_learner = TransitionLearner()
         self._running = False
@@ -576,6 +577,13 @@ class VirtualSensorEngine:
         machine = self._state_machines.get(room_id)
         if machine and machine.state.state == OccupancyState.VACANT:
             machine.set_state(OccupancyState.OCCUPIED, reason)
+
+    def _handle_phantom_expired(self, room_id: str, _phantom: Any) -> None:
+        """Reconcile a room after its transition-prediction hold expires."""
+        machine = self._state_machines.get(room_id)
+        if not machine:
+            return
+        machine.recalculate_from_current_state("phantom expired")
 
     # ------------------------------------------------------------------
     # Timeout history persistence

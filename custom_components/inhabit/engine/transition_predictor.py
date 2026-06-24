@@ -107,6 +107,7 @@ class TransitionPredictor:
         get_seal_state: Callable[[str], bool] | None = None,
         set_room_occupied: Callable[[str, str], None] | None = None,
         get_learned_weight: Callable[[str, str, int | None], float] | None = None,
+        on_phantom_expired: Callable[[str, PhantomPresence], None] | None = None,
     ) -> None:
         """Initialize the transition predictor.
 
@@ -116,15 +117,19 @@ class TransitionPredictor:
             get_seal_state: Callback returning True if a room is sealed.
             set_room_occupied: Callback to push a room to OCCUPIED state.
             get_learned_weight: Callback to get learned transition weight.
+            on_phantom_expired: Callback to re-evaluate a room when a phantom
+                hold expires naturally.
         """
         self.hass = hass
         self._store = store
         self._get_seal_state = get_seal_state
         self._set_room_occupied = set_room_occupied
         self._get_learned_weight = get_learned_weight
+        self._on_phantom_expired = on_phantom_expired
 
         # Active phantom presences: target_id -> PhantomPresence
         self._phantoms: dict[str, PhantomPresence] = {}
+        self._expiring_phantom_targets: set[str] = set()
 
         # Phantom expiry timers: target_id -> cancel callback
         self._phantom_timers: dict[str, Callable[[], None]] = {}
@@ -186,6 +191,7 @@ class TransitionPredictor:
             cancel()
         self._phantom_timers.clear()
         self._phantoms.clear()
+        self._expiring_phantom_targets.clear()
         self._door_links.clear()
         self._all_door_links.clear()
         self._adjacency.clear()
@@ -208,7 +214,7 @@ class TransitionPredictor:
         if phantom is None:
             return False
         if phantom.is_expired:
-            self._expire_phantom(room_id)
+            self._expire_phantom(room_id, revalidate=True)
             return False
         return True
 
@@ -225,10 +231,12 @@ class TransitionPredictor:
         """
         self._room_states[room_id] = new_state
 
-        # Room just became OCCUPIED — cancel any phantom on this room
-        # (real presence replaces phantom)
+        # Room just became OCCUPIED — cancel any phantom on this room when
+        # real sensor confidence replaces it. A zero-confidence OCCUPIED
+        # transition is the predictor's own synthetic hold and must keep its
+        # expiry timer.
         if new_state == OccupancyState.OCCUPIED:
-            if room_id in self._phantoms:
+            if room_id in self._phantoms and confidence > 0.0:
                 self._expire_phantom(room_id)
 
         # Room went OCCUPIED → CHECKING: sensors cleared, person may have
@@ -236,6 +244,7 @@ class TransitionPredictor:
         if (
             old_state == OccupancyState.OCCUPIED
             and new_state == OccupancyState.CHECKING
+            and room_id not in self._expiring_phantom_targets
         ):
             self._predict_forward(room_id)
 
@@ -443,7 +452,7 @@ class TransitionPredictor:
         @callback
         def _on_phantom_expired(_now: Any) -> None:
             self._phantom_timers.pop(target_id, None)
-            self._expire_phantom(target_id)
+            self._expire_phantom(target_id, revalidate=True)
 
         self._phantom_timers[target_id] = async_call_later(
             self.hass,
@@ -451,7 +460,7 @@ class TransitionPredictor:
             _on_phantom_expired,
         )
 
-    def _expire_phantom(self, target_id: str) -> None:
+    def _expire_phantom(self, target_id: str, *, revalidate: bool = False) -> None:
         """Remove a phantom presence from a room."""
         phantom = self._phantoms.pop(target_id, None)
         if phantom:
@@ -466,6 +475,13 @@ class TransitionPredictor:
         cancel = self._phantom_timers.pop(target_id, None)
         if cancel:
             cancel()
+
+        if revalidate and phantom and self._on_phantom_expired:
+            self._expiring_phantom_targets.add(target_id)
+            try:
+                self._on_phantom_expired(target_id, phantom)
+            finally:
+                self._expiring_phantom_targets.discard(target_id)
 
     # ------------------------------------------------------------------
     # Topology analysis

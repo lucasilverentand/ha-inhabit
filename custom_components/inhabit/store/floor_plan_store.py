@@ -22,6 +22,12 @@ from ..models.floor_plan import Edge, Floor, FloorPlan, Room
 from ..models.mmwave_sensor import MmwavePlacement
 from ..models.virtual_sensor import VirtualSensorConfig
 from ..models.zone import Zone
+from ..occupancy_policy import (
+    DEFAULT_ZONE_PROFILE,
+    POLICY_OVERRIDE_FIELDS,
+    apply_occupancy_profile,
+    apply_occupancy_profile_to_region,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -244,10 +250,12 @@ class FloorPlanStore:
 
         # Create default sensor config for the room
         if room.occupancy_sensor_enabled:
+            apply_occupancy_profile_to_region(room)
             self.create_sensor_config(
                 VirtualSensorConfig(
                     room_id=room.id,
                     floor_plan_id=floor_plan_id,
+                    occupancy_profile=room.occupancy_profile,
                     motion_timeout=room.motion_timeout,
                     checking_timeout=room.checking_timeout,
                 )
@@ -264,10 +272,16 @@ class FloorPlanStore:
         for floor in floor_plan.floors:
             for i, existing in enumerate(floor.rooms):
                 if existing.id == room.id:
+                    apply_occupancy_profile_to_region(room)
                     floor.rooms[i] = room
                     self.update_floor_plan(floor_plan)
                     if not room.occupancy_sensor_enabled:
                         self.delete_sensor_config(room.id)
+                    else:
+                        config = self.get_sensor_config(room.id)
+                        if config:
+                            config.occupancy_profile = room.occupancy_profile
+                            self.update_sensor_config(config)
                     return room
         return None
 
@@ -317,10 +331,12 @@ class FloorPlanStore:
         self.update_floor_plan(floor_plan)
 
         if zone.occupancy_sensor_enabled:
+            apply_occupancy_profile_to_region(zone, default=DEFAULT_ZONE_PROFILE)
             self.create_sensor_config(
                 VirtualSensorConfig(
                     room_id=zone.id,
                     floor_plan_id=floor_plan_id,
+                    occupancy_profile=zone.occupancy_profile,
                     motion_timeout=zone.motion_timeout,
                     checking_timeout=zone.checking_timeout,
                 )
@@ -337,10 +353,19 @@ class FloorPlanStore:
         for floor in floor_plan.floors:
             for i, existing in enumerate(floor.zones):
                 if existing.id == zone.id:
+                    apply_occupancy_profile_to_region(
+                        zone,
+                        default=DEFAULT_ZONE_PROFILE,
+                    )
                     floor.zones[i] = zone
                     self.update_floor_plan(floor_plan)
                     if not zone.occupancy_sensor_enabled:
                         self.delete_sensor_config(zone.id)
+                    else:
+                        config = self.get_sensor_config(zone.id)
+                        if config:
+                            config.occupancy_profile = zone.occupancy_profile
+                            self.update_sensor_config(config)
                     return zone
         return None
 
@@ -712,6 +737,7 @@ class FloorPlanStore:
         if "sensor_configs" not in self._data:
             self._data["sensor_configs"] = {}
 
+        apply_occupancy_profile(config)
         self._data["sensor_configs"][config.room_id] = config.to_dict()
         self.async_delay_save()
         return config
@@ -720,9 +746,19 @@ class FloorPlanStore:
         self, config: VirtualSensorConfig
     ) -> VirtualSensorConfig | None:
         """Update a sensor configuration."""
-        if config.room_id not in self._data.get("sensor_configs", {}):
+        current_data = self._data.get("sensor_configs", {}).get(config.room_id)
+        if current_data is None:
             return None
 
+        current_config = VirtualSensorConfig.from_dict(current_data)
+        if config.occupancy_profile == current_config.occupancy_profile:
+            overrides = dict(config.policy_overrides)
+            for field in POLICY_OVERRIDE_FIELDS:
+                if getattr(config, field, None) != getattr(current_config, field, None):
+                    overrides[field] = getattr(config, field)
+            config.policy_overrides = overrides
+
+        apply_occupancy_profile(config)
         self._data["sensor_configs"][config.room_id] = config.to_dict()
         self.async_delay_save()
         return config

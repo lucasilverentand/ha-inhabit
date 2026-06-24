@@ -7,6 +7,11 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from .models.virtual_sensor import SensorBinding, VirtualSensorConfig
+from .occupancy_policy import (
+    POLICY_OVERRIDE_FIELDS,
+    apply_occupancy_profile,
+    normalize_policy_overrides,
+)
 
 if TYPE_CHECKING:
     from .store.floor_plan_store import FloorPlanStore
@@ -14,6 +19,8 @@ if TYPE_CHECKING:
 
 CONFIG_PATCH_FIELDS = {
     "enabled",
+    "occupancy_profile",
+    "policy_overrides",
     "motion_timeout",
     "checking_timeout",
     "presence_timeout",
@@ -22,7 +29,9 @@ CONFIG_PATCH_FIELDS = {
     "presence_sensors",
     "occupancy_sensors",
     "door_sensors",
+    "window_sensors",
     "hint_sensors",
+    "mmwave_exit_areas",
     "exit_sensors",
     "hold_until_exit",
     "occupies_parent",
@@ -47,6 +56,7 @@ _SENSOR_LIST_FIELDS = {
     "presence_sensors",
     "occupancy_sensors",
     "door_sensors",
+    "window_sensors",
     "hint_sensors",
     "exit_sensors",
 }
@@ -129,6 +139,12 @@ def preview_sensor_config_patch(
                 errors.append(f"{key} must be a list")
                 continue
             proposed[key] = [SensorBinding.from_dict(item).to_dict() for item in value]
+        elif key == "policy_overrides":
+            proposed[key] = normalize_policy_overrides(value)
+        elif key in POLICY_OVERRIDE_FIELDS:
+            proposed.setdefault("policy_overrides", {})
+            proposed["policy_overrides"][key] = value
+            proposed[key] = value
         else:
             proposed[key] = value
 
@@ -136,6 +152,18 @@ def preview_sensor_config_patch(
         proposed["door_seals_room"] = bool(proposed["door_blocks_vacancy"])
         warnings.append("door_blocks_vacancy is legacy; mapped to door_seals_room")
     proposed["door_blocks_vacancy"] = bool(proposed.get("door_seals_room", True))
+
+    if (
+        "occupancy_profile" in patch
+        or "policy_overrides" in patch
+        or any(key in POLICY_OVERRIDE_FIELDS for key in patch)
+    ):
+        try:
+            profile_config = VirtualSensorConfig.from_dict(proposed)
+            apply_occupancy_profile(profile_config)
+            proposed = profile_config.to_dict()
+        except (TypeError, ValueError) as err:
+            errors.append(f"invalid occupancy_profile: {err}")
 
     try:
         config = VirtualSensorConfig.from_dict(proposed)

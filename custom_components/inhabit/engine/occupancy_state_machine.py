@@ -96,6 +96,7 @@ class OccupancyStateMachine:
         self._checking_timer: Callable[[], None] | None = None
         self._unsealed_activity_timer: Callable[[], None] | None = None
         self._post_close_hold_timer: Callable[[], None] | None = None
+        self._override_safety_timer: Callable[[], None] | None = None
         self._checking_timeout_bump: int = 0
         self._running = False
         self._occupied_since: datetime | None = None
@@ -292,6 +293,7 @@ class OccupancyStateMachine:
         self._cancel_checking_timer()
         self._cancel_unsealed_activity_timer()
         self._cancel_post_close_hold()
+        self._cancel_override_safety_timer()
 
         for unsub in self._unsub_state_listeners:
             try:
@@ -336,12 +338,16 @@ class OccupancyStateMachine:
                 self._evaluate_seal(reason or "manual state set", fresh_detection=False)
             if is_override and not self._seal_blocks_vacancy():
                 self._record_unsealed_activity("override")
+            if is_override:
+                self._start_override_safety_timer()
         elif new_state == OccupancyState.CHECKING:
             self._state.checking_started_at = datetime.now()
             self._break_seal("manual override to CHECKING")
             self._cancel_unsealed_activity_timer()
             self._cancel_post_close_hold()
             self._start_checking_timer()
+            if is_override:
+                self._start_override_safety_timer()
         else:
             # VACANT
             self._state.checking_started_at = None
@@ -355,6 +361,10 @@ class OccupancyStateMachine:
             self._last_unsealed_activity_at = None
             self._last_sustained_activity_at = None
             self._cancel_post_close_hold()
+            if is_override:
+                self._start_override_safety_timer()
+            else:
+                self._cancel_override_safety_timer()
 
         _LOGGER.info(
             "Room %s state: %s → %s (%s)",
@@ -455,6 +465,8 @@ class OccupancyStateMachine:
 
         if self._state.state == OccupancyState.OCCUPIED:
             self._check_all_sensors_clear()
+        elif self._state.state == OccupancyState.CHECKING:
+            self._resolve_checking_without_activity(reason)
         elif self._state.state == OccupancyState.VACANT:
             self._state.confidence = 0.0
 
@@ -463,6 +475,32 @@ class OccupancyStateMachine:
             self.config.room_id,
             self._state.state,
         )
+
+    def _resolve_checking_without_activity(self, reason: str) -> None:
+        """Resolve or re-arm a stale CHECKING state during state refresh."""
+        if self._state.state != OccupancyState.CHECKING:
+            return
+
+        if self._has_phantom_hold and self._has_phantom_hold(self.config.room_id):
+            return
+
+        checking_started_at = self._state.checking_started_at
+        if checking_started_at is None:
+            self._state.checking_started_at = datetime.now()
+            self._start_checking_timer()
+            return
+
+        effective_timeout = (
+            self._timeout_manager.get_effective_checking_timeout()
+            + self._checking_timeout_bump
+        )
+        elapsed = (datetime.now() - checking_started_at).total_seconds()
+        remaining = effective_timeout - elapsed
+
+        if remaining <= 0:
+            self._transition_to_vacant(f"{reason}: checking timeout elapsed")
+        elif self._checking_timer is None:
+            self._start_checking_timer(delay_seconds=remaining)
 
     def _refresh_current_sensor_snapshot(self) -> tuple[bool, bool, bool]:
         """Sync aggregator and contributing sensors from current HA states."""
@@ -754,6 +792,7 @@ class OccupancyStateMachine:
             # Door opened — break the seal
             self._awaiting_seal_confirmation = False
             self._cancel_post_close_hold()
+            self._cancel_override_safety_timer()
             if self._seal_tracker.is_sealed:
                 self._break_seal(f"door {entity_id} opened")
 
@@ -1133,6 +1172,7 @@ class OccupancyStateMachine:
                 return
 
         self._cancel_checking_timer()
+        self._cancel_override_safety_timer()
         old_state = self._state.state
         self._state.state = OccupancyState.OCCUPIED
         self._state.checking_started_at = None
@@ -1286,6 +1326,7 @@ class OccupancyStateMachine:
         self._cancel_checking_timer()
         self._cancel_unsealed_activity_timer()
         self._cancel_post_close_hold()
+        self._cancel_override_safety_timer()
         self._seal_tracker.reset()
         self._awaiting_seal_confirmation = False
         old_state = self._state.state
@@ -1367,8 +1408,7 @@ class OccupancyStateMachine:
             self.config.room_id
         ):
             _LOGGER.debug(
-                "Room %s: sensors clear but child zone is occupied, "
-                "staying OCCUPIED",
+                "Room %s: sensors clear but child zone is occupied, staying OCCUPIED",
                 self.config.room_id,
             )
             self._diagnose(
@@ -1382,7 +1422,7 @@ class OccupancyStateMachine:
         # Phantom hold — transition prediction keeps room OCCUPIED
         if self._has_phantom_hold and self._has_phantom_hold(self.config.room_id):
             _LOGGER.debug(
-                "Room %s: sensors clear but phantom hold active, " "staying OCCUPIED",
+                "Room %s: sensors clear but phantom hold active, staying OCCUPIED",
                 self.config.room_id,
             )
             self._diagnose(
@@ -1542,7 +1582,7 @@ class OccupancyStateMachine:
     def _start_post_close_hold(self, reason: str) -> None:
         """Hold occupancy briefly after closing a previously unsealed room."""
         self._cancel_post_close_hold()
-        timeout = self._unsealed_activity_timeout()
+        timeout = self._exit_check_delay()
         self._post_close_hold_until = datetime.now() + timedelta(seconds=timeout)
 
         @callback
@@ -1554,6 +1594,9 @@ class OccupancyStateMachine:
                 and self._awaiting_seal_confirmation
                 and not self._seal_blocks_vacancy()
             ):
+                if not self._any_occupancy_signal_active():
+                    self._transition_to_checking("post-close exit check")
+                    return
                 self._handle_unsealed_activity_timeout()
 
         self._post_close_hold_timer = async_call_later(
@@ -1622,17 +1665,78 @@ class OccupancyStateMachine:
         """Configured inactivity timeout for unsealed rooms."""
         return max(1.0, float(getattr(self.config, "unsealed_activity_timeout", 120)))
 
+    def _exit_check_delay(self) -> float:
+        """Configured delay before checking a likely exit after door close."""
+        return max(1.0, float(getattr(self.config, "exit_check_delay", 15)))
+
+    # ------------------------------------------------------------------
+    # Override safety timer
+    # ------------------------------------------------------------------
+
+    def _start_override_safety_timer(self) -> None:
+        """Start a bounded safety timer for physical override states."""
+        self._cancel_override_safety_timer()
+        timeout = max(
+            1.0,
+            float(getattr(self.config, "override_safety_timeout", 30 * 60)),
+        )
+
+        @callback
+        def _override_safety_timeout(_now: Any) -> None:
+            self._override_safety_timer = None
+            self._handle_override_safety_timeout()
+
+        self._override_safety_timer = async_call_later(
+            self.hass,
+            timeout,
+            _override_safety_timeout,
+        )
+        self._diagnose(
+            "override_safety_timer_started",
+            reason="override safety timer armed",
+            metadata={"timeout": timeout},
+        )
+
+    def _cancel_override_safety_timer(self) -> None:
+        """Cancel a pending override safety timer."""
+        if self._override_safety_timer:
+            self._override_safety_timer()
+            self._override_safety_timer = None
+
+    def _handle_override_safety_timeout(self) -> None:
+        """Release an override-created state back to sensor-derived logic."""
+        if self._state.state == OccupancyState.OCCUPIED:
+            if self._any_occupancy_signal_active():
+                self.recalculate_from_current_state("override safety timeout")
+                return
+            if self._seal_blocks_vacancy():
+                self._diagnose(
+                    "transition_blocked",
+                    category="seal",
+                    new_state=OccupancyState.CHECKING,
+                    reason="override safety timeout blocked by closed-door seal",
+                    blockers=["seal"],
+                )
+                return
+            if self._seal_tracker.is_sealed:
+                self._break_seal("override safety timeout")
+            self._transition_to_checking("override safety timeout")
+            return
+
+        self.recalculate_from_current_state("override safety timeout")
+
     # ------------------------------------------------------------------
     # Checking timer
     # ------------------------------------------------------------------
 
-    def _start_checking_timer(self) -> None:
+    def _start_checking_timer(self, delay_seconds: float | None = None) -> None:
         """Start the checking state timeout timer."""
         self._cancel_checking_timer()
         effective_timeout = (
             self._timeout_manager.get_effective_checking_timeout()
             + self._checking_timeout_bump
         )
+        delay = effective_timeout if delay_seconds is None else max(0.0, delay_seconds)
 
         @callback
         def _checking_timeout(_now: Any) -> None:
@@ -1642,7 +1746,7 @@ class OccupancyStateMachine:
 
         self._checking_timer = async_call_later(
             self.hass,
-            effective_timeout,
+            delay,
             _checking_timeout,
         )
 

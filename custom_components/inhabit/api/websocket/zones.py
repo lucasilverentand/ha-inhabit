@@ -12,6 +12,7 @@ from ...const import DOMAIN, WS_PREFIX
 from ...models.floor_plan import Polygon
 from ...models.virtual_sensor import VirtualSensorConfig
 from ...models.zone import Zone
+from ...occupancy_policy import DEFAULT_ZONE_PROFILE
 from ._helpers import (
     _disable_region_sensor,
     _normalize_ha_area_id,
@@ -43,6 +44,7 @@ def register(hass: HomeAssistant) -> None:
         vol.Optional("room_id"): vol.Any(str, None),
         vol.Optional("ha_area_id"): vol.Any(str, None),
         vol.Optional("occupancy_sensor_enabled", default=False): bool,
+        vol.Optional("occupancy_profile", default=DEFAULT_ZONE_PROFILE): str,
         vol.Optional("motion_timeout", default=120): int,
         vol.Optional("checking_timeout", default=30): int,
         vol.Optional("long_stay", default=False): bool,
@@ -77,6 +79,7 @@ def ws_zones_add(
         room_id=msg.get("room_id"),
         ha_area_id=ha_area_id,
         occupancy_sensor_enabled=msg["occupancy_sensor_enabled"],
+        occupancy_profile=msg["occupancy_profile"],
         motion_timeout=msg["motion_timeout"],
         checking_timeout=msg["checking_timeout"],
         long_stay=msg["long_stay"],
@@ -86,19 +89,15 @@ def ws_zones_add(
     if result:
         if zone.occupancy_sensor_enabled:
             sensor_engine = hass.data[DOMAIN]["sensor_engine"]
+            config = store.get_sensor_config(zone.id) or VirtualSensorConfig(
+                room_id=zone.id,
+                floor_plan_id=msg["floor_plan_id"],
+                occupancy_profile=zone.occupancy_profile,
+                occupies_parent=zone.occupies_parent,
+            )
             hass.async_create_task(
                 _safe_engine_op(
-                    sensor_engine.async_add_room(
-                        VirtualSensorConfig(
-                            room_id=zone.id,
-                            floor_plan_id=msg["floor_plan_id"],
-                            motion_timeout=zone.motion_timeout,
-                            checking_timeout=zone.checking_timeout,
-                            long_stay=zone.long_stay,
-                            occupies_parent=zone.occupies_parent,
-                            phantom_hold_seconds=zone.phantom_hold_seconds,
-                        )
-                    ),
+                    sensor_engine.async_add_room(config),
                     "add",
                     zone.id,
                 )
@@ -122,6 +121,7 @@ def ws_zones_add(
         vol.Optional("room_id"): vol.Any(str, None),
         vol.Optional("ha_area_id"): vol.Any(str, None),
         vol.Optional("occupancy_sensor_enabled"): bool,
+        vol.Optional("occupancy_profile"): str,
         vol.Optional("motion_timeout"): int,
         vol.Optional("checking_timeout"): int,
         vol.Optional("long_stay"): bool,
@@ -168,6 +168,8 @@ def ws_zones_update(
         zone.ha_area_id = next_ha_area_id
     if "occupancy_sensor_enabled" in msg:
         zone.occupancy_sensor_enabled = msg["occupancy_sensor_enabled"]
+    if "occupancy_profile" in msg:
+        zone.occupancy_profile = msg["occupancy_profile"]
     if "motion_timeout" in msg:
         zone.motion_timeout = msg["motion_timeout"]
     if "checking_timeout" in msg:
@@ -190,6 +192,7 @@ def ws_zones_update(
         zone_config_fields = {
             "motion_timeout",
             "checking_timeout",
+            "occupancy_profile",
             "long_stay",
             "occupies_parent",
             "phantom_hold_seconds",
@@ -197,11 +200,7 @@ def ws_zones_update(
         if zone.occupancy_sensor_enabled and zone_config_fields & msg.keys():
             config = store.get_sensor_config(zone.id)
             if config:
-                config.motion_timeout = zone.motion_timeout
-                config.checking_timeout = zone.checking_timeout
-                config.long_stay = zone.long_stay
                 config.occupies_parent = zone.occupies_parent
-                config.phantom_hold_seconds = zone.phantom_hold_seconds
                 sensor_engine = hass.data[DOMAIN]["sensor_engine"]
                 hass.async_create_task(
                     _safe_engine_op(
@@ -220,6 +219,7 @@ def ws_zones_update(
                     config = VirtualSensorConfig(
                         room_id=zone.id,
                         floor_plan_id=msg["floor_plan_id"],
+                        occupancy_profile=zone.occupancy_profile,
                         motion_timeout=zone.motion_timeout,
                         checking_timeout=zone.checking_timeout,
                         long_stay=zone.long_stay,

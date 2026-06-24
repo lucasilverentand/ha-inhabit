@@ -144,6 +144,29 @@ cd frontend
 npm test
 ```
 
+### Local Occupancy Simulator
+
+The deterministic simulator in `tests/fake_house` drives the production
+occupancy state machine and transition predictor with an anonymized multi-area
+home layout. Use it for hallway, door, and mmWave-style scenarios without
+touching a live Home Assistant instance.
+
+```bash
+uv run --no-sync python -m tests.fake_house.local_home_scenarios --scenario all
+```
+
+Available scenarios:
+
+- `hallway_to_short_stay`: open area -> transit -> short-stay room, door left
+  open, then closed with spatial confirmation.
+- `quick_exit_after_settled_occupancy`: settled occupancy, quick door
+  open/close, then an empty signal.
+- `closed_door_override_hold`: closed-door override survives safety expiry and
+  releases when the door opens.
+- `open_door_override_safety`: open-door override releases through the safety
+  timer.
+- `vertical_transit_phantom`: cross-level transit phantom creation and expiry.
+
 ### Project Structure
 
 ```

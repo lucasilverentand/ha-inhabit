@@ -373,6 +373,63 @@ class TestOccupancyStateMachineWithMocks:
             delay, callback, cancel = scheduled_calls[-1]
             assert delay == basic_config.checking_timeout
 
+    def test_post_close_hold_uses_exit_check_delay(
+        self, mock_hass, basic_config, state_changes
+    ):
+        """Door-close exit checks use the policy exit delay."""
+        from custom_components.inhabit.engine.occupancy_state_machine import (
+            OccupancyStateMachine,
+        )
+
+        basic_config.exit_check_delay = 15
+        changes, on_change = state_changes
+        machine = OccupancyStateMachine(mock_hass, basic_config, on_change)
+        scheduled_calls = []
+
+        def mock_async_call_later(hass, delay, callback):
+            cancel = MagicMock()
+            scheduled_calls.append((delay, callback, cancel))
+            return cancel
+
+        with patch(
+            "custom_components.inhabit.engine.occupancy_state_machine.async_call_later",
+            mock_async_call_later,
+        ):
+            machine._start_post_close_hold("door closed")
+
+        assert scheduled_calls[-1][0] == 15
+
+    def test_override_safety_timer_releases_occupied_override(
+        self, mock_hass, basic_config, state_changes
+    ):
+        """Open-door override-created occupancy has a safety expiry path."""
+        from custom_components.inhabit.engine.occupancy_state_machine import (
+            OccupancyStateMachine,
+        )
+
+        basic_config.override_safety_timeout = 5
+        mock_hass.states.get.side_effect = lambda entity_id: MagicMock(
+            state=STATE_ON if entity_id == "binary_sensor.test_door" else STATE_OFF
+        )
+        changes, on_change = state_changes
+        machine = OccupancyStateMachine(mock_hass, basic_config, on_change)
+        scheduled_calls = []
+
+        def mock_async_call_later(hass, delay, callback):
+            cancel = MagicMock()
+            scheduled_calls.append((delay, callback, cancel))
+            return cancel
+
+        with patch(
+            "custom_components.inhabit.engine.occupancy_state_machine.async_call_later",
+            mock_async_call_later,
+        ):
+            machine.set_state(OccupancyState.OCCUPIED, "manual override")
+            assert scheduled_calls[-1][0] == 5
+            scheduled_calls[-1][1](None)
+
+        assert machine.state.state == OccupancyState.CHECKING
+
     def test_all_doors_closed(self, mock_hass, basic_config, state_changes):
         """Test door closed detection."""
         from custom_components.inhabit.engine.occupancy_state_machine import (
@@ -1115,9 +1172,15 @@ class TestDoorSealLogic:
         )
         machine, _ = self._make_machine(mock_hass, seal_config, state_changes)
 
+        scheduled: list[tuple[float, object]] = []
+
+        def mock_async_call_later(hass, delay, callback):
+            scheduled.append((delay, callback))
+            return MagicMock()
+
         with patch(
             "custom_components.inhabit.engine.occupancy_state_machine.async_call_later",
-            lambda hass, delay, cb: MagicMock(),
+            mock_async_call_later,
         ):
             machine.set_state(OccupancyState.OCCUPIED, "manual override")
             assert machine.state.state == OccupancyState.OCCUPIED
@@ -1125,6 +1188,10 @@ class TestDoorSealLogic:
 
             machine._check_all_sensors_clear()
             assert machine.state.state == OccupancyState.OCCUPIED
+
+            scheduled[-1][1](None)
+            assert machine.state.state == OccupancyState.OCCUPIED
+            assert machine.state.sealed is True
 
             self._setup_sensor_states(
                 mock_hass, motion_state=STATE_OFF, door_state=STATE_ON
