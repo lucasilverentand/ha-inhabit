@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.19](https://github.com/lucasilverentand/ha-inhabit/compare/v0.14.18...v0.14.19) (2026-06-24)
+
+
+### Bug Fixes
+
+* stabilize startup registry and simulator coverage ([47695b9](https://github.com/lucasilverentand/ha-inhabit/commit/47695b9d2b185d7207189731a47230a93e850044))
+
 ## [0.14.18](https://github.com/lucasilverentand/ha-inhabit/compare/v0.14.17...v0.14.18) (2026-06-24)
 
 
