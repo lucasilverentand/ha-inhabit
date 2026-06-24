@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.14.18](https://github.com/lucasilverentand/ha-inhabit/compare/v0.14.17...v0.14.18) (2026-06-24)
+
+
+### Features
+
+* add local simulator house fixture ([2410d3c](https://github.com/lucasilverentand/ha-inhabit/commit/2410d3c8739f383420f97970acebad75d73f0731))
+
+
+### Bug Fixes
+
+* suppress startup occupancy phantoms ([#105](https://github.com/lucasilverentand/ha-inhabit/issues/105)) ([a5f1c6e](https://github.com/lucasilverentand/ha-inhabit/commit/a5f1c6e5fb64b9ff75e0569d282d7462a15d9b64))
+
 ## [0.14.17](https://github.com/lucasilverentand/ha-inhabit/compare/v0.14.16...v0.14.17) (2026-06-24)
 
 
