@@ -976,8 +976,14 @@ class TestConfigSync:
         store = _mock_store(configs=[cfg])
         engine = await _build_engine(mock_hass, store, patched_ha)
         engine._transition_predictor.clear_phantoms = MagicMock()
+        engine._transition_predictor.sync_room_state = MagicMock()
 
         engine.recalculate_current_states()
 
         engine._transition_predictor.clear_phantoms.assert_called_once()
+        engine._transition_predictor.sync_room_state.assert_called_once_with(
+            "room_a",
+            OccupancyState.VACANT,
+            suppress_next_forward_prediction=True,
+        )
         assert engine._transition_prediction_ready is True

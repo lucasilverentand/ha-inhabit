@@ -169,6 +169,40 @@ Available scenarios:
   the hallway and both rooms settle cleanly.
 - `quick_exit_after_settled_occupancy`: settled occupancy, quick door
   open/close, then an empty signal.
+- `door_bounce_person_remains_after_settled_occupancy`: settled occupancy,
+  quick door bounce, and mmWave still seeing a person inside.
+- `repeated_door_bounces_do_not_wake_hallway`: repeated short-stay door bounces
+  do not leave the hallway occupied.
+- `door_left_open_mmwave_keeps_short_stay_occupied`: open door with PIR clear
+  keeps the short-stay room occupied while mmWave remains active.
+- `door_left_open_exit_clears_after_unsealed_check`: settled short-stay
+  occupancy exits with the door left open and clears after the empty check.
+- `door_sensor_unavailable_recovers_with_active_presence`: door sensor outage
+  breaks the seal but active mmWave keeps occupancy until the door recovers.
+- `multi_target_partial_exit_keeps_source_occupied`: one target leaves a
+  multi-target open area while another target keeps the source occupied.
+- `two_people_cross_hallway_independently`: two independent hallway crossings
+  settle without stranding transit occupancy.
+- `transit_reentry_during_phantom_keeps_hallway_live`: a real hallway re-entry
+  still works after high-degree transit clears.
+- `all_direct_routes_settle_without_stuck_hallway`: every direct local route,
+  in both directions, settles without stale hallway occupancy.
+- `startup_clear_sensors_stays_vacant`: startup/reload with clear sensors
+  leaves all rooms vacant.
+- `startup_open_doors_clear_sensors_stays_vacant`: startup/reload with
+  restored open doors and clear sensors leaves all rooms vacant.
+- `startup_single_room_presence_does_not_wake_hallway`: restored room presence
+  does not synthesize hallway occupancy on startup.
+- `startup_hallway_presence_clears_without_waking_rooms`: restored hallway
+  presence clears without waking adjacent rooms.
+- `startup_each_room_presence_clears_without_cross_room_wake`: each restored
+  room presence clears without waking another room.
+- `startup_multiple_room_presence_clears_independently`: multiple restored room
+  presences clear independently without waking transit.
+- `startup_restored_presence_door_open_wakes_hallway`: restored room presence
+  still predicts a hallway exit after a real door-open event.
+- `open_door_override_real_activity_survives_safety_timer`: open-door override
+  converts back to sensor-derived occupancy when real activity appears.
 - `closed_door_override_hold`: closed-door override survives safety expiry and
   releases when the door opens.
 - `open_door_override_safety`: open-door override releases through the safety

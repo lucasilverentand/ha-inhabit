@@ -23,7 +23,7 @@ export const MAP_MODE_DEFINITIONS: Record<CanvasMode, MapModeDefinition> = {
     icon: "mdi:home-outline",
     accent: "#2e7d32",
     tools: [],
-    layers: ["background", "structure", "devices"],
+    layers: ["background", "structure", "devices", "labels"],
     showNormalDevices: true,
     showMmwave: true,
     showMmwaveCoverage: false,

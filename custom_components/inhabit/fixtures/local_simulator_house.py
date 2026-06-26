@@ -16,6 +16,7 @@ from ..models.mmwave_sensor import MmwavePlacement
 from ..models.virtual_sensor import SensorBinding, VirtualSensorConfig
 from ..models.zone import Zone
 from ..occupancy_policy import (
+    OCCUPANCY_PROFILES,
     PROFILE_LONG_STAY,
     PROFILE_OPEN_AREA,
     PROFILE_SHORT_STAY,
@@ -76,6 +77,17 @@ class LocalSimulatorDoorSpec:
     center: tuple[float, float]
     orientation: str
     sensor_room_ids: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class _Segment:
+    """Axis-aligned structural segment."""
+
+    x1: float
+    y1: float
+    x2: float
+    y2: float
+    room_id: str | None = None
 
 
 LOCAL_SIMULATOR_ROOM_SPECS: tuple[LocalSimulatorRoomSpec, ...] = (
@@ -289,6 +301,13 @@ LOCAL_SIMULATOR_TRANSIT_ROOM_IDS: frozenset[str] = frozenset(
 )
 
 
+def _effective_room_phantom_hold(spec: LocalSimulatorRoomSpec) -> int:
+    """Return explicit room phantom hold or the selected profile default."""
+    if spec.phantom_hold_seconds:
+        return spec.phantom_hold_seconds
+    return OCCUPANCY_PROFILES[spec.profile].phantom_hold_seconds
+
+
 def _rect_polygon(rect: tuple[float, float, float, float]) -> Polygon:
     """Build a rectangular polygon from x1, y1, x2, y2 coordinates."""
     x1, y1, x2, y2 = rect
@@ -389,7 +408,8 @@ def _sensor_config(
     )
     config.presence_affects = True
     config.spatial_presence_delay = 0
-    config.phantom_hold_seconds = spec.phantom_hold_seconds
+    if spec.phantom_hold_seconds:
+        config.phantom_hold_seconds = spec.phantom_hold_seconds
     config.door_sensors = [
         SensorBinding(
             entity_id=local_simulator_door_entity(spec.id, connected_id),
@@ -485,47 +505,235 @@ def _mmwave_placements(
     ]
 
 
-def _door_geometry(
+GEOMETRY_TOLERANCE = 0.5
+DOOR_WIDTH = 40.0
+
+
+def _round_coord(value: float) -> float:
+    """Normalize coordinates enough to merge anonymized sub-centimeter seams."""
+    return round(value / GEOMETRY_TOLERANCE) * GEOMETRY_TOLERANCE
+
+
+def _segment_orientation(segment: _Segment) -> str:
+    """Return the segment orientation."""
+    return (
+        "vertical"
+        if abs(segment.x1 - segment.x2) <= GEOMETRY_TOLERANCE
+        else "horizontal"
+    )
+
+
+def _normalized_segment_key(segment: _Segment) -> tuple[float, float, float, float]:
+    """Return a stable key independent of segment direction."""
+    x1 = _round_coord(segment.x1)
+    y1 = _round_coord(segment.y1)
+    x2 = _round_coord(segment.x2)
+    y2 = _round_coord(segment.y2)
+    start = (x1, y1)
+    end = (x2, y2)
+    if end < start:
+        start, end = end, start
+    return (*start, *end)
+
+
+def _door_segment(door: LocalSimulatorDoorSpec) -> _Segment:
+    """Build the physical door/opening segment."""
+    center_x, center_y = door.center
+    half = DOOR_WIDTH / 2
+    if door.orientation == "vertical":
+        return _Segment(center_x, center_y - half, center_x, center_y + half)
+    return _Segment(center_x - half, center_y, center_x + half, center_y)
+
+
+def _rect_boundary_segments(spec: LocalSimulatorRoomSpec) -> tuple[_Segment, ...]:
+    """Return the four boundary segments for a room rectangle."""
+    x1, y1, x2, y2 = spec.rect
+    return (
+        _Segment(x1, y1, x2, y1, spec.id),
+        _Segment(x2, y1, x2, y2, spec.id),
+        _Segment(x2, y2, x1, y2, spec.id),
+        _Segment(x1, y2, x1, y1, spec.id),
+    )
+
+
+def _door_on_segment(door_segment: _Segment, wall_segment: _Segment) -> bool:
+    """Return whether a door lies on a wall segment."""
+    orientation = _segment_orientation(wall_segment)
+    if _segment_orientation(door_segment) != orientation:
+        return False
+
+    if orientation == "vertical":
+        if abs(door_segment.x1 - wall_segment.x1) > GEOMETRY_TOLERANCE:
+            return False
+        wall_min, wall_max = sorted((wall_segment.y1, wall_segment.y2))
+        door_min, door_max = sorted((door_segment.y1, door_segment.y2))
+    else:
+        if abs(door_segment.y1 - wall_segment.y1) > GEOMETRY_TOLERANCE:
+            return False
+        wall_min, wall_max = sorted((wall_segment.x1, wall_segment.x2))
+        door_min, door_max = sorted((door_segment.x1, door_segment.x2))
+
+    return (
+        door_min >= wall_min - GEOMETRY_TOLERANCE
+        and door_max <= wall_max + GEOMETRY_TOLERANCE
+    )
+
+
+def _subsegment_for_interval(
+    wall_segment: _Segment,
+    start: float,
+    end: float,
+) -> _Segment:
+    """Build a subsegment on the same line as a wall boundary."""
+    orientation = _segment_orientation(wall_segment)
+    if orientation == "vertical":
+        return _Segment(
+            wall_segment.x1, start, wall_segment.x1, end, wall_segment.room_id
+        )
+    return _Segment(start, wall_segment.y1, end, wall_segment.y1, wall_segment.room_id)
+
+
+def _door_covers_interval(
+    door_segment: _Segment,
+    wall_segment: _Segment,
+    start: float,
+    end: float,
+) -> bool:
+    """Return whether a split wall interval is the door opening."""
+    if not _door_on_segment(door_segment, wall_segment):
+        return False
+
+    orientation = _segment_orientation(wall_segment)
+    if orientation == "vertical":
+        door_min, door_max = sorted((door_segment.y1, door_segment.y2))
+    else:
+        door_min, door_max = sorted((door_segment.x1, door_segment.x2))
+    return (
+        start >= door_min - GEOMETRY_TOLERANCE and end <= door_max + GEOMETRY_TOLERANCE
+    )
+
+
+def _structure_geometry(
+    room_specs: tuple[LocalSimulatorRoomSpec, ...],
     door_specs: tuple[LocalSimulatorDoorSpec, ...],
 ) -> tuple[list[Node], list[Edge]]:
-    """Build synthetic door edges at anonymized real door positions."""
+    """Build walls and door openings from the anonymized room rectangles."""
     nodes: list[Node] = []
     edges: list[Edge] = []
+    node_ids: dict[tuple[float, float], str] = {}
+    edge_segments: dict[
+        tuple[float, float, float, float], tuple[_Segment, str, int]
+    ] = {}
+    door_segments = {door.id: _door_segment(door) for door in door_specs}
+    door_by_id = {door.id: door for door in door_specs}
 
     def add_node(x: float, y: float) -> str:
+        key = (_round_coord(x), _round_coord(y))
+        if key in node_ids:
+            return node_ids[key]
         node = Node(
             id=f"sim_node_{LOCAL_SIMULATOR_FLOOR_ID}_{len(nodes) + 1:03d}",
-            x=x,
-            y=y,
+            x=key[0],
+            y=key[1],
             pinned=True,
         )
         nodes.append(node)
+        node_ids[key] = node.id
         return node.id
 
-    for door in door_specs:
-        center_x, center_y = door.center
-        if door.orientation == "vertical":
-            start_id = add_node(center_x, center_y - 20)
-            end_id = add_node(center_x, center_y + 20)
-        else:
-            start_id = add_node(center_x - 20, center_y)
-            end_id = add_node(center_x + 20, center_y)
+    def add_edge_segment(segment: _Segment, edge_type: str, owner_count: int) -> None:
+        key = _normalized_segment_key(segment)
+        existing = edge_segments.get(key)
+        if existing:
+            existing_segment, existing_type, existing_count = existing
+            if existing_type == "door" or edge_type != "door":
+                edge_segments[key] = (
+                    existing_segment,
+                    existing_type,
+                    existing_count + owner_count,
+                )
+                return
+        edge_segments[key] = (segment, edge_type, owner_count)
 
-        sensor_entity = (
-            local_simulator_door_entity(*door.room_ids)
-            if door.sensor_room_ids
-            else None
-        )
+    for room_spec in room_specs:
+        for wall_segment in _rect_boundary_segments(room_spec):
+            orientation = _segment_orientation(wall_segment)
+            if orientation == "vertical":
+                start_axis, end_axis = sorted((wall_segment.y1, wall_segment.y2))
+            else:
+                start_axis, end_axis = sorted((wall_segment.x1, wall_segment.x2))
+
+            cuts = {start_axis, end_axis}
+            matching_doors: list[tuple[LocalSimulatorDoorSpec, _Segment]] = []
+            for door in door_specs:
+                door_segment = door_segments[door.id]
+                if not _door_on_segment(door_segment, wall_segment):
+                    continue
+                matching_doors.append((door, door_segment))
+                if orientation == "vertical":
+                    cuts.update((door_segment.y1, door_segment.y2))
+                else:
+                    cuts.update((door_segment.x1, door_segment.x2))
+
+            sorted_cuts = sorted(
+                cut
+                for cut in cuts
+                if start_axis - GEOMETRY_TOLERANCE
+                <= cut
+                <= end_axis + GEOMETRY_TOLERANCE
+            )
+            for start, end in zip(sorted_cuts, sorted_cuts[1:], strict=False):
+                if end - start < GEOMETRY_TOLERANCE:
+                    continue
+                subsegment = _subsegment_for_interval(wall_segment, start, end)
+                door_match = next(
+                    (
+                        door
+                        for door, door_segment in matching_doors
+                        if _door_covers_interval(door_segment, wall_segment, start, end)
+                    ),
+                    None,
+                )
+                add_edge_segment(
+                    subsegment,
+                    f"door:{door_match.id}" if door_match else "wall",
+                    1,
+                )
+
+    for _key, (segment, edge_type, owner_count) in sorted(edge_segments.items()):
+        start_id = add_node(segment.x1, segment.y1)
+        end_id = add_node(segment.x2, segment.y2)
+        direction = _segment_orientation(segment)
+        if edge_type.startswith("door:"):
+            door = door_by_id[edge_type.removeprefix("door:")]
+            sensor_entity = (
+                local_simulator_door_entity(*door.room_ids)
+                if door.sensor_room_ids
+                else None
+            )
+            edges.append(
+                Edge(
+                    id=f"sim_door_edge_{door.id}",
+                    start_node=start_id,
+                    end_node=end_id,
+                    type="door",
+                    direction=direction,
+                    opening_parts="single",
+                    opening_type="swing",
+                    swing_direction="left",
+                    entity_id=sensor_entity,
+                )
+            )
+            continue
+
         edges.append(
             Edge(
-                id=f"sim_door_edge_{door.id}",
+                id=f"sim_wall_edge_{len(edges) + 1:03d}",
                 start_node=start_id,
                 end_node=end_id,
-                type="door",
-                opening_parts="single",
-                opening_type="swing",
-                swing_direction="left",
-                entity_id=sensor_entity,
+                type="wall",
+                direction=direction,
+                is_exterior=owner_count == 1,
             )
         )
 
@@ -557,7 +765,8 @@ def build_local_simulator_house(
         room.checking_timeout = spec.checking_timeout
         room.connected_rooms = list(spec.connected_rooms)
         room.is_transit = spec.is_transit
-        room.phantom_hold_seconds = spec.phantom_hold_seconds
+        if spec.phantom_hold_seconds:
+            room.phantom_hold_seconds = spec.phantom_hold_seconds
         rooms.append(room)
 
     zones = [
@@ -575,7 +784,10 @@ def build_local_simulator_house(
         for spec in LOCAL_SIMULATOR_ZONE_SPECS
     ]
 
-    nodes, edges = _door_geometry(LOCAL_SIMULATOR_DOOR_SPECS)
+    nodes, edges = _structure_geometry(
+        LOCAL_SIMULATOR_ROOM_SPECS,
+        LOCAL_SIMULATOR_DOOR_SPECS,
+    )
     floor_plan = FloorPlan(
         id=floor_plan_id,
         name=LOCAL_SIMULATOR_FLOOR_PLAN_NAME,
@@ -632,7 +844,7 @@ def local_simulator_house_summary() -> dict[str, Any]:
                 "unsealed_activity_timeout": spec.unsealed_activity_timeout,
                 "is_transit": spec.is_transit,
                 "mmwave_sources": list(spec.mmwave_sources),
-                "transit_phantom_hold_seconds": spec.phantom_hold_seconds,
+                "transit_phantom_hold_seconds": _effective_room_phantom_hold(spec),
             }
             for spec in LOCAL_SIMULATOR_ROOM_SPECS
         ],

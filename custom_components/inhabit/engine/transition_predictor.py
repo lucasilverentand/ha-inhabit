@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.core import HomeAssistant, callback
@@ -37,6 +37,8 @@ if TYPE_CHECKING:
     from ..store.floor_plan_store import FloorPlanStore
 
 _LOGGER = logging.getLogger(__name__)
+
+DOOR_DIRECTED_FORWARD_SUPPRESSION_SECONDS = 60.0
 
 
 @dataclass
@@ -154,6 +156,8 @@ class TransitionPredictor:
 
         # Current room states for reasoning
         self._room_states: dict[str, str] = {}
+        self._suppress_next_forward_prediction: set[str] = set()
+        self._door_directed_forward_suppression_until: dict[str, datetime] = {}
 
         self._running = False
 
@@ -207,10 +211,31 @@ class TransitionPredictor:
         self._room_config.clear()
         self._zone_adjacency.clear()
         self._room_states.clear()
+        self._suppress_next_forward_prediction.clear()
+        self._door_directed_forward_suppression_until.clear()
 
     def refresh_topology(self) -> None:
         """Rebuild topology data from current floor plan."""
         self._build_topology()
+
+    def sync_room_state(
+        self,
+        room_id: str,
+        state: str,
+        *,
+        suppress_next_forward_prediction: bool = False,
+    ) -> None:
+        """Record a room state without treating it as movement.
+
+        Startup reconciliation needs the predictor to know which side of a
+        later door event is occupied, but a restored OCCUPIED state timing out
+        should not look like someone walked into an adjacent hallway.
+        """
+        self._room_states[room_id] = state
+        if suppress_next_forward_prediction and state == OccupancyState.OCCUPIED:
+            self._suppress_next_forward_prediction.add(room_id)
+        else:
+            self._suppress_next_forward_prediction.discard(room_id)
 
     # ------------------------------------------------------------------
     # Public API
@@ -254,13 +279,19 @@ class TransitionPredictor:
             and new_state == OccupancyState.CHECKING
             and room_id not in self._expiring_phantom_targets
         ):
-            self._predict_forward(room_id)
+            if not self._consume_forward_suppression(room_id):
+                self._predict_forward(room_id)
 
         # Room became OCCUPIED and an adjacent room is CHECKING:
         # the adjacent room might need a phantom hold (the person passed
         # through it to get here).
         if new_state == OccupancyState.OCCUPIED:
+            self._suppress_next_forward_prediction.discard(room_id)
+            self._door_directed_forward_suppression_until.pop(room_id, None)
             self._predict_backward(room_id)
+        elif new_state == OccupancyState.VACANT:
+            self._suppress_next_forward_prediction.discard(room_id)
+            self._door_directed_forward_suppression_until.pop(room_id, None)
 
     def on_door_event(self, entity_id: str, is_open: bool) -> None:
         """Handle a door sensor event.
@@ -291,6 +322,11 @@ class TransitionPredictor:
 
         if occupied_side and vacant_side:
             hold = self._get_phantom_hold(vacant_side)
+            self._door_directed_forward_suppression_until[
+                occupied_side
+            ] = datetime.now() + timedelta(
+                seconds=DOOR_DIRECTED_FORWARD_SUPPRESSION_SECONDS
+            )
             _LOGGER.info(
                 "Door %s opened: phantom presence %s → %s (hold=%ds)",
                 entity_id,
@@ -305,6 +341,20 @@ class TransitionPredictor:
                 hold_seconds=hold,
                 reason=f"door {entity_id} opened between {occupied_side} and {vacant_side}",
             )
+
+    def _consume_forward_suppression(self, room_id: str) -> bool:
+        """Return True when a room clear should not fan out to all neighbours."""
+        if room_id in self._suppress_next_forward_prediction:
+            self._suppress_next_forward_prediction.discard(room_id)
+            return True
+
+        suppress_until = self._door_directed_forward_suppression_until.pop(
+            room_id,
+            None,
+        )
+        if suppress_until is None:
+            return False
+        return suppress_until >= datetime.now()
 
     def is_transit_room(self, room_id: str) -> bool:
         """Check if a room is a transit zone (hallway/corridor).
@@ -343,6 +393,14 @@ class TransitionPredictor:
 
         neighbours = self._get_all_neighbours(source_id)
         if not neighbours:
+            return
+
+        if self.is_transit_room(source_id) and len(neighbours) > 2:
+            _LOGGER.debug(
+                "Transit room %s has %d neighbours — suppressing broad forward fan-out",
+                source_id,
+                len(neighbours),
+            )
             return
 
         for target_id in neighbours:

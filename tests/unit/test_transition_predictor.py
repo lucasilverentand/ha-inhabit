@@ -263,6 +263,145 @@ class TestTransitionPredictorPhantom:
         set_occupied.assert_called()
 
     @pytest.mark.asyncio
+    async def test_high_degree_transit_does_not_fan_out_to_all_neighbours(self):
+        """A busy hallway clearing should not wake every adjacent room."""
+        rooms = [
+            _make_room(
+                "hallway",
+                ["room_a", "room_b", "room_c"],
+                is_transit=True,
+            ),
+            _make_room("room_a", ["hallway"]),
+            _make_room("room_b", ["hallway"]),
+            _make_room("room_c", ["hallway"]),
+        ]
+        store = _make_store(rooms)
+        set_occupied = MagicMock()
+        hass = MagicMock()
+
+        predictor = TransitionPredictor(hass, store, set_room_occupied=set_occupied)
+        await predictor.async_start()
+
+        predictor.on_room_state_changed(
+            "hallway", OccupancyState.OCCUPIED, OccupancyState.CHECKING
+        )
+
+        assert predictor.phantoms == {}
+        set_occupied.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_high_degree_transit_door_event_wakes_specific_neighbour(self):
+        """A real door event still predicts the specific room from a busy hallway."""
+        rooms = [
+            _make_room(
+                "hallway",
+                ["room_a", "room_b", "room_c"],
+                is_transit=True,
+            ),
+            _make_room("room_a", ["hallway"]),
+            _make_room("room_b", ["hallway"]),
+            _make_room("room_c", ["hallway"]),
+        ]
+        store = _make_store(rooms)
+        set_occupied = MagicMock()
+        hass = MagicMock()
+
+        predictor = TransitionPredictor(hass, store, set_room_occupied=set_occupied)
+        await predictor.async_start()
+        predictor._door_links["binary_sensor.room_b_door"] = DoorLink(
+            door_edge_id="e_room_b",
+            entity_id="binary_sensor.room_b_door",
+            room_a="hallway",
+            room_b="room_b",
+        )
+        predictor._room_states["hallway"] = OccupancyState.OCCUPIED
+        predictor._room_states["room_a"] = OccupancyState.VACANT
+        predictor._room_states["room_b"] = OccupancyState.VACANT
+        predictor._room_states["room_c"] = OccupancyState.VACANT
+
+        predictor.on_door_event("binary_sensor.room_b_door", is_open=True)
+
+        assert not predictor.has_active_phantom("room_a")
+        assert predictor.has_active_phantom("room_b")
+        assert not predictor.has_active_phantom("room_c")
+        set_occupied.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_door_directed_exit_suppresses_other_neighbour_prediction(self):
+        """A known door destination should not also wake unrelated neighbours."""
+        rooms = [
+            _make_room("open_area", ["hallway", "service_room"]),
+            _make_room("hallway", ["open_area"], is_transit=True),
+            _make_room("service_room", ["open_area"]),
+        ]
+        store = _make_store(rooms)
+        set_occupied = MagicMock()
+        hass = MagicMock()
+
+        predictor = TransitionPredictor(hass, store, set_room_occupied=set_occupied)
+        await predictor.async_start()
+        predictor._door_links["binary_sensor.service_room_door"] = DoorLink(
+            door_edge_id="e_service_room",
+            entity_id="binary_sensor.service_room_door",
+            room_a="open_area",
+            room_b="service_room",
+        )
+        predictor._room_states["open_area"] = OccupancyState.OCCUPIED
+        predictor._room_states["hallway"] = OccupancyState.VACANT
+        predictor._room_states["service_room"] = OccupancyState.VACANT
+
+        predictor.on_door_event("binary_sensor.service_room_door", is_open=True)
+        predictor.on_room_state_changed(
+            "open_area",
+            OccupancyState.OCCUPIED,
+            OccupancyState.CHECKING,
+        )
+
+        assert not predictor.has_active_phantom("hallway")
+        assert predictor.has_active_phantom("service_room")
+        set_occupied.assert_called_once_with(
+            "service_room",
+            "phantom: door binary_sensor.service_room_door opened between open_area and service_room",
+        )
+
+    @pytest.mark.asyncio
+    async def test_door_directed_exit_suppression_expires(self):
+        """Door-directed suppression should not hide a later unrelated clear."""
+        rooms = [
+            _make_room("open_area", ["hallway", "service_room"]),
+            _make_room("hallway", ["open_area"], is_transit=True),
+            _make_room("service_room", ["open_area"]),
+        ]
+        store = _make_store(rooms)
+        set_occupied = MagicMock()
+        hass = MagicMock()
+
+        predictor = TransitionPredictor(hass, store, set_room_occupied=set_occupied)
+        await predictor.async_start()
+        predictor._door_links["binary_sensor.service_room_door"] = DoorLink(
+            door_edge_id="e_service_room",
+            entity_id="binary_sensor.service_room_door",
+            room_a="open_area",
+            room_b="service_room",
+        )
+        predictor._room_states["open_area"] = OccupancyState.OCCUPIED
+        predictor._room_states["hallway"] = OccupancyState.VACANT
+        predictor._room_states["service_room"] = OccupancyState.VACANT
+
+        predictor.on_door_event("binary_sensor.service_room_door", is_open=True)
+        predictor._door_directed_forward_suppression_until["open_area"] = (
+            datetime.now() - timedelta(seconds=1)
+        )
+        predictor.on_room_state_changed(
+            "open_area",
+            OccupancyState.OCCUPIED,
+            OccupancyState.CHECKING,
+        )
+
+        assert predictor.has_active_phantom("hallway")
+        assert predictor.has_active_phantom("service_room")
+
+    @pytest.mark.asyncio
     async def test_phantom_not_created_on_occupied_neighbour(self):
         """Phantom should not be created on already-occupied rooms."""
         rooms = [
@@ -333,6 +472,46 @@ class TestTransitionPredictorPhantom:
             confidence=0.8,
         )
         assert not predictor.has_active_phantom("bathroom")
+
+    @pytest.mark.asyncio
+    async def test_startup_synced_occupancy_suppresses_first_forward_prediction(self):
+        """Restored startup occupancy timing out must not wake neighbours."""
+        rooms = [
+            _make_room("hallway", ["bathroom"]),
+            _make_room("bathroom", ["hallway"]),
+        ]
+        store = _make_store(rooms)
+        set_occupied = MagicMock()
+        hass = MagicMock()
+
+        predictor = TransitionPredictor(hass, store, set_room_occupied=set_occupied)
+        await predictor.async_start()
+
+        predictor.sync_room_state(
+            "bathroom",
+            OccupancyState.OCCUPIED,
+            suppress_next_forward_prediction=True,
+        )
+        predictor.sync_room_state("hallway", OccupancyState.VACANT)
+
+        predictor.on_room_state_changed(
+            "bathroom", OccupancyState.OCCUPIED, OccupancyState.CHECKING
+        )
+
+        assert not predictor.has_active_phantom("hallway")
+        set_occupied.assert_not_called()
+
+        predictor.on_room_state_changed(
+            "bathroom",
+            OccupancyState.CHECKING,
+            OccupancyState.OCCUPIED,
+            confidence=0.8,
+        )
+        predictor.on_room_state_changed(
+            "bathroom", OccupancyState.OCCUPIED, OccupancyState.CHECKING
+        )
+
+        assert predictor.has_active_phantom("hallway")
 
     @pytest.mark.asyncio
     async def test_door_event_creates_phantom(self):

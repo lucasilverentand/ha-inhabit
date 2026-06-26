@@ -92,6 +92,7 @@ class FakeHouseSimulator:
         self.sensors: dict[str, FakeSensor] = {}
         self.persons: dict[str, FakePerson] = {}
         self._state_change_callbacks: list[Callable] = []
+        self._room_specs_by_id: dict[str, FakeRoomSpec] = {}
         if room_specs is None:
             self._setup_house()
         else:
@@ -99,6 +100,7 @@ class FakeHouseSimulator:
 
     def _setup_from_specs(self, room_specs: list[FakeRoomSpec]) -> None:
         """Set up a custom anonymized house structure."""
+        self._room_specs_by_id = {spec.id: spec for spec in room_specs}
         for spec in room_specs:
             self._add_room(
                 spec.id,
@@ -242,6 +244,9 @@ class FakeHouseSimulator:
 
         for room in self.rooms.values():
             for connected_id in room.connected_rooms:
+                if not self._pair_has_door_sensor(room.id, connected_id):
+                    continue
+
                 # Avoid duplicates
                 pair = tuple(sorted([room.id, connected_id]))
                 if pair in added_pairs:
@@ -256,6 +261,19 @@ class FakeHouseSimulator:
                     attributes={"device_class": "door"},
                 )
                 self.sensors[sensor.entity_id] = sensor
+
+    def _pair_has_door_sensor(self, room1_id: str, room2_id: str) -> bool:
+        """Return whether a configured room pair should expose a door sensor."""
+        if not self._room_specs_by_id:
+            return True
+
+        for room_id, connected_id in ((room1_id, room2_id), (room2_id, room1_id)):
+            spec = self._room_specs_by_id.get(room_id)
+            if spec and spec.door_sensor_connected_rooms is None:
+                return True
+            if spec and connected_id in spec.door_sensor_connected_rooms:
+                return True
+        return False
 
     def add_person(self, person_id: str, name: str) -> FakePerson:
         """Add a person to the simulation."""
