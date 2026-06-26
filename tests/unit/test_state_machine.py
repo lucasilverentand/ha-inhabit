@@ -237,6 +237,33 @@ class TestOccupancyStateMachineWithMocks:
         machine._handle_override_trigger_event(matching_event)
         assert machine.state.state == OccupancyState.OCCUPIED
 
+    def test_button_override_trigger_toggles_on_press_action(
+        self, mock_hass, basic_config, state_changes
+    ):
+        """HA button entities toggle occupancy when configured as press triggers."""
+        from custom_components.inhabit.engine.occupancy_state_machine import (
+            OccupancyStateMachine,
+        )
+
+        basic_config.override_trigger_entity = "button.room_override"
+        basic_config.override_trigger_action = "press"
+        changes, on_change = state_changes
+        machine = OccupancyStateMachine(mock_hass, basic_config, on_change)
+        event = MagicMock()
+        event.data = {
+            "entity_id": "button.room_override",
+            "new_state": MagicMock(
+                state="2026-06-26T20:00:00+00:00",
+                attributes={},
+            ),
+        }
+
+        machine._handle_override_trigger_event(event)
+        assert machine.state.state == OccupancyState.OCCUPIED
+
+        machine._handle_override_trigger_event(event)
+        assert machine.state.state == OccupancyState.VACANT
+
     @pytest.mark.asyncio
     async def test_override_trigger_subscribes_without_action(
         self, mock_hass, basic_config, state_changes
