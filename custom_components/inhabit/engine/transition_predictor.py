@@ -340,6 +340,7 @@ class TransitionPredictor:
                 probability=1.0,  # Full strength for door events
                 hold_seconds=hold,
                 reason=f"door {entity_id} opened between {occupied_side} and {vacant_side}",
+                activate_vacant_target=True,
             )
 
     def _consume_forward_suppression(self, room_id: str) -> bool:
@@ -471,6 +472,8 @@ class TransitionPredictor:
         probability: float,
         hold_seconds: float,
         reason: str,
+        *,
+        activate_vacant_target: bool = False,
     ) -> None:
         """Create or refresh a phantom presence on a target room."""
         existing = self._phantoms.get(target_id)
@@ -509,9 +512,16 @@ class TransitionPredictor:
             reason,
         )
 
-        # Push target room to OCCUPIED if it's currently VACANT
+        # Passive transition guesses are allowed to hold rooms that are already
+        # active/checking, but must not wake a vacant room and turn lights on.
+        # Only explicit evidence, such as an opened door from an occupied side,
+        # may promote a vacant target to OCCUPIED.
         target_state = self._room_states.get(target_id, OccupancyState.VACANT)
-        if target_state == OccupancyState.VACANT and self._set_room_occupied:
+        if (
+            activate_vacant_target
+            and target_state == OccupancyState.VACANT
+            and self._set_room_occupied
+        ):
             self._set_room_occupied(target_id, f"phantom: {reason}")
 
         # Schedule expiry
