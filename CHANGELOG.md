@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.14.23](https://github.com/lucasilverentand/ha-inhabit/compare/v0.14.22...v0.14.23) (2026-06-26)
+
+
+### Bug Fixes
+
+* prevent passive phantoms waking vacant rooms ([6ee44d2](https://github.com/lucasilverentand/ha-inhabit/commit/6ee44d284534dd6cd02f9dd8159a64a8ea3c7fb5))
+* prevent passive phantoms waking vacant rooms ([867b0a4](https://github.com/lucasilverentand/ha-inhabit/commit/867b0a42ed9dbccb7da8e1daaf824ea43e0f4ded))
+
 ## [0.14.22](https://github.com/lucasilverentand/ha-inhabit/compare/v0.14.21...v0.14.22) (2026-06-26)
 
 
