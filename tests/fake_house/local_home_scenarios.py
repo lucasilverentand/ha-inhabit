@@ -636,7 +636,7 @@ def open_door_override_real_activity_survives_safety_timer() -> dict[str, Any]:
         sim.assert_room("short_stay", OccupancyState.OCCUPIED, sealed=False)
 
         sim.clear_room("short_stay")
-        sim.wait(30)
+        sim.wait(sim.configs["short_stay"].checking_timeout * 2)
         sim.assert_room("short_stay", OccupancyState.VACANT, sealed=False)
         sim.wait(LOCAL_TRANSIT_PHANTOM_HOLD + 30)
         sim.assert_room("transit_hall", OccupancyState.VACANT, sealed=False)
