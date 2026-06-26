@@ -43,6 +43,8 @@ def _engine_store(config: VirtualSensorConfig) -> MagicMock:
     store.get_sensor_reliability.return_value = {}
     store.get_pattern_priors.return_value = {}
     store.get_transition_learner_data.return_value = {}
+    store.get_diagnostic_trace.return_value = []
+    store.save_diagnostic_trace = MagicMock()
     return store
 
 
@@ -58,6 +60,29 @@ class TestDiagnosticTrace:
 
         assert [event["event"] for event in events] == ["c", "d"]
         assert all(event["room_id"] == "room_a" for event in events)
+
+    def test_loads_persisted_events(self):
+        trace = DiagnosticTrace(maxlen=3)
+
+        trace.load_events(
+            [
+                {
+                    "category": "state",
+                    "event": "persisted",
+                    "room_id": "room_a",
+                    "confidence": "0.75",
+                    "contributing_sensors": ["binary_sensor.motion"],
+                    "metadata": {"source": "storage"},
+                },
+                "invalid",
+            ]
+        )
+
+        events = trace.to_dicts(room_id="room_a")
+        assert len(events) == 1
+        assert events[0]["event"] == "persisted"
+        assert events[0]["confidence"] == 0.75
+        assert events[0]["metadata"] == {"source": "storage"}
 
 
 class TestConfigPatchTools:
@@ -204,6 +229,26 @@ class TestStateMachineDiagnostics:
 
 
 class TestEngineDiagnostics:
+    @pytest.mark.asyncio
+    async def test_loads_persisted_diagnostic_trace(self, mock_hass):
+        config = VirtualSensorConfig(room_id="room_a", floor_plan_id="fp_test")
+        store = _engine_store(config)
+        store.get_diagnostic_trace.return_value = [
+            {
+                "category": "state",
+                "event": "restored_trace",
+                "room_id": "room_a",
+                "reason": "loaded from storage",
+            }
+        ]
+        engine = VirtualSensorEngine(mock_hass, store)
+
+        await engine.async_start()
+
+        result = engine.get_diagnostics(room_id="room_a", category="state")
+        assert result["event_count"] == 1
+        assert result["events"][0]["event"] == "restored_trace"
+
     def test_get_diagnostics_includes_state_and_config(self, mock_hass):
         config = VirtualSensorConfig(room_id="room_a", floor_plan_id="fp_test")
         store = _engine_store(config)
@@ -219,6 +264,18 @@ class TestEngineDiagnostics:
         assert result["event_count"] == 1
         assert result["events"][0]["event"] == "test"
         assert result["config"]["room_id"] == "room_a"
+        store.save_diagnostic_trace.assert_called()
+
+    def test_record_diagnostic_persists_trace(self, mock_hass):
+        config = VirtualSensorConfig(room_id="room_a", floor_plan_id="fp_test")
+        store = _engine_store(config)
+        engine = VirtualSensorEngine(mock_hass, store)
+
+        engine.record_diagnostic(category="state", event="test", room_id="room_a")
+
+        store.save_diagnostic_trace.assert_called_once()
+        saved = store.save_diagnostic_trace.call_args.args[0]
+        assert saved[-1]["event"] == "test"
 
     def test_mmwave_routing_records_diagnostics(self, mock_hass):
         config = VirtualSensorConfig(

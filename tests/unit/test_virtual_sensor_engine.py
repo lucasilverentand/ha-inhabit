@@ -73,8 +73,10 @@ def _mock_store(configs: list[VirtualSensorConfig] | None = None, floor_plans=No
     store.get_sensor_reliability.return_value = {}
     store.get_pattern_priors.return_value = {}
     store.get_transition_learner_data.return_value = {}
+    store.get_diagnostic_trace.return_value = []
     store.get_sensor_config.return_value = None
     store.save_occupancy_history = MagicMock()
+    store.save_diagnostic_trace = MagicMock()
     store.save_false_vacancy_data = MagicMock()
     store.save_feedback_data = MagicMock()
     store.save_timeout_history = MagicMock()
@@ -207,6 +209,7 @@ class TestEngineLifecycle:
         await engine.async_stop()
 
         store.save_occupancy_history.assert_called_once()
+        store.save_diagnostic_trace.assert_called_once()
         store.save_false_vacancy_data.assert_called_once()
         store.save_feedback_data.assert_called_once()
         store.save_timeout_history.assert_called_once()

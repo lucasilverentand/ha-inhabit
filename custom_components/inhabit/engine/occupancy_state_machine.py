@@ -413,6 +413,7 @@ class OccupancyStateMachine:
             self._transition_to_occupied(
                 f"spatial presence: {target_count} targets from {source}",
                 fresh_detection=True,
+                physical_activity=True,
             )
         else:
             self._check_all_sensors_clear()
@@ -436,21 +437,27 @@ class OccupancyStateMachine:
         if active_motion:
             self._record_unsealed_activity("motion")
             self._transition_to_occupied(
-                f"{reason}: motion active", fresh_detection=False
+                f"{reason}: motion active",
+                fresh_detection=False,
+                physical_activity=True,
             )
             return
 
         if active_presence:
             self._record_unsealed_activity("presence")
             self._transition_to_occupied(
-                f"{reason}: presence active", fresh_detection=False
+                f"{reason}: presence active",
+                fresh_detection=False,
+                physical_activity=True,
             )
             return
 
         if active_occupancy:
             self._record_unsealed_activity("occupancy")
             self._transition_to_occupied(
-                f"{reason}: occupancy active", fresh_detection=False
+                f"{reason}: occupancy active",
+                fresh_detection=False,
+                physical_activity=True,
             )
             return
 
@@ -609,7 +616,9 @@ class OccupancyStateMachine:
             self._update_contributing_sensors(entity_id, add=True)
             self._record_unsealed_activity("motion")
             self._transition_to_occupied(
-                f"motion from {entity_id}", fresh_detection=True
+                f"motion from {entity_id}",
+                fresh_detection=True,
+                physical_activity=True,
             )
         else:
             self._update_contributing_sensors(entity_id, add=False)
@@ -659,7 +668,9 @@ class OccupancyStateMachine:
             self._update_contributing_sensors(entity_id, add=True)
             self._record_unsealed_activity("presence")
             self._transition_to_occupied(
-                f"presence from {entity_id}", fresh_detection=True
+                f"presence from {entity_id}",
+                fresh_detection=True,
+                physical_activity=True,
             )
         else:
             self._update_contributing_sensors(entity_id, add=False)
@@ -709,7 +720,9 @@ class OccupancyStateMachine:
             self._update_contributing_sensors(entity_id, add=True)
             self._record_unsealed_activity("occupancy")
             self._transition_to_occupied(
-                f"occupancy from {entity_id}", fresh_detection=True
+                f"occupancy from {entity_id}",
+                fresh_detection=True,
+                physical_activity=True,
             )
         else:
             self._update_contributing_sensors(entity_id, add=False)
@@ -1135,7 +1148,11 @@ class OccupancyStateMachine:
     # ------------------------------------------------------------------
 
     def _transition_to_occupied(
-        self, reason: str, *, fresh_detection: bool = True
+        self,
+        reason: str,
+        *,
+        fresh_detection: bool = True,
+        physical_activity: bool = False,
     ) -> None:
         """Transition to OCCUPIED state.
 
@@ -1161,7 +1178,11 @@ class OccupancyStateMachine:
 
         # Threshold gate: require physical activity OR sufficient probability
         probability = self._aggregator.get_presence_probability()
-        if not self._any_sensor_active() and not self._any_presence_sensor_active():
+        if (
+            not physical_activity
+            and not self._any_sensor_active()
+            and not self._any_presence_sensor_active()
+        ):
             if probability < self.config.occupied_threshold:
                 _LOGGER.debug(
                     "Room %s: transition to OCCUPIED blocked — "

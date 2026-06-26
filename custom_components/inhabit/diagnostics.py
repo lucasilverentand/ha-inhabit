@@ -53,6 +53,78 @@ class DiagnosticEvent:
             "metadata": self.metadata,
         }
 
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> DiagnosticEvent:
+        """Deserialize a persisted diagnostic event."""
+        return cls(
+            id=str(data.get("id") or uuid4().hex),
+            timestamp=str(data.get("timestamp") or datetime.now().isoformat()),
+            category=str(data.get("category") or "unknown"),
+            event=str(data.get("event") or "unknown"),
+            room_id=_optional_str(data.get("room_id")),
+            region_id=_optional_str(data.get("region_id")),
+            previous_state=_optional_str(data.get("previous_state")),
+            new_state=_optional_str(data.get("new_state")),
+            reason=_optional_str(data.get("reason")),
+            confidence=_optional_float(data.get("confidence")),
+            probability=_optional_float(data.get("probability")),
+            thresholds=_float_dict_or_none(data.get("thresholds")),
+            contributing_sensors=_str_list(data.get("contributing_sensors")),
+            blockers=_str_list(data.get("blockers")),
+            target_count=_optional_int(data.get("target_count")),
+            metadata=_dict_or_empty(data.get("metadata")),
+        )
+
+
+def _optional_str(value: Any) -> str | None:
+    """Return value as a string when present."""
+    return None if value is None else str(value)
+
+
+def _optional_float(value: Any) -> float | None:
+    """Return value as a float when possible."""
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _optional_int(value: Any) -> int | None:
+    """Return value as an int when possible."""
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _str_list(value: Any) -> list[str]:
+    """Return a list of strings for persisted list fields."""
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value]
+
+
+def _dict_or_empty(value: Any) -> dict[str, Any]:
+    """Return a dict for persisted metadata."""
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _float_dict_or_none(value: Any) -> dict[str, float] | None:
+    """Return a float-valued dict for persisted threshold fields."""
+    if not isinstance(value, dict):
+        return None
+    result: dict[str, float] = {}
+    for key, item in value.items():
+        try:
+            result[str(key)] = float(item)
+        except (TypeError, ValueError):
+            continue
+    return result or None
+
 
 class DiagnosticTrace:
     """Bounded in-memory trace of recent occupancy diagnostics."""
@@ -65,6 +137,15 @@ class DiagnosticTrace:
         event = DiagnosticEvent(**kwargs)
         self._events.append(event)
         return event
+
+    def load_events(self, entries: list[dict[str, Any]]) -> None:
+        """Replace the current trace with persisted diagnostic events."""
+        self._events.clear()
+        maxlen = self._events.maxlen or DIAGNOSTIC_TRACE_MAXLEN
+        for entry in entries[-maxlen:]:
+            if not isinstance(entry, dict):
+                continue
+            self._events.append(DiagnosticEvent.from_dict(entry))
 
     def list_events(
         self,

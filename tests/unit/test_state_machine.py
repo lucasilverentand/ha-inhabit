@@ -867,6 +867,34 @@ class TestDoorSealLogic:
             machine._transition_to_vacant("checking timeout")
             assert machine.state.state == OccupancyState.VACANT
 
+    def test_open_door_fresh_motion_restores_occupancy_from_checking(
+        self, mock_hass, seal_config, state_changes
+    ):
+        """Fresh open-door motion must re-occupy even if cached state is stale."""
+        seal_config.unsealed_activity_timeout = 30
+        self._setup_sensor_states(
+            mock_hass, motion_state=STATE_OFF, door_state=STATE_ON
+        )
+        machine, _ = self._make_machine(mock_hass, seal_config, state_changes)
+        machine._state.state = OccupancyState.CHECKING
+        machine._state.checking_started_at = datetime.now()
+
+        with (
+            patch.object(
+                machine._aggregator, "get_presence_probability", return_value=0.0
+            ),
+            patch(
+                "custom_components.inhabit.engine.occupancy_state_machine.async_call_later",
+                lambda hass, delay, cb: MagicMock(),
+            ),
+        ):
+            machine._handle_motion_event(
+                self._make_event("binary_sensor.room_motion", STATE_ON)
+            )
+
+        assert machine.state.state == OccupancyState.OCCUPIED
+        assert machine.state.sealed is False
+
     def test_open_door_repeated_motion_refreshes_unsealed_timer(
         self, mock_hass, seal_config, state_changes
     ):

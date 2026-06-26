@@ -20,7 +20,7 @@ from ..const import (
     OCCUPANCY_HISTORY_MAXLEN,
     OccupancyState,
 )
-from ..diagnostics import DiagnosticEvent, DiagnosticTrace
+from ..diagnostics import DIAGNOSTIC_TRACE_MAXLEN, DiagnosticEvent, DiagnosticTrace
 from ..models.virtual_sensor import (
     OccupancyHistoryEntry,
     OccupancyStateData,
@@ -154,8 +154,9 @@ class VirtualSensorEngine:
         self._running = True
         _LOGGER.info("Starting virtual sensor engine")
 
-        # Load persisted occupancy history
+        # Load persisted occupancy history and diagnostic trace
         await self._load_history()
+        self._load_diagnostics()
 
         # Load feedback data
         self._feedback_controller.load_data(self._store.get_feedback_data())
@@ -241,6 +242,7 @@ class VirtualSensorEngine:
 
         # Persist occupancy history before stopping
         await self._save_history()
+        self._save_diagnostics()
 
         # Unsubscribe door event listeners for transition prediction
         for unsub in self._unsub_door_listeners:
@@ -397,6 +399,7 @@ class VirtualSensorEngine:
     def record_diagnostic(self, **kwargs: Any) -> DiagnosticEvent:
         """Record a structured diagnostic event."""
         event = self._diagnostics.record(**kwargs)
+        self._save_diagnostics()
         _LOGGER.debug("Inhabit diagnostic: %s", event.to_dict())
         return event
 
@@ -1190,3 +1193,18 @@ class VirtualSensorEngine:
         entries = [e.to_dict() for e in self._occupancy_history]
         self._store.save_occupancy_history(entries)
         _LOGGER.debug("Saved %d occupancy history entries", len(entries))
+
+    def _load_diagnostics(self) -> None:
+        """Load diagnostic trace from the store."""
+        raw = self._store.get_diagnostic_trace()
+        if not isinstance(raw, list):
+            return
+
+        self._diagnostics.load_events(raw)
+        _LOGGER.debug("Loaded %d diagnostic trace entries", len(raw))
+
+    def _save_diagnostics(self) -> None:
+        """Save diagnostic trace to the store."""
+        self._store.save_diagnostic_trace(
+            self._diagnostics.to_dicts(limit=DIAGNOSTIC_TRACE_MAXLEN)
+        )
