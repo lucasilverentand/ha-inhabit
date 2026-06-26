@@ -100,7 +100,7 @@ def test_toilet_mmwave_dropout_after_open_door_close_uses_post_close_hold():
 
 
 def test_anonymized_transit_phantom_expires_and_rechecks_clear_sensors():
-    """A phantom transit hold clears without using real home names or entities."""
+    """A passive transit phantom does not wake a vacant transit sensor."""
     with AlgorithmScenarioSimulator.anonymized_transit_home() as sim:
         sim.add_person("subject", "Subject")
 
@@ -115,18 +115,42 @@ def test_anonymized_transit_phantom_expires_and_rechecks_clear_sensors():
         sim.clear_room("zone_alpha")
 
         sim.assert_room("zone_alpha", OccupancyState.CHECKING, sealed=False)
-        sim.assert_room("transit_core", OccupancyState.OCCUPIED, sealed=False)
+        sim.assert_room("transit_core", OccupancyState.VACANT, sealed=False)
         assert sim.transition_predictor is not None
         assert sim.transition_predictor.has_active_phantom("transit_core")
 
         sim.wait(DEFAULT_TRANSIT_PHANTOM_HOLD - 1)
-        sim.assert_room("transit_core", OccupancyState.OCCUPIED, sealed=False)
+        sim.assert_room("transit_core", OccupancyState.VACANT, sealed=False)
 
         sim.wait(1)
-        sim.assert_room("transit_core", OccupancyState.CHECKING, sealed=False)
+        sim.assert_room("transit_core", OccupancyState.VACANT, sealed=False)
 
         sim.wait(30)
         sim.assert_room("transit_core", OccupancyState.VACANT, sealed=False)
+
+
+def test_passive_room_clear_does_not_wake_vacant_hallway():
+    """Clearing a nearby room must not infer hallway occupancy by itself."""
+    with AlgorithmScenarioSimulator.anonymized_local_home() as sim:
+        sim.add_person("subject", "Subject")
+        sim.set_door_snapshot("open_east", "transit_hall", open=True)
+
+        sim.enter_room(
+            "subject",
+            "open_east",
+            pir=False,
+            mmwave=True,
+            spatial_targets=1,
+        )
+        sim.assert_room("open_east", OccupancyState.OCCUPIED, sealed=False)
+        sim.assert_room("transit_hall", OccupancyState.VACANT, sealed=False)
+
+        sim.clear_room("open_east")
+
+        sim.assert_room("open_east", OccupancyState.CHECKING, sealed=False)
+        sim.assert_room("transit_hall", OccupancyState.VACANT, sealed=False)
+        assert sim.transition_predictor is not None
+        assert sim.transition_predictor.has_active_phantom("transit_hall")
 
 
 def test_anonymized_local_home_walks_from_open_area_to_short_stay():

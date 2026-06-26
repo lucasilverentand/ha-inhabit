@@ -241,7 +241,7 @@ class TestTransitionPredictorPhantom:
 
     @pytest.mark.asyncio
     async def test_forward_prediction_creates_phantom(self):
-        """When a room goes CHECKING, phantoms should be created in adjacent VACANT rooms."""
+        """When a room goes CHECKING, passive phantoms do not wake vacant rooms."""
         rooms = [
             _make_room("hallway", ["bathroom"]),
             _make_room("bathroom", ["hallway"]),
@@ -259,8 +259,7 @@ class TestTransitionPredictorPhantom:
         )
 
         assert predictor.has_active_phantom("bathroom")
-        # Should have tried to push bathroom to OCCUPIED
-        set_occupied.assert_called()
+        set_occupied.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_high_degree_transit_does_not_fan_out_to_all_neighbours(self):
@@ -668,6 +667,12 @@ class TestTransitionPredictorDoorGeometry:
         predictor.on_room_state_changed(
             "room_a", OccupancyState.OCCUPIED, OccupancyState.CHECKING
         )
+
+        assert predictor.has_active_phantom("room_b")
+        set_occupied.assert_not_called()
+
+        set_occupied.reset_mock()
+        predictor.on_door_event("binary_sensor.door_1", is_open=True)
 
         assert predictor.has_active_phantom("room_b")
         set_occupied.assert_called_once()
