@@ -4,11 +4,36 @@ from __future__ import annotations
 
 from custom_components.inhabit.const import DEFAULT_TRANSIT_PHANTOM_HOLD, OccupancyState
 from tests.fake_house.algorithm_simulator import AlgorithmScenarioSimulator
-from tests.fake_house.local_home_layout import local_home_layout_summary
+from tests.fake_house.local_home_layout import (
+    LOCAL_HOME_PHANTOM_HOLD_SECONDS_BY_ROOM,
+    local_home_layout_summary,
+)
 from tests.fake_house.local_home_scenarios import (
+    all_direct_routes_settle_without_stuck_hallway,
+    door_bounce_person_remains_after_settled_occupancy,
+    door_left_open_exit_clears_after_unsealed_check,
+    door_left_open_mmwave_keeps_short_stay_occupied,
+    door_sensor_unavailable_recovers_with_active_presence,
     hallway_left_open_to_short_stay_then_close,
     hallway_multi_mmwave_clears_after_last_target,
+    multi_target_partial_exit_keeps_source_occupied,
+    open_door_override_real_activity_survives_safety_timer,
+    repeated_door_bounces_do_not_wake_hallway,
     short_stay_exit_back_to_hallway,
+    startup_clear_sensors_stays_vacant,
+    startup_each_room_presence_clears_without_cross_room_wake,
+    startup_hallway_presence_clears_without_waking_rooms,
+    startup_multiple_room_presence_clears_independently,
+    startup_open_doors_clear_sensors_stays_vacant,
+    startup_restored_presence_door_open_wakes_hallway,
+    startup_single_room_presence_does_not_wake_hallway,
+    transit_reentry_during_phantom_keeps_hallway_live,
+    two_people_cross_hallway_independently,
+)
+
+LOCAL_TRANSIT_PHANTOM_HOLD = LOCAL_HOME_PHANTOM_HOLD_SECONDS_BY_ROOM.get(
+    "transit_hall",
+    DEFAULT_TRANSIT_PHANTOM_HOLD,
 )
 
 
@@ -119,10 +144,11 @@ def test_anonymized_local_home_walks_from_open_area_to_short_stay():
         sim.clear_room("transit_hall")
 
         sim.assert_room("short_stay", OccupancyState.OCCUPIED, sealed=False)
-        sim.assert_room("transit_hall", OccupancyState.CHECKING, sealed=False)
+        sim.assert_room("transit_hall", OccupancyState.OCCUPIED, sealed=False)
 
         sim.wait(90)
         sim.assert_room("short_stay", OccupancyState.OCCUPIED, sealed=False)
+        sim.assert_room("transit_hall", OccupancyState.VACANT, sealed=False)
 
         sim.close_door("transit_hall", "short_stay")
         sim.clear_pir("short_stay")
@@ -131,7 +157,7 @@ def test_anonymized_local_home_walks_from_open_area_to_short_stay():
         sim.set_spatial_targets("short_stay", 1, source="post_close_mmwave")
         sim.assert_room("short_stay", OccupancyState.OCCUPIED, sealed=True)
 
-        sim.wait(DEFAULT_TRANSIT_PHANTOM_HOLD + 30)
+        sim.wait(LOCAL_TRANSIT_PHANTOM_HOLD + 30)
         sim.assert_room("short_stay", OccupancyState.OCCUPIED, sealed=True)
         sim.assert_room("transit_hall", OccupancyState.VACANT, sealed=False)
         sim.assert_room("open_east", OccupancyState.VACANT, sealed=False)
@@ -162,7 +188,7 @@ def test_anonymized_local_home_quick_exit_after_settled_occupancy_checks_empty()
         sim.wait(30)
         sim.assert_room("short_stay", OccupancyState.VACANT, sealed=False)
 
-        sim.wait(DEFAULT_TRANSIT_PHANTOM_HOLD + 30)
+        sim.wait(LOCAL_TRANSIT_PHANTOM_HOLD + 30)
         sim.assert_room("transit_hall", OccupancyState.VACANT, sealed=False)
 
 
@@ -183,7 +209,7 @@ def test_anonymized_local_home_closed_door_override_waits_for_door_open():
         sim.wait(30)
         sim.assert_room("short_stay", OccupancyState.VACANT, sealed=False)
 
-        sim.wait(DEFAULT_TRANSIT_PHANTOM_HOLD + 30)
+        sim.wait(LOCAL_TRANSIT_PHANTOM_HOLD + 30)
         sim.assert_room("transit_hall", OccupancyState.VACANT, sealed=False)
 
 
@@ -202,7 +228,7 @@ def test_anonymized_local_home_open_door_override_safety_timer_clears():
         sim.wait(30)
         sim.assert_room("short_stay", OccupancyState.VACANT, sealed=False)
 
-        sim.wait(DEFAULT_TRANSIT_PHANTOM_HOLD + 30)
+        sim.wait(LOCAL_TRANSIT_PHANTOM_HOLD + 30)
         sim.assert_room("transit_hall", OccupancyState.VACANT, sealed=False)
 
 
@@ -226,10 +252,7 @@ def test_anonymized_local_home_transit_phantom_expires():
         sim.assert_room("transit_hall", OccupancyState.CHECKING, sealed=False)
 
         assert sim.transition_predictor is not None
-        assert sim.transition_predictor.has_active_phantom("transit_hall")
-
-        sim.wait(DEFAULT_TRANSIT_PHANTOM_HOLD - 1)
-        sim.assert_room("transit_hall", OccupancyState.CHECKING, sealed=False)
+        assert not sim.transition_predictor.has_active_phantom("transit_hall")
 
         sim.wait(20)
         sim.assert_room("transit_hall", OccupancyState.VACANT, sealed=False)
@@ -252,6 +275,14 @@ def test_anonymized_local_home_layout_has_segmented_hallways_and_mmwave_sources(
     ]
 
 
+def test_anonymized_local_home_simulator_respects_missing_door_sensors():
+    """The fake local house should not invent sensors for open passages."""
+    with AlgorithmScenarioSimulator.anonymized_local_home() as sim:
+        assert sim.house._find_door_sensor("entry_nook", "transit_hall") is None
+        assert sim.house._find_door_sensor("short_stay", "transit_hall") is not None
+        assert sim.house._find_door_sensor("open_east", "transit_hall") is not None
+
+
 def test_local_home_scenario_hallway_left_open_to_short_stay_then_close():
     """A door-left-open walk into short stay settles the hallway."""
     result = hallway_left_open_to_short_stay_then_close()
@@ -271,6 +302,158 @@ def test_local_home_scenario_hallway_multi_mmwave_clears_after_last_target():
 def test_local_home_scenario_short_stay_exit_back_to_hallway():
     """A settled short-stay exit does not leave hallway occupancy stuck."""
     result = short_stay_exit_back_to_hallway()
+
+    assert result["final_states"]["short_stay"]["state"] == OccupancyState.VACANT
+    assert result["final_states"]["transit_hall"]["state"] == OccupancyState.VACANT
+
+
+def test_local_home_scenario_door_bounce_person_remains_occupied():
+    """A quick door bounce does not clear a room with active mmWave evidence."""
+    result = door_bounce_person_remains_after_settled_occupancy()
+
+    assert result["final_states"]["short_stay"]["state"] == OccupancyState.OCCUPIED
+    assert result["final_states"]["short_stay"]["sealed"] is True
+    assert result["final_states"]["transit_hall"]["state"] == OccupancyState.VACANT
+
+
+def test_local_home_scenario_repeated_door_bounces_do_not_wake_hallway():
+    """Repeated door bounces do not leave stale hallway occupancy."""
+    result = repeated_door_bounces_do_not_wake_hallway()
+
+    assert result["final_states"]["short_stay"]["state"] == OccupancyState.OCCUPIED
+    assert result["final_states"]["short_stay"]["sealed"] is True
+    assert result["final_states"]["transit_hall"]["state"] == OccupancyState.VACANT
+
+
+def test_local_home_scenario_open_door_mmwave_keeps_short_stay_occupied():
+    """A left-open door does not clear a room while mmWave remains active."""
+    result = door_left_open_mmwave_keeps_short_stay_occupied()
+
+    assert result["final_states"]["short_stay"]["state"] == OccupancyState.OCCUPIED
+    assert result["final_states"]["short_stay"]["sealed"] is True
+    assert result["final_states"]["transit_hall"]["state"] == OccupancyState.VACANT
+
+
+def test_local_home_scenario_door_left_open_exit_clears_after_unsealed_check():
+    """A room clears after exit even when the door is left open."""
+    result = door_left_open_exit_clears_after_unsealed_check()
+
+    assert result["final_states"]["short_stay"]["state"] == OccupancyState.VACANT
+    assert result["final_states"]["transit_hall"]["state"] == OccupancyState.VACANT
+
+
+def test_local_home_scenario_door_sensor_unavailable_recovers_with_presence():
+    """A door outage does not clear a room while mmWave remains active."""
+    result = door_sensor_unavailable_recovers_with_active_presence()
+
+    assert result["final_states"]["short_stay"]["state"] == OccupancyState.OCCUPIED
+    assert result["final_states"]["short_stay"]["sealed"] is True
+
+
+def test_local_home_scenario_multi_target_partial_exit_keeps_source_occupied():
+    """One target can leave while the source room remains occupied."""
+    result = multi_target_partial_exit_keeps_source_occupied()
+
+    assert result["final_states"]["open_west"]["state"] == OccupancyState.OCCUPIED
+    assert result["final_states"]["service_room"]["state"] == OccupancyState.VACANT
+    assert result["final_states"]["transit_hall"]["state"] == OccupancyState.VACANT
+
+
+def test_local_home_scenario_two_people_cross_hallway_independently():
+    """Multiple hallway travelers clear transit after all hallway sources clear."""
+    result = two_people_cross_hallway_independently()
+
+    assert result["final_states"]["transit_hall"]["state"] == OccupancyState.VACANT
+    assert result["final_states"]["short_stay"]["state"] == OccupancyState.OCCUPIED
+    assert result["final_states"]["open_east"]["state"] == OccupancyState.OCCUPIED
+
+
+def test_local_home_scenario_transit_reentry_during_phantom():
+    """A real hallway re-entry during a phantom does not leave transit stuck."""
+    result = transit_reentry_during_phantom_keeps_hallway_live()
+
+    assert result["final_states"]["transit_hall"]["state"] == OccupancyState.VACANT
+
+
+def test_local_home_scenario_all_direct_routes_settle_without_stuck_hallway():
+    """Every direct local route settles without stale hallway occupancy."""
+    result = all_direct_routes_settle_without_stuck_hallway()
+
+    assert all(
+        state["state"] == OccupancyState.VACANT
+        for state in result["final_states"].values()
+    )
+
+
+def test_local_home_scenario_startup_clear_sensors_stays_vacant():
+    """A reload with all sensors clear does not synthesize occupancy."""
+    result = startup_clear_sensors_stays_vacant()
+
+    assert all(
+        state["state"] == OccupancyState.VACANT
+        for state in result["final_states"].values()
+    )
+
+
+def test_local_home_scenario_startup_open_doors_clear_sensors_stays_vacant():
+    """A reload with restored open doors and clear sensors stays vacant."""
+    result = startup_open_doors_clear_sensors_stays_vacant()
+
+    assert all(
+        state["state"] == OccupancyState.VACANT
+        for state in result["final_states"].values()
+    )
+
+
+def test_local_home_scenario_startup_presence_does_not_wake_hallway():
+    """Restored room presence on startup does not create hallway occupancy."""
+    result = startup_single_room_presence_does_not_wake_hallway()
+
+    assert result["final_states"]["short_stay"]["state"] == OccupancyState.VACANT
+    assert result["final_states"]["transit_hall"]["state"] == OccupancyState.VACANT
+
+
+def test_local_home_scenario_startup_hallway_presence_clears_without_waking_rooms():
+    """Restored hallway presence clears without waking adjacent rooms."""
+    result = startup_hallway_presence_clears_without_waking_rooms()
+
+    assert all(
+        state["state"] == OccupancyState.VACANT
+        for state in result["final_states"].values()
+    )
+
+
+def test_local_home_scenario_startup_each_room_clears_without_cross_room_wake():
+    """Each restored room presence clears without cross-room wakeup."""
+    result = startup_each_room_presence_clears_without_cross_room_wake()
+
+    assert all(
+        state["state"] == OccupancyState.VACANT
+        for state in result["final_states"].values()
+    )
+
+
+def test_local_home_scenario_startup_multiple_rooms_clear_independently():
+    """Multiple restored room presences clear independently."""
+    result = startup_multiple_room_presence_clears_independently()
+
+    assert all(
+        state["state"] == OccupancyState.VACANT
+        for state in result["final_states"].values()
+    )
+
+
+def test_local_home_scenario_startup_presence_door_open_wakes_hallway():
+    """Restored presence can still drive prediction after a real door event."""
+    result = startup_restored_presence_door_open_wakes_hallway()
+
+    assert result["final_states"]["short_stay"]["state"] == OccupancyState.VACANT
+    assert result["final_states"]["transit_hall"]["state"] == OccupancyState.VACANT
+
+
+def test_local_home_scenario_open_door_override_activity_survives_safety():
+    """An open-door override survives safety expiry when real activity appears."""
+    result = open_door_override_real_activity_survives_safety_timer()
 
     assert result["final_states"]["short_stay"]["state"] == OccupancyState.VACANT
     assert result["final_states"]["transit_hall"]["state"] == OccupancyState.VACANT

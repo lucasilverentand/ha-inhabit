@@ -8,13 +8,14 @@ from datetime import datetime, timedelta
 from typing import Any
 from unittest.mock import MagicMock, patch
 
-from homeassistant.const import STATE_OFF, STATE_ON
+from homeassistant.const import STATE_OFF, STATE_ON, STATE_UNAVAILABLE
 
 from custom_components.inhabit.const import DEFAULT_TRANSIT_PHANTOM_HOLD, OccupancyState
 from custom_components.inhabit.engine.occupancy_state_machine import (
     OccupancyStateMachine,
 )
 from custom_components.inhabit.engine.transition_predictor import (
+    DoorLink,
     PhantomPresence,
     TransitionPredictor,
 )
@@ -176,6 +177,7 @@ class AlgorithmScenarioSimulator:
         self.transitions: list[dict[str, Any]] = []
         self.timeline: list[TimelineEntry] = []
         self._spatial_sources_by_room: dict[str, set[str]] = {}
+        self._transition_prediction_ready = True
         self.house.on_state_change(self._route_sensor_change)
 
         for room_id in self.room_ids:
@@ -197,6 +199,7 @@ class AlgorithmScenarioSimulator:
             )
             self.transition_predictor._running = True
             self.transition_predictor.refresh_topology()
+            self._install_fake_door_links()
 
         for room_id in self.room_ids:
             self.machines[room_id] = OccupancyStateMachine(
@@ -374,6 +377,30 @@ class AlgorithmScenarioSimulator:
         store.get_sensor_config.side_effect = lambda room_id: self.configs.get(room_id)
         return store
 
+    def _install_fake_door_links(self) -> None:
+        """Populate predictor door links from the fake house door sensors."""
+        if not self.transition_predictor:
+            return
+
+        added_pairs: set[tuple[str, str]] = set()
+        for room in self.house.rooms.values():
+            for connected_id in room.connected_rooms:
+                pair = tuple(sorted((room.id, connected_id)))
+                if pair in added_pairs:
+                    continue
+                added_pairs.add(pair)
+                door_id = self.house._find_door_sensor(room.id, connected_id)
+                if not door_id:
+                    continue
+                link = DoorLink(
+                    door_edge_id=f"fake_{pair[0]}_{pair[1]}",
+                    entity_id=door_id,
+                    room_a=room.id,
+                    room_b=connected_id,
+                )
+                self.transition_predictor._door_links[door_id] = link
+                self.transition_predictor._all_door_links[link.door_edge_id] = link
+
     def _set_room_occupied(self, room_id: str, reason: str) -> None:
         """Push a simulated room to occupied from the transition predictor."""
         machine = self.machines.get(room_id)
@@ -390,7 +417,7 @@ class AlgorithmScenarioSimulator:
         self, room_id: str
     ) -> Callable[[OccupancyStateData, str], None]:
         def on_change(state: OccupancyStateData, reason: str = "") -> None:
-            if self.transition_predictor:
+            if self.transition_predictor and self._transition_prediction_ready:
                 self.transition_predictor.on_room_state_changed(
                     room_id=room_id,
                     old_state=state.previous_state or OccupancyState.VACANT,
@@ -442,6 +469,58 @@ class AlgorithmScenarioSimulator:
         for source in list(self._spatial_sources_by_room.get(room_id, set())):
             self.set_spatial_targets(room_id, 0, source=source)
         self.record(f"clear {room_id}")
+
+    def set_sensor_snapshot(
+        self,
+        room_id: str,
+        *,
+        pir: bool | None = None,
+        mmwave: bool | None = None,
+    ) -> None:
+        """Set sensor states without firing events, as if HA restored them."""
+        if pir is not None:
+            self.house.sensors[f"binary_sensor.{room_id}_motion"].state = (
+                STATE_ON if pir else STATE_OFF
+            )
+        if mmwave is not None:
+            self.house.sensors[f"binary_sensor.{room_id}_presence"].state = (
+                STATE_ON if mmwave else STATE_OFF
+            )
+        self.record(f"snapshot {room_id}")
+
+    def set_door_snapshot(self, room1_id: str, room2_id: str, *, open: bool) -> None:
+        """Set a door state without firing events, as if HA restored it."""
+        door_id = self.house._find_door_sensor(room1_id, room2_id)
+        if door_id:
+            self.house.sensors[door_id].state = STATE_ON if open else STATE_OFF
+        self.record(f"snapshot door {room1_id}<->{room2_id}")
+
+    def set_door_state(self, room1_id: str, room2_id: str, state: str) -> None:
+        """Set a door state and fire the matching door event."""
+        door_id = self.house._find_door_sensor(room1_id, room2_id)
+        if door_id:
+            self.house.set_sensor_state(door_id, state)
+        self.record(f"door {room1_id}<->{room2_id}={state}")
+
+    def set_door_unavailable(self, room1_id: str, room2_id: str) -> None:
+        """Set a door sensor unavailable and fire the matching door event."""
+        self.set_door_state(room1_id, room2_id, STATE_UNAVAILABLE)
+
+    def recalculate_all(self, reason: str = "scenario refresh") -> None:
+        """Ask every room state machine to re-read current sensor snapshots."""
+        self._transition_prediction_ready = False
+        for machine in self.machines.values():
+            machine.recalculate_from_current_state(reason)
+        if self.transition_predictor:
+            self.transition_predictor.clear_phantoms()
+            for room_id, machine in self.machines.items():
+                self.transition_predictor.sync_room_state(
+                    room_id,
+                    machine.state.state,
+                    suppress_next_forward_prediction=True,
+                )
+        self._transition_prediction_ready = True
+        self.record(reason)
 
     def set_pir(self, room_id: str, active: bool) -> None:
         """Set a room PIR motion sensor."""

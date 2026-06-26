@@ -367,6 +367,12 @@ class VirtualSensorEngine:
             self._reconcile_spatial_presence_for_region(room_id)
 
         self._transition_predictor.clear_phantoms()
+        for room_id, state in self.get_all_states().items():
+            self._transition_predictor.sync_room_state(
+                room_id,
+                state.state,
+                suppress_next_forward_prediction=True,
+            )
         self._transition_prediction_ready = True
         self.republish_current_states()
 

@@ -494,6 +494,9 @@ export class FpbCanvas extends LitElement {
   /** Tracks the last floor ID we fitted to, so we only auto-fit on floor switch. */
   private _lastFittedFloorId: string | null = null;
 
+  /** Tracks rendered geometry so fixture/profile refreshes can re-fit in view modes. */
+  private _lastFittedFloorSignature: string | null = null;
+
   /** Re-fit content when the canvas element is resized. */
   private _resizeObserver?: ResizeObserver;
 
@@ -611,8 +614,9 @@ export class FpbCanvas extends LitElement {
     }
 
     svg.mode-viewing .room {
-      fill: none;
-      stroke: none;
+      fill-opacity: 0.5;
+      stroke: var(--divider-color, rgba(255, 255, 255, 0.42));
+      stroke-width: 2;
     }
 
     svg.mode-viewing .window,
@@ -1850,8 +1854,21 @@ export class FpbCanvas extends LitElement {
       }),
       effect(() => {
         const floor = currentFloor.value;
-        if (floor && floor.id !== this._lastFittedFloorId) {
+        if (!floor) {
+          this._lastFittedFloorId = null;
+          this._lastFittedFloorSignature = null;
+          return;
+        }
+
+        const signature = this._floorFitSignature(floor);
+        const floorChanged = floor.id !== this._lastFittedFloorId;
+        const geometryChanged = signature !== this._lastFittedFloorSignature;
+        const canRefitGeometry =
+          this._canvasMode === "viewing" || this._canvasMode === "occupancy";
+
+        if (floorChanged || (geometryChanged && canRefitGeometry)) {
           this._lastFittedFloorId = floor.id;
+          this._lastFittedFloorSignature = signature;
           // Defer to next frame so SVG element is rendered and has dimensions
           requestAnimationFrame(() => this._fitToFloor(floor));
         }
@@ -4937,23 +4954,26 @@ export class FpbCanvas extends LitElement {
     const contentW = maxX - minX;
     const contentH = maxY - minY;
 
-    const padW = Math.max(contentW, 50) * 0.1;
-    const padH = Math.max(contentH, 50) * 0.1;
+    const margin = this._canvasMode === "viewing" ? 0.03 : 0.1;
+    const padW = Math.max(contentW, 50) * margin;
+    const padH = Math.max(contentH, 50) * margin;
 
     let fitW = contentW + padW * 2;
     let fitH = contentH + padH * 2;
 
-    const svgRect = this._svg?.getBoundingClientRect();
-    const svgAspect =
-      svgRect && svgRect.width > 0 && svgRect.height > 0
-        ? svgRect.width / svgRect.height
-        : 1000 / 800;
+    if (this._canvasMode !== "viewing") {
+      const svgRect = this._svg?.getBoundingClientRect();
+      const svgAspect =
+        svgRect && svgRect.width > 0 && svgRect.height > 0
+          ? svgRect.width / svgRect.height
+          : 1000 / 800;
 
-    const fitAspect = fitW / fitH;
-    if (fitAspect > svgAspect) {
-      fitH = fitW / svgAspect;
-    } else {
-      fitW = fitH * svgAspect;
+      const fitAspect = fitW / fitH;
+      if (fitAspect > svgAspect) {
+        fitH = fitW / svgAspect;
+      } else {
+        fitW = fitH * svgAspect;
+      }
     }
 
     const cx = (minX + maxX) / 2;
@@ -5002,7 +5022,27 @@ export class FpbCanvas extends LitElement {
     this._viewBoxAnimation = requestAnimationFrame(step);
   }
 
-  private _fitToFloor(floor: Floor): void {
+  private _floorFitSignature(floor: Floor): string {
+    const bounds = this._collectFloorFitBounds(floor);
+    if (!bounds) {
+      return `${floor.id}:empty`;
+    }
+    return [
+      floor.id,
+      floor.nodes.length,
+      floor.edges.length,
+      floor.rooms.length,
+      floor.zones?.length ?? 0,
+      bounds.minX.toFixed(2),
+      bounds.minY.toFixed(2),
+      bounds.maxX.toFixed(2),
+      bounds.maxY.toFixed(2),
+    ].join(":");
+  }
+
+  private _collectFloorFitBounds(
+    floor: Floor,
+  ): { minX: number; minY: number; maxX: number; maxY: number } | null {
     // Collect all points: nodes, room polygon vertices, device positions
     const xs: number[] = [];
     const ys: number[] = [];
@@ -5051,12 +5091,23 @@ export class FpbCanvas extends LitElement {
     }
 
     // Nothing to fit — keep default
-    if (xs.length === 0) return;
+    if (xs.length === 0) return null;
 
-    const minX = Math.min(...xs);
-    const maxX = Math.max(...xs);
-    const minY = Math.min(...ys);
-    const maxY = Math.max(...ys);
+    return {
+      minX: Math.min(...xs),
+      minY: Math.min(...ys),
+      maxX: Math.max(...xs),
+      maxY: Math.max(...ys),
+    };
+  }
+
+  private _fitToFloor(floor: Floor): void {
+    const bounds = this._collectFloorFitBounds(floor);
+
+    // Nothing to fit — keep default
+    if (!bounds) return;
+
+    const { minX, maxX, minY, maxY } = bounds;
 
     const contentW = maxX - minX;
     const contentH = maxY - minY;
@@ -5068,22 +5119,26 @@ export class FpbCanvas extends LitElement {
         ? svgRect.width / svgRect.height
         : 1000 / 800;
 
-    // Add 10% margin on each side (20% total)
-    const margin = 0.1;
+    // Viewer mode should not inherit the tall Home Assistant page aspect ratio;
+    // otherwise wide homes collapse into a small horizontal strip.
+    const margin = this._canvasMode === "viewing" ? 0.03 : 0.1;
     const padW = Math.max(contentW, 50) * margin;
     const padH = Math.max(contentH, 50) * margin;
 
     let fitW = contentW + padW * 2;
     let fitH = contentH + padH * 2;
 
-    // Adjust to match the SVG element's aspect ratio so the floor isn't stretched
-    const fitAspect = fitW / fitH;
-    if (fitAspect > svgAspect) {
-      // Content is wider — expand height to match
-      fitH = fitW / svgAspect;
-    } else {
-      // Content is taller — expand width to match
-      fitW = fitH * svgAspect;
+    if (this._canvasMode !== "viewing") {
+      // Adjust to match the SVG element's aspect ratio so editing interactions
+      // keep their old full-canvas pan/zoom behavior.
+      const fitAspect = fitW / fitH;
+      if (fitAspect > svgAspect) {
+        // Content is wider — expand height to match
+        fitH = fitW / svgAspect;
+      } else {
+        // Content is taller — expand width to match
+        fitW = fitH * svgAspect;
+      }
     }
 
     const cx = (minX + maxX) / 2;

@@ -21,6 +21,9 @@ def test_local_simulator_house_builds_anonymized_amsterdam_floorplan() -> None:
     assert len(floor_plan.get_all_rooms()) == 7
     assert level0 is not None
     assert len(level0.zones) == 9
+    assert sum(1 for edge in level0.edges if edge.type == "wall") >= 30
+    assert sum(1 for edge in level0.edges if edge.type == "door") == 7
+    assert len({edge.id for edge in level0.edges}) == len(level0.edges)
     assert any(
         edge.type == "door"
         and edge.entity_id == local_simulator_door_entity("transit_hall", "short_stay")
