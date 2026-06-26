@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.14.24](https://github.com/lucasilverentand/ha-inhabit/compare/v0.14.23...v0.14.24) (2026-06-26)
+
+
+### Bug Fixes
+
+* wake vacant closed rooms on door entry ([2247612](https://github.com/lucasilverentand/ha-inhabit/commit/224761207fd6dbe8952c8aecc6c44567efe99425))
+* wake vacant closed rooms on door entry ([d375455](https://github.com/lucasilverentand/ha-inhabit/commit/d375455d033347334a1aa2b4e0b681c806229526))
+
 ## [0.14.23](https://github.com/lucasilverentand/ha-inhabit/compare/v0.14.22...v0.14.23) (2026-06-26)
 
 
