@@ -941,6 +941,17 @@ class FloorPlanStore:
         self._data["occupancy_history"] = entries
         self.async_delay_save()
 
+    # ==================== Diagnostic Trace ====================
+
+    def get_diagnostic_trace(self) -> list[dict[str, Any]]:
+        """Get raw persisted diagnostic trace entries."""
+        return self._data.get("diagnostic_trace", [])
+
+    def save_diagnostic_trace(self, entries: list[dict[str, Any]]) -> None:
+        """Save recent diagnostic trace entries."""
+        self._data["diagnostic_trace"] = entries
+        self.async_delay_save()
+
     # ==================== Feedback Data ====================
 
     def get_feedback_data(self) -> dict[str, Any]:
