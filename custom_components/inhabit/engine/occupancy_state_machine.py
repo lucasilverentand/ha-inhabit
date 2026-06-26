@@ -907,16 +907,19 @@ class OccupancyStateMachine:
             return
 
         action = self.config.override_trigger_action.strip()
+        entity_id = self.config.override_trigger_entity
 
         # Event entities: action is in event_type attribute
         # Action sensors: action is the state value
         event_type = new_state.attributes.get("event_type", "")
         observed_action = event_type or new_state.state
+        if entity_id.startswith("button."):
+            observed_action = "press"
         matched = not action or event_type == action or new_state.state == action
+        if entity_id.startswith("button.") and action in ("", "press", "pressed"):
+            matched = True
         if not matched:
             return
-
-        entity_id = self.config.override_trigger_entity
 
         if self._state.state in (OccupancyState.OCCUPIED, OccupancyState.CHECKING):
             new = OccupancyState.VACANT
