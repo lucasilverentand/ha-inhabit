@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.20](https://github.com/lucasilverentand/ha-inhabit/compare/v0.14.19...v0.14.20) (2026-06-26)
+
+
+### Bug Fixes
+
+* stabilize occupancy light transitions ([6624dc3](https://github.com/lucasilverentand/ha-inhabit/commit/6624dc3ba2ef16705c282f95c121539648cb949c))
+
 ## [0.14.19](https://github.com/lucasilverentand/ha-inhabit/compare/v0.14.18...v0.14.19) (2026-06-24)
 
 
