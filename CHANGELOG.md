@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.21](https://github.com/lucasilverentand/ha-inhabit/compare/v0.14.20...v0.14.21) (2026-06-26)
+
+
+### Bug Fixes
+
+* restore open-door occupancy on fresh activity ([b6aa5ca](https://github.com/lucasilverentand/ha-inhabit/commit/b6aa5ca4fa06b27fc08236e4f19a29e444773a9f))
+
 ## [0.14.20](https://github.com/lucasilverentand/ha-inhabit/compare/v0.14.19...v0.14.20) (2026-06-26)
 
 
