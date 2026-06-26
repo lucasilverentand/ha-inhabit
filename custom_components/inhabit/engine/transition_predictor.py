@@ -342,6 +342,25 @@ class TransitionPredictor:
                 reason=f"door {entity_id} opened between {occupied_side} and {vacant_side}",
                 activate_vacant_target=True,
             )
+            return
+
+        entry_target = self._vacant_closed_room_entry_target(link)
+        if entry_target:
+            hold = self._get_phantom_hold(entry_target)
+            _LOGGER.info(
+                "Door %s opened into vacant closed room %s (hold=%ds)",
+                entity_id,
+                entry_target,
+                hold,
+            )
+            self._inject_phantom(
+                source_id=entity_id,
+                target_id=entry_target,
+                probability=1.0,
+                hold_seconds=hold,
+                reason=f"door {entity_id} opened into vacant closed room {entry_target}",
+                activate_vacant_target=True,
+            )
 
     def _consume_forward_suppression(self, room_id: str) -> bool:
         """Return True when a room clear should not fan out to all neighbours."""
@@ -370,6 +389,35 @@ class TransitionPredictor:
         result = self._detect_transit(room_id)
         self._transit_cache[room_id] = result
         return result
+
+    def _vacant_closed_room_entry_target(self, link: DoorLink) -> str | None:
+        """Return the closed-room side to wake for an otherwise vacant door open.
+
+        If both sides are closed rooms, the direction is ambiguous, so no
+        prediction is made. This lets a hallway/open-area door wake a bathroom
+        or utility room without turning on two closed rooms from one door event.
+        """
+        state_a = self._room_states.get(link.room_a, OccupancyState.VACANT)
+        state_b = self._room_states.get(link.room_b, OccupancyState.VACANT)
+        if state_a != OccupancyState.VACANT or state_b != OccupancyState.VACANT:
+            return None
+
+        a_closed = self._is_closed_room_entry_candidate(link.room_a)
+        b_closed = self._is_closed_room_entry_candidate(link.room_b)
+        if a_closed == b_closed:
+            return None
+        return link.room_a if a_closed else link.room_b
+
+    def _is_closed_room_entry_candidate(self, room_id: str) -> bool:
+        """Return True when a vacant room may be woken by its own door open."""
+        sensor_config = self._store.get_sensor_config(room_id)
+        if not sensor_config:
+            return False
+        if not getattr(sensor_config, "door_seals_room", False):
+            return False
+        if not getattr(sensor_config, "door_sensors", []):
+            return False
+        return not self.is_transit_room(room_id)
 
     def get_zone_neighbours(self, zone_id: str) -> set[str]:
         """Get adjacent zones (derived from polygon proximity)."""

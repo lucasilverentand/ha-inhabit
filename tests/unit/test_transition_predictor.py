@@ -22,6 +22,10 @@ from custom_components.inhabit.engine.transition_predictor import (
     TransitionPredictor,
 )
 from custom_components.inhabit.models.floor_plan import Coordinates, Polygon
+from custom_components.inhabit.models.virtual_sensor import (
+    SensorBinding,
+    VirtualSensorConfig,
+)
 
 # ------------------------------------------------------------------
 # Helpers
@@ -92,6 +96,20 @@ def _make_edge(edge_id, start_node, end_node, edge_type="wall", entity_id=None):
     edge.type = edge_type
     edge.entity_id = entity_id
     return edge
+
+
+def _make_sensor_config(room_id: str, *, door_seals_room: bool = True):
+    """Create a minimal virtual sensor config for predictor tests."""
+    return VirtualSensorConfig(
+        room_id=room_id,
+        door_seals_room=door_seals_room,
+        door_sensors=[
+            SensorBinding(
+                entity_id=f"binary_sensor.{room_id}_door",
+                sensor_type="door",
+            )
+        ],
+    )
 
 
 # ------------------------------------------------------------------
@@ -324,6 +342,80 @@ class TestTransitionPredictorPhantom:
         assert predictor.has_active_phantom("room_b")
         assert not predictor.has_active_phantom("room_c")
         set_occupied.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_vacant_door_open_wakes_single_closed_room_from_open_area(self):
+        """A closed room can wake from its own door opening when the other side is open."""
+        rooms = [
+            _make_room("open_area", ["short_stay"]),
+            _make_room("short_stay", ["open_area"]),
+        ]
+        store = _make_store(
+            rooms,
+            sensor_configs={
+                "open_area": _make_sensor_config(
+                    "open_area",
+                    door_seals_room=False,
+                ),
+                "short_stay": _make_sensor_config("short_stay"),
+            },
+        )
+        set_occupied = MagicMock()
+        hass = MagicMock()
+
+        predictor = TransitionPredictor(hass, store, set_room_occupied=set_occupied)
+        await predictor.async_start()
+        predictor._door_links["binary_sensor.short_stay_door"] = DoorLink(
+            door_edge_id="e_short_stay",
+            entity_id="binary_sensor.short_stay_door",
+            room_a="open_area",
+            room_b="short_stay",
+        )
+        predictor._room_states["open_area"] = OccupancyState.VACANT
+        predictor._room_states["short_stay"] = OccupancyState.VACANT
+
+        predictor.on_door_event("binary_sensor.short_stay_door", is_open=True)
+
+        assert predictor.has_active_phantom("short_stay")
+        assert not predictor.has_active_phantom("open_area")
+        set_occupied.assert_called_once_with(
+            "short_stay",
+            "phantom: door binary_sensor.short_stay_door opened into vacant closed room short_stay",
+        )
+
+    @pytest.mark.asyncio
+    async def test_vacant_door_open_does_not_guess_between_two_closed_rooms(self):
+        """A door between two vacant closed rooms is ambiguous and should not wake both."""
+        rooms = [
+            _make_room("bedroom", ["shower"]),
+            _make_room("shower", ["bedroom"]),
+        ]
+        store = _make_store(
+            rooms,
+            sensor_configs={
+                "bedroom": _make_sensor_config("bedroom"),
+                "shower": _make_sensor_config("shower"),
+            },
+        )
+        set_occupied = MagicMock()
+        hass = MagicMock()
+
+        predictor = TransitionPredictor(hass, store, set_room_occupied=set_occupied)
+        await predictor.async_start()
+        predictor._door_links["binary_sensor.bedroom_shower_door"] = DoorLink(
+            door_edge_id="e_bedroom_shower",
+            entity_id="binary_sensor.bedroom_shower_door",
+            room_a="bedroom",
+            room_b="shower",
+        )
+        predictor._room_states["bedroom"] = OccupancyState.VACANT
+        predictor._room_states["shower"] = OccupancyState.VACANT
+
+        predictor.on_door_event("binary_sensor.bedroom_shower_door", is_open=True)
+
+        assert not predictor.has_active_phantom("bedroom")
+        assert not predictor.has_active_phantom("shower")
+        set_occupied.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_door_directed_exit_suppresses_other_neighbour_prediction(self):

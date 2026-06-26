@@ -104,7 +104,7 @@ def test_anonymized_transit_phantom_expires_and_rechecks_clear_sensors():
     with AlgorithmScenarioSimulator.anonymized_transit_home() as sim:
         sim.add_person("subject", "Subject")
 
-        sim.open_door("transit_core", "zone_alpha")
+        sim.set_door_snapshot("transit_core", "zone_alpha", open=True)
         sim.enter_room(
             "subject",
             "zone_alpha",
@@ -151,6 +151,26 @@ def test_passive_room_clear_does_not_wake_vacant_hallway():
         sim.assert_room("transit_hall", OccupancyState.VACANT, sealed=False)
         assert sim.transition_predictor is not None
         assert sim.transition_predictor.has_active_phantom("transit_hall")
+
+
+def test_vacant_closed_room_door_open_starts_bounded_occupancy_probe():
+    """Opening a long-vacant closed room wakes it but still requires confirmation."""
+    with AlgorithmScenarioSimulator.anonymized_local_home() as sim:
+        sim.assert_room("transit_hall", OccupancyState.VACANT, sealed=False)
+        sim.assert_room("short_stay", OccupancyState.VACANT, sealed=False)
+
+        sim.open_door("transit_hall", "short_stay")
+
+        sim.assert_room("transit_hall", OccupancyState.VACANT, sealed=False)
+        sim.assert_room("short_stay", OccupancyState.OCCUPIED, sealed=False)
+        assert sim.transition_predictor is not None
+        assert sim.transition_predictor.has_active_phantom("short_stay")
+
+        sim.wait(sim.configs["short_stay"].checking_timeout)
+        sim.assert_room("short_stay", OccupancyState.CHECKING, sealed=False)
+
+        sim.wait(sim.configs["short_stay"].checking_timeout)
+        sim.assert_room("short_stay", OccupancyState.VACANT, sealed=False)
 
 
 def test_anonymized_local_home_walks_from_open_area_to_short_stay():
