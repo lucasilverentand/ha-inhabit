@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.14.22](https://github.com/lucasilverentand/ha-inhabit/compare/v0.14.21...v0.14.22) (2026-06-26)
+
+
+### Bug Fixes
+
+* toggle occupancy from button override triggers ([809741e](https://github.com/lucasilverentand/ha-inhabit/commit/809741ee156a3d28929d9f5065780f3a2807b3a4))
+
+
+### Tests
+
+* lock motion occupancy promotion ([3a38094](https://github.com/lucasilverentand/ha-inhabit/commit/3a38094bf7f2caf3b6ed65d7f6ac383d29fd645c))
+
 ## [0.14.21](https://github.com/lucasilverentand/ha-inhabit/compare/v0.14.20...v0.14.21) (2026-06-26)
 
 
