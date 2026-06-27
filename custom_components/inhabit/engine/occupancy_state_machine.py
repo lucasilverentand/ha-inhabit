@@ -845,14 +845,23 @@ class OccupancyStateMachine:
                 if (
                     self._state.state == OccupancyState.OCCUPIED
                     and not self._seal_tracker.is_sealed
-                    and self._any_occupancy_signal_active()
                 ):
-                    if self._recent_active_occupancy_signal():
+                    if (
+                        self._any_occupancy_signal_active()
+                        and self._recent_active_occupancy_signal()
+                    ):
                         self._establish_seal(
                             f"recent activity carried through door {entity_id} close"
                         )
                     else:
                         self._start_post_close_hold(f"door {entity_id} closed")
+                elif self._state.state == OccupancyState.CHECKING:
+                    self._transition_to_occupied(
+                        f"door {entity_id} closed, checking for post-close activity",
+                        fresh_detection=False,
+                        physical_activity=True,
+                    )
+                    self._start_post_close_hold(f"door {entity_id} closed")
 
     @callback
     def _handle_exit_sensor_event(self, event: Event) -> None:

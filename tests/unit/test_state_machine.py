@@ -921,6 +921,92 @@ class TestDoorSealLogic:
             machine._transition_to_vacant("checking timeout")
             assert machine.state.state == OccupancyState.VACANT
 
+    def test_door_close_without_active_motion_starts_post_close_check(
+        self, mock_hass, seal_config, state_changes
+    ):
+        """Closing an occupied open-door room gives motion time to re-confirm."""
+        seal_config.unsealed_activity_timeout = 30
+        self._setup_sensor_states(mock_hass, motion_state=STATE_ON, door_state=STATE_ON)
+        machine, _ = self._make_machine(mock_hass, seal_config, state_changes)
+        scheduled: list[tuple[float, object, MagicMock]] = []
+
+        def mock_async_call_later(hass, delay, callback):
+            cancel = MagicMock()
+            scheduled.append((delay, callback, cancel))
+            return cancel
+
+        with patch(
+            "custom_components.inhabit.engine.occupancy_state_machine.async_call_later",
+            mock_async_call_later,
+        ):
+            machine._handle_motion_event(
+                self._make_event("binary_sensor.room_motion", STATE_ON)
+            )
+            assert machine.state.state == OccupancyState.OCCUPIED
+            assert machine.state.sealed is False
+
+            machine._last_unsealed_activity_at = datetime.now() - timedelta(seconds=31)
+            machine._aggregator.update_reading(
+                "binary_sensor.room_motion", False, "motion", 1.0
+            )
+            self._setup_sensor_states(
+                mock_hass, motion_state=STATE_OFF, door_state=STATE_OFF
+            )
+            machine._handle_door_event(
+                self._make_event("binary_sensor.room_door", STATE_OFF)
+            )
+
+            assert machine.state.state == OccupancyState.OCCUPIED
+            assert machine.state.sealed is False
+            assert machine._post_close_hold_until is not None
+
+            machine._handle_unsealed_activity_timeout()
+            assert machine.state.state == OccupancyState.OCCUPIED
+
+            post_close_callback = scheduled[-1][1]
+            post_close_callback(None)
+            assert machine.state.state == OccupancyState.CHECKING
+
+    def test_door_close_from_checking_restores_post_close_check(
+        self, mock_hass, seal_config, state_changes
+    ):
+        """Closing the door while CHECKING keeps lights on for a fresh check."""
+        self._setup_sensor_states(
+            mock_hass, motion_state=STATE_OFF, door_state=STATE_ON
+        )
+        machine, _ = self._make_machine(mock_hass, seal_config, state_changes)
+        machine._state.state = OccupancyState.CHECKING
+        machine._state.checking_started_at = datetime.now()
+        checking_cancel = MagicMock()
+        machine._checking_timer = checking_cancel
+        scheduled: list[tuple[float, object, MagicMock]] = []
+
+        def mock_async_call_later(hass, delay, callback):
+            cancel = MagicMock()
+            scheduled.append((delay, callback, cancel))
+            return cancel
+
+        with patch(
+            "custom_components.inhabit.engine.occupancy_state_machine.async_call_later",
+            mock_async_call_later,
+        ):
+            self._setup_sensor_states(
+                mock_hass, motion_state=STATE_OFF, door_state=STATE_OFF
+            )
+            machine._handle_door_event(
+                self._make_event("binary_sensor.room_door", STATE_OFF)
+            )
+
+            assert machine.state.state == OccupancyState.OCCUPIED
+            assert machine.state.sealed is False
+            assert machine.state.checking_started_at is None
+            assert machine._post_close_hold_until is not None
+            checking_cancel.assert_called_once()
+
+            post_close_callback = scheduled[-1][1]
+            post_close_callback(None)
+            assert machine.state.state == OccupancyState.CHECKING
+
     def test_open_door_stuck_motion_times_out_to_vacant(
         self, mock_hass, seal_config, state_changes
     ):
