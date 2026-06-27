@@ -409,6 +409,7 @@ class OccupancyStateMachine:
 
         if is_active:
             self._state.last_presence_at = datetime.now()
+            self._sensor_last_triggered[virtual_entity] = self._state.last_presence_at
             self._record_unsealed_activity("spatial")
             self._transition_to_occupied(
                 f"spatial presence: {target_count} targets from {source}",
@@ -846,7 +847,12 @@ class OccupancyStateMachine:
                     and not self._seal_tracker.is_sealed
                     and self._any_occupancy_signal_active()
                 ):
-                    self._start_post_close_hold(f"door {entity_id} closed")
+                    if self._recent_active_occupancy_signal():
+                        self._establish_seal(
+                            f"recent activity carried through door {entity_id} close"
+                        )
+                    else:
+                        self._start_post_close_hold(f"door {entity_id} closed")
 
     @callback
     def _handle_exit_sensor_event(self, event: Event) -> None:
@@ -1677,6 +1683,41 @@ class OccupancyStateMachine:
             self._post_close_hold_until = None
             return 0.0
         return remaining
+
+    def _recent_active_occupancy_signal(self, now: datetime | None = None) -> bool:
+        """Return whether active evidence is fresh enough to carry through close."""
+        if not self._any_occupancy_signal_active():
+            return False
+
+        now = now or datetime.now()
+        recent_window = max(
+            self._exit_check_delay(),
+            min(30.0, self._unsealed_activity_timeout()),
+        )
+        timestamps: list[datetime] = []
+
+        for binding in (
+            *self.config.motion_sensors,
+            *self.config.presence_sensors,
+            *self.config.occupancy_sensors,
+        ):
+            state = self.hass.states.get(binding.entity_id)
+            if state and self._is_sensor_active(state, binding.inverted):
+                triggered = self._sensor_last_triggered.get(binding.entity_id)
+                if triggered is not None:
+                    timestamps.append(triggered)
+
+        if self._spatial_presence_active() and self._last_sustained_activity_at:
+            for sensor_id in self._state.contributing_sensors:
+                if sensor_id.startswith("_spatial_"):
+                    triggered = self._sensor_last_triggered.get(sensor_id)
+                    if triggered is not None:
+                        timestamps.append(triggered)
+
+        return any(
+            (now - timestamp).total_seconds() <= recent_window
+            for timestamp in timestamps
+        )
 
     def _unsealed_activity_remaining(self, now: datetime) -> float:
         """Return seconds of unsealed activity trust still remaining."""
