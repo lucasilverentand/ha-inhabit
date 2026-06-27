@@ -1,6 +1,6 @@
 {
   "name": "ha-inhabit-frontend",
-  "version": "0.14.24",
+  "version": "0.14.25",
   "private": true,
   "type": "module",
   "scripts": {
