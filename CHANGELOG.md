@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.25](https://github.com/lucasilverentand/ha-inhabit/compare/v0.14.24...v0.14.25) (2026-06-27)
+
+
+### Bug Fixes
+
+* carry recent motion through door close ([#123](https://github.com/lucasilverentand/ha-inhabit/issues/123)) ([c494492](https://github.com/lucasilverentand/ha-inhabit/commit/c49449206b7cf9ea31685935d35d5ef9380b0a17))
+
 ## [0.14.24](https://github.com/lucasilverentand/ha-inhabit/compare/v0.14.23...v0.14.24) (2026-06-26)
 
 
