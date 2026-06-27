@@ -813,10 +813,10 @@ class TestDoorSealLogic:
             assert machine._post_close_hold_until is None
             post_close_cancel.assert_called_once()
 
-    def test_door_close_with_stale_motion_holds_until_post_close_timeout(
+    def test_door_close_with_recent_motion_carries_through_and_seals(
         self, mock_hass, seal_config, state_changes
     ):
-        """Stale motion at door close does not seal but delays immediate checking."""
+        """Recent motion before door close confirms occupied and seals the room."""
         seal_config.unsealed_activity_timeout = 30
         self._setup_sensor_states(mock_hass, motion_state=STATE_ON, door_state=STATE_ON)
         machine, _ = self._make_machine(mock_hass, seal_config, state_changes)
@@ -846,6 +846,59 @@ class TestDoorSealLogic:
             machine._handle_door_event(
                 self._make_event("binary_sensor.room_door", STATE_OFF)
             )
+            assert machine.state.sealed is True
+            assert machine._post_close_hold_until is None
+
+            self._setup_sensor_states(
+                mock_hass, motion_state=STATE_OFF, door_state=STATE_OFF
+            )
+            machine._aggregator.update_reading(
+                "binary_sensor.room_motion", False, "motion", 1.0
+            )
+            machine._handle_motion_event(
+                self._make_event("binary_sensor.room_motion", STATE_OFF)
+            )
+            assert machine.state.state == OccupancyState.OCCUPIED
+
+    def test_door_close_with_old_active_motion_uses_post_close_timeout(
+        self, mock_hass, seal_config, state_changes
+    ):
+        """Old active motion at door close still gets only a bounded hold."""
+        seal_config.unsealed_activity_timeout = 30
+        self._setup_sensor_states(mock_hass, motion_state=STATE_ON, door_state=STATE_ON)
+        machine, _ = self._make_machine(mock_hass, seal_config, state_changes)
+        scheduled: list[tuple[float, object, MagicMock]] = []
+
+        def mock_async_call_later(hass, delay, callback):
+            cancel = MagicMock()
+            scheduled.append((delay, callback, cancel))
+            return cancel
+
+        with patch(
+            "custom_components.inhabit.engine.occupancy_state_machine.async_call_later",
+            mock_async_call_later,
+        ):
+            machine._aggregator.update_reading(
+                "binary_sensor.room_motion", True, "motion", 1.0
+            )
+            machine._handle_motion_event(
+                self._make_event("binary_sensor.room_motion", STATE_ON)
+            )
+            assert machine.state.state == OccupancyState.OCCUPIED
+            assert machine.state.sealed is False
+
+            machine._last_unsealed_activity_at = datetime.now() - timedelta(seconds=31)
+            machine._sensor_last_triggered["binary_sensor.room_motion"] = (
+                datetime.now() - timedelta(seconds=31)
+            )
+
+            self._setup_sensor_states(
+                mock_hass, motion_state=STATE_ON, door_state=STATE_OFF
+            )
+            machine._handle_door_event(
+                self._make_event("binary_sensor.room_door", STATE_OFF)
+            )
+
             assert machine.state.sealed is False
             assert machine._post_close_hold_until is not None
             post_close_callback = scheduled[-1][1]
@@ -1068,6 +1121,10 @@ class TestDoorSealLogic:
                 self._make_event("binary_sensor.room_motion", STATE_ON)
             )
             assert machine.state.sealed is False
+            machine._last_unsealed_activity_at = datetime.now() - timedelta(seconds=31)
+            machine._sensor_last_triggered["binary_sensor.room_motion"] = (
+                datetime.now() - timedelta(seconds=31)
+            )
 
             self._setup_sensor_states(
                 mock_hass, motion_state=STATE_ON, door_state=STATE_OFF
