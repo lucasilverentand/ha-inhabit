@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.26](https://github.com/lucasilverentand/ha-inhabit/compare/v0.14.25...v0.14.26) (2026-06-27)
+
+
+### Bug Fixes
+
+* keep open-door rooms occupied after close ([#125](https://github.com/lucasilverentand/ha-inhabit/issues/125)) ([bf09b2c](https://github.com/lucasilverentand/ha-inhabit/commit/bf09b2cc4ef1e25a8153426121575eb2f2a0d142))
+
 ## [0.14.25](https://github.com/lucasilverentand/ha-inhabit/compare/v0.14.24...v0.14.25) (2026-06-27)
 
 
