@@ -1,0 +1,375 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Inhabit Logic Simulator</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div>
+          <h1>Inhabit Logic Simulator</h1>
+          <p>Standalone validation using the production occupancy logic.</p>
+        </div>
+        <div class="topbar-actions">
+          <div id="run-status" class="status">Loading</div>
+          <button id="run-button" class="primary">Run scenario</button>
+        </div>
+      </header>
+
+      <section class="summary-strip" aria-label="Simulation summary">
+        <article class="summary-card">
+          <span>Result</span>
+          <strong id="summary-result">Not run</strong>
+        </article>
+        <article class="summary-card">
+          <span>Selected time</span>
+          <strong id="summary-time">0 s</strong>
+        </article>
+        <article class="summary-card">
+          <span>Actions</span>
+          <strong id="summary-actions">0</strong>
+        </article>
+        <article class="summary-card">
+          <span>Occupied rooms</span>
+          <strong id="summary-occupied">0</strong>
+        </article>
+        <article class="summary-card">
+          <span>Lights on</span>
+          <strong id="summary-lights">0</strong>
+        </article>
+        <article class="summary-card">
+          <span>Checks</span>
+          <strong id="summary-checks">0 / 0</strong>
+        </article>
+      </section>
+
+      <section id="result-callout" class="result-callout" hidden></section>
+
+      <section class="content-grid">
+        <aside class="control-column">
+          <section class="panel command-panel">
+            <div class="panel-heading">
+              <h2>State pad</h2>
+              <span class="meta">Tap or type states</span>
+            </div>
+            <div class="event-context-grid">
+              <div>
+                <label for="room-select">Room</label>
+                <select id="room-select"></select>
+              </div>
+              <div>
+                <label for="door-select">Connected door</label>
+                <select id="door-select"></select>
+              </div>
+            </div>
+            <section class="quick-targets" aria-label="Room targets">
+              <div class="quick-targets-heading">
+                <h3>Rooms</h3>
+                <span class="meta">Target</span>
+              </div>
+              <div id="quick-room-chips" class="quick-room-chips"></div>
+            </section>
+            <section id="selected-room-status" class="selected-room-status" aria-label="Selected room state"></section>
+            <section class="quick-state-block" aria-label="Quick state controls">
+              <div class="quick-targets-heading">
+                <h3>States</h3>
+                <span class="meta">Selected room</span>
+              </div>
+              <div id="quick-phrase-chips" class="quick-phrase-chips" aria-label="Common state phrases"></div>
+            </section>
+            <label for="command-input">Say states</label>
+            <div id="edit-target-hint" class="edit-target-hint"></div>
+            <div class="command-input-row">
+              <textarea
+                id="command-input"
+                placeholder="light on, motion off, door open, mmwave in room, mmwave in zone"
+                autocomplete="off"
+                rows="2"
+              ></textarea>
+              <button id="command-add-button" class="primary" disabled>Add states</button>
+            </div>
+            <div id="command-feedback" class="command-feedback">Ready.</div>
+            <div id="command-preview" class="command-preview"></div>
+            <section class="scenario-strip-block" aria-label="Scenario steps">
+              <div class="scenario-strip-heading">
+                <h3>Steps</h3>
+                <span class="meta">Inspect or edit</span>
+              </div>
+              <div id="scenario-strip" class="scenario-strip"></div>
+              <div id="scenario-step-actions" class="scenario-step-actions"></div>
+            </section>
+            <div class="command-action-row">
+              <button id="command-undo-button">Undo last</button>
+              <button id="command-clear-button">Clear scenario</button>
+            </div>
+            <details class="tool-drawer utility-drawer">
+              <summary>
+                <span>More tools</span>
+                <span class="meta">Examples, presets, validation, events</span>
+              </summary>
+              <div class="utility-drawer-content">
+                <details class="inline-details">
+                  <summary>Room aliases and parser hints</summary>
+                  <div id="command-context" class="command-context"></div>
+                </details>
+                <details class="inline-details">
+                  <summary>All event buttons</summary>
+                  <section class="event-pad" aria-label="Event buttons">
+                    <div class="event-group">
+                      <h3>Light</h3>
+                      <div class="event-actions">
+                        <button class="command-chip" data-command-example="light on">light on</button>
+                        <button class="command-chip" data-command-example="light off">light off</button>
+                      </div>
+                    </div>
+                    <div class="event-group">
+                      <h3>Motion</h3>
+                      <div class="event-actions">
+                        <button class="command-chip" data-command-example="motion on">motion on</button>
+                        <button class="command-chip" data-command-example="motion off">motion off</button>
+                      </div>
+                    </div>
+                    <div class="event-group">
+                      <h3>Door</h3>
+                      <div class="event-actions">
+                        <button class="command-chip" data-command-example="door open">door open</button>
+                        <button class="command-chip" data-command-example="door close">door close</button>
+                      </div>
+                    </div>
+                    <div class="event-group">
+                      <h3>mmWave</h3>
+                      <div class="event-actions">
+                        <button class="command-chip" data-command-example="mmwave in room">mmwave in room</button>
+                        <button class="command-chip" data-command-example="mmwave in zone">mmwave in zone</button>
+                        <button class="command-chip" data-command-example="mmwave clear">mmwave clear</button>
+                      </div>
+                    </div>
+                    <div class="event-group event-group-wide">
+                      <h3>Time</h3>
+                      <div class="event-actions">
+                        <button class="command-chip" data-command-example="wait 30">wait 30</button>
+                        <button class="command-chip" data-command-example="wait 2 minutes">wait 2 minutes</button>
+                      </div>
+                    </div>
+                    <div class="event-group event-group-wide">
+                      <h3>Checks</h3>
+                      <div class="event-actions">
+                        <button class="command-chip check" data-command-example="expect occupied">expect occupied</button>
+                        <button class="command-chip check" data-command-example="expect vacant">expect vacant</button>
+                        <button class="command-chip check" data-command-example="expect light on">expect light on</button>
+                        <button class="command-chip check" data-command-example="expect light off">expect light off</button>
+                      </div>
+                    </div>
+                  </section>
+                </details>
+                <details class="command-examples">
+                  <summary>More examples</summary>
+                  <div class="command-chip-row" aria-label="More command examples">
+                    <button class="command-chip" data-command-example="I walk into Short Stay. wait for 30 seconds. someone leaves Short Stay.">I walk / someone leaves</button>
+                    <button class="command-chip" data-command-example="motion on in Short Stay">motion on in Short Stay</button>
+                    <button class="command-chip" data-command-example="mmwave detected in Short Stay">mmwave detected in Short Stay</button>
+                    <button class="command-chip" data-command-example="door close between Short Stay and Transit Hall">door close between Short Stay and Transit Hall</button>
+                  </div>
+                </details>
+                <details class="tool-drawer situation-block">
+                  <summary>
+                    <span>Situation starters</span>
+                    <span class="meta">Load a full test</span>
+                  </summary>
+                  <div id="situation-starters" class="situation-starters"></div>
+                </details>
+                <details class="tool-drawer validation-block">
+                  <summary>
+                    <span>Validation</span>
+                    <span id="validation-summary" class="meta">0 checks</span>
+                  </summary>
+                  <div id="validation-panel" class="validation-panel"></div>
+                </details>
+                <details class="tool-drawer recorded-events-block">
+                  <summary>
+                    <span>Recorded events</span>
+                    <span class="meta">Click a step to inspect it</span>
+                  </summary>
+                  <div id="recorded-event-filters" class="recorded-event-filters" aria-label="Filter recorded events"></div>
+                  <div id="recorded-events" class="recorded-events"></div>
+                </details>
+              </div>
+            </details>
+          </section>
+
+          <details class="panel advanced-panel scenario-panel">
+            <summary>
+              <span>Scenario</span>
+              <span id="action-count" class="meta">0 actions</span>
+            </summary>
+            <div class="advanced-content">
+              <section>
+                <label for="preset-select">Preset</label>
+                <select id="preset-select"></select>
+                <div class="button-row">
+                  <button id="load-preset-button">Load preset</button>
+                  <button id="reset-button">Reset</button>
+                  <button id="copy-button">Copy JSON</button>
+                </div>
+              </section>
+              <section class="saved-scenarios">
+                <label for="scenario-name-input">Scenario name</label>
+                <input id="scenario-name-input" type="text" value="Untitled scenario" />
+                <label for="saved-scenario-select">Saved scenarios</label>
+                <select id="saved-scenario-select"></select>
+                <div class="button-row">
+                  <button id="save-scenario-button">Save</button>
+                  <button id="load-scenario-button">Load</button>
+                  <button id="delete-scenario-button">Delete</button>
+                </div>
+              </section>
+            </div>
+          </details>
+
+          <details class="panel advanced-panel">
+            <summary>Manual event buttons</summary>
+            <div class="advanced-content">
+              <section>
+                <h2>Room Events</h2>
+                <div class="button-grid">
+                  <button data-room-action="enter_room">Enter + sensors</button>
+                  <button data-room-action="set_pir">Motion on</button>
+                  <button data-room-action="clear_pir">Motion off</button>
+                  <button data-room-action="clear_room">Clear room</button>
+                  <button data-room-action="mmwave_0">mmWave 0</button>
+                  <button data-room-action="mmwave_1">mmWave 1</button>
+                  <button data-room-action="mmwave_2">mmWave 2</button>
+                  <button data-room-action="override_on">Override on</button>
+                  <button data-room-action="override_off">Override off</button>
+                  <button data-room-action="expect_occupied">Expect occupied</button>
+                  <button data-room-action="expect_vacant">Expect vacant</button>
+                  <button data-room-action="recalculate">Recalculate</button>
+                </div>
+              </section>
+
+              <section>
+                <h2>Door Events</h2>
+                <div class="button-grid">
+                  <button data-door-action="open_door">Open</button>
+                  <button data-door-action="close_door">Close</button>
+                  <button data-door-action="door_unavailable">Unavailable</button>
+                  <button data-door-action="snapshot_open">Snapshot open</button>
+                  <button data-door-action="snapshot_closed">Snapshot closed</button>
+                </div>
+              </section>
+
+              <section>
+                <h2>Time</h2>
+                <div class="time-row">
+                  <input id="wait-input" type="number" min="0" step="1" value="30" />
+                  <button id="wait-button">Wait</button>
+                </div>
+                <div class="button-row">
+                  <button data-wait="15">+ 15 s</button>
+                  <button data-wait="30">+ 30 s</button>
+                  <button data-wait="60">+ 60 s</button>
+                  <button id="undo-action-button">Undo action</button>
+                </div>
+              </section>
+            </div>
+          </details>
+        </aside>
+
+        <section class="main-column">
+          <section class="panel map-panel">
+            <div class="panel-heading">
+              <h2>Topology & State</h2>
+              <span id="timeline-current" class="meta">Current snapshot</span>
+            </div>
+            <div class="map-layout">
+              <div id="topology-map" class="topology-map"></div>
+              <div id="state-inspector" class="state-inspector"></div>
+            </div>
+            <div class="room-outcomes-block">
+              <div class="room-outcomes-heading">
+                <h3>Room Outcomes</h3>
+                <div class="room-outcomes-actions">
+                  <span class="meta">Click a room to inspect it</span>
+                  <button id="pin-selected-outcome-button" type="button">Check selected</button>
+                  <button id="pin-all-outcomes-button" type="button">Check all</button>
+                  <button id="clear-checks-button" type="button">Clear all checks</button>
+                </div>
+              </div>
+              <div id="room-outcomes" class="room-outcomes"></div>
+            </div>
+            <div class="room-trace-block">
+              <div class="room-trace-heading">
+                <h3>Selected Room Trace</h3>
+                <span class="meta">Only moments that changed this room</span>
+              </div>
+              <div id="room-trace" class="room-trace"></div>
+            </div>
+          </section>
+
+          <section class="panel timeline-panel">
+            <div class="panel-heading">
+              <h2>Timeline</h2>
+              <span class="meta">Inspect a point in time</span>
+            </div>
+            <div class="timeline-controls">
+              <button id="timeline-first-button">First</button>
+              <button id="timeline-prev-button">Previous</button>
+              <button id="timeline-next-button">Next</button>
+              <button id="timeline-latest-button">Latest</button>
+            </div>
+            <input id="timeline-range" class="timeline-range" type="range" min="0" max="0" value="0" />
+            <div id="timeline" class="timeline"></div>
+          </section>
+
+          <details class="panel advanced-panel diagnostics-panel">
+            <summary>
+              <span>Diagnostics</span>
+              <span class="meta">Failures and checks</span>
+            </summary>
+            <div class="advanced-content">
+              <div id="diagnostics" class="diagnostics"></div>
+            </div>
+          </details>
+
+          <details class="panel advanced-panel">
+            <summary>
+              <span>Scenario steps and transitions</span>
+              <span class="meta">Detailed event trace</span>
+            </summary>
+            <div class="workbench-grid advanced-content">
+              <section>
+                <div class="panel-heading">
+                  <h2>Action Sequence</h2>
+                  <span class="meta">Human-readable steps</span>
+                </div>
+                <div id="action-list" class="action-list"></div>
+              </section>
+
+              <section>
+                <div class="panel-heading">
+                  <h2>Transitions & Checks</h2>
+                  <span class="meta">State changes and expectations</span>
+                </div>
+                <div id="transitions" class="timeline"></div>
+              </section>
+            </div>
+          </details>
+
+          <details class="panel json-panel advanced-panel">
+            <summary>Scenario JSON</summary>
+            <textarea id="actions-editor" spellcheck="false"></textarea>
+          </details>
+
+          <details class="panel advanced-panel">
+            <summary>Raw Result</summary>
+            <pre id="raw-result" class="raw-output">{}</pre>
+          </details>
+        </section>
+      </section>
+    </main>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
