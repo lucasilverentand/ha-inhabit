@@ -51,6 +51,7 @@ class LocalSimulatorRoomSpec:
     is_transit: bool | None = None
     phantom_hold_seconds: int = 0
     mmwave_sources: tuple[str, ...] = ()
+    aliases: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -99,6 +100,7 @@ LOCAL_SIMULATOR_ROOM_SPECS: tuple[LocalSimulatorRoomSpec, ...] = (
         PROFILE_SHORT_STAY,
         (-71.0, 381.1, 23.0, 536.5),
         door_sensor_connected_rooms=(),
+        aliases=("entry", "entrance", "front door", "entryway"),
     ),
     LocalSimulatorRoomSpec(
         "side_room_alpha",
@@ -108,6 +110,7 @@ LOCAL_SIMULATOR_ROOM_SPECS: tuple[LocalSimulatorRoomSpec, ...] = (
         PROFILE_SHORT_STAY,
         (-338.2, 86.2, -82.3, 280.2),
         door_sensor_connected_rooms=("transit_hall",),
+        aliases=("desk", "office", "study", "work room"),
     ),
     LocalSimulatorRoomSpec(
         "short_stay",
@@ -117,6 +120,7 @@ LOCAL_SIMULATOR_ROOM_SPECS: tuple[LocalSimulatorRoomSpec, ...] = (
         PROFILE_SHORT_STAY,
         (-286.5, 381.1, -70.9, 536.5),
         door_sensor_connected_rooms=("transit_hall",),
+        aliases=("toilet", "bathroom", "shower", "wc", "restroom"),
     ),
     LocalSimulatorRoomSpec(
         "service_room",
@@ -126,6 +130,7 @@ LOCAL_SIMULATOR_ROOM_SPECS: tuple[LocalSimulatorRoomSpec, ...] = (
         PROFILE_UTILITY,
         (-378.6, 381.1, -286.4, 536.5),
         door_sensor_connected_rooms=("open_west",),
+        aliases=("utility", "storage", "service"),
     ),
     LocalSimulatorRoomSpec(
         "open_east",
@@ -139,6 +144,7 @@ LOCAL_SIMULATOR_ROOM_SPECS: tuple[LocalSimulatorRoomSpec, ...] = (
         door_sensor_connected_rooms=("transit_hall",),
         unsealed_activity_timeout=120,
         mmwave_sources=("wide_mmwave_east",),
+        aliases=("kitchen", "dining", "open east"),
     ),
     LocalSimulatorRoomSpec(
         "transit_hall",
@@ -158,6 +164,7 @@ LOCAL_SIMULATOR_ROOM_SPECS: tuple[LocalSimulatorRoomSpec, ...] = (
         checking_timeout=15,
         is_transit=True,
         mmwave_sources=("hall_mmwave_east", "hall_mmwave_west"),
+        aliases=("hallway", "hall", "corridor", "landing"),
     ),
     LocalSimulatorRoomSpec(
         "open_west",
@@ -171,6 +178,7 @@ LOCAL_SIMULATOR_ROOM_SPECS: tuple[LocalSimulatorRoomSpec, ...] = (
         door_sensor_connected_rooms=("transit_hall",),
         unsealed_activity_timeout=120,
         mmwave_sources=("wide_mmwave_west",),
+        aliases=("living", "lounge", "open west"),
     ),
 )
 
