@@ -6348,7 +6348,7 @@ function ft(t,e){return(e,i,o)=>((t,e,i)=>(i.configurable=!0,i.enumerable=!0,Ref
               <select
                 class="floor-select"
                 .value=${i??""}
-                @change=${this._handleFloorChange}
+                @change=${t=>this._handleFloorChange(t)}
               >
                 ${e.map(t=>H`<option value=${t.id} ?selected=${t.id===i}>
                       ${t.name}
@@ -6359,7 +6359,7 @@ function ft(t,e){return(e,i,o)=>((t,e,i)=>(i.configurable=!0,i.enumerable=!0,Ref
         ${this._isAdmin?H`
               <button
                 class="edit-toggle ${this._editorMode?"active":""}"
-                @click=${this._toggleEditorMode}
+                @click=${()=>this._toggleEditorMode()}
                 title=${this._editorMode?"Exit editor":"Edit floor plan"}
               >
                 <ha-icon icon=${this._editorMode?"mdi:close":"mdi:pencil"} style="--mdc-icon-size: 18px;"></ha-icon>
@@ -6376,7 +6376,7 @@ function ft(t,e){return(e,i,o)=>((t,e,i)=>(i.configurable=!0,i.enumerable=!0,Ref
         <div class="error">
           <ha-icon icon="mdi:alert-circle"></ha-icon>
           <p>${this._error}</p>
-          <button @click=${this._loadFloorPlans}>Retry</button>
+          <button @click=${()=>this._loadFloorPlans()}>Retry</button>
         </div>
       `:0===this._floorPlans.length?this._isAdmin?H`
         <div class="empty-state">

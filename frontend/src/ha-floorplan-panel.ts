@@ -937,7 +937,7 @@ export class HaFloorplanPanel extends LitElement {
               <select
                 class="floor-select"
                 .value=${activeFloorId ?? ""}
-                @change=${this._handleFloorChange}
+                @change=${(e: Event) => this._handleFloorChange(e)}
               >
                 ${floors.map(
                   (f) =>
@@ -955,7 +955,7 @@ export class HaFloorplanPanel extends LitElement {
             ? html`
               <button
                 class="edit-toggle ${this._editorMode ? "active" : ""}"
-                @click=${this._toggleEditorMode}
+                @click=${() => this._toggleEditorMode()}
                 title=${this._editorMode ? "Exit editor" : "Edit floor plan"}
               >
                 <ha-icon icon=${this._editorMode ? "mdi:close" : "mdi:pencil"} style="--mdc-icon-size: 18px;"></ha-icon>
@@ -983,7 +983,7 @@ export class HaFloorplanPanel extends LitElement {
         <div class="error">
           <ha-icon icon="mdi:alert-circle"></ha-icon>
           <p>${this._error}</p>
-          <button @click=${this._loadFloorPlans}>Retry</button>
+          <button @click=${() => this._loadFloorPlans()}>Retry</button>
         </div>
       `;
     }
