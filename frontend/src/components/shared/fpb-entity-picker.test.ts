@@ -167,4 +167,83 @@ describe("fpb-entity-picker", function () {
 
     expect(results).to.deep.equal(["sensor.hue_button_action"]);
   });
+
+  it("does not reload or clear results on unrelated hass updates", async () => {
+    const hass = hassWithStates({
+      "light.kitchen": entity("light.kitchen", "Kitchen"),
+    });
+    let registryCalls = 0;
+    hass.callWS = async () => {
+      registryCalls += 1;
+      return [] as never;
+    };
+    const el = await fixture<FpbEntityPicker>(html`
+      <fpb-entity-picker .hass=${hass} .domains=${["light"]}>
+      </fpb-entity-picker>
+    `);
+    await nextFrame();
+    expect(registryCalls).to.equal(1);
+
+    el.hass = {
+      ...hass,
+      states: {
+        ...hass.states,
+        "sensor.unrelated": entity("sensor.unrelated", "Unrelated"),
+      },
+    };
+    await el.updateComplete;
+    await nextFrame();
+
+    const results = [
+      ...el.shadowRoot!.querySelectorAll<HTMLElement>(".result-item .eid"),
+    ].map((item) => item.textContent?.trim());
+    expect(results).to.deep.equal(["light.kitchen"]);
+    expect(registryCalls).to.equal(1);
+  });
+
+  it("preserves search and staged selections across unrelated hass updates", async () => {
+    const hass = hassWithStates({
+      "light.kitchen": entity("light.kitchen", "Kitchen"),
+      "light.hall": entity("light.hall", "Hall"),
+    });
+    const el = await fixture<FpbEntityPicker>(html`
+      <fpb-entity-picker .hass=${hass} .domains=${["light"]} .multi=${true}>
+      </fpb-entity-picker>
+    `);
+    await nextFrame();
+    const search =
+      el.shadowRoot!.querySelector<HTMLInputElement>(".search-input")!;
+    search.value = "kitchen";
+    search.dispatchEvent(new Event("input", { bubbles: true }));
+    await el.updateComplete;
+    el.shadowRoot!.querySelector<HTMLButtonElement>(".result-item")!.click();
+    await el.updateComplete;
+
+    el.hass = {
+      ...hass,
+      states: {
+        ...hass.states,
+        "sensor.unrelated": entity("sensor.unrelated", "Unrelated"),
+      },
+    };
+    await el.updateComplete;
+    await nextFrame();
+
+    expect(
+      el.shadowRoot!.querySelector<HTMLInputElement>(".search-input")!.value,
+    ).to.equal("kitchen");
+    const result =
+      el.shadowRoot!.querySelector<HTMLButtonElement>(".result-item")!;
+    expect(result.classList.contains("selected")).to.equal(true);
+    expect(result.querySelector(".eid")?.textContent?.trim()).to.equal(
+      "light.kitchen",
+    );
+    expect(el.shadowRoot!.querySelectorAll(".result-item").length).to.equal(1);
+
+    const confirmed = oneEvent(el, "entities-confirmed") as Promise<
+      CustomEvent<{ entityIds: string[] }>
+    >;
+    el.shadowRoot!.querySelector<HTMLButtonElement>(".confirm-btn")!.click();
+    expect((await confirmed).detail.entityIds).to.deep.equal(["light.kitchen"]);
+  });
 });
