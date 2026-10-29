@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.14.27](https://github.com/lucasilverentand/ha-inhabit/compare/v0.14.26...v0.14.27) (2026-10-29)
+
+
+### Features
+
+* add logic simulator workbench ([#127](https://github.com/lucasilverentand/ha-inhabit/issues/127)) ([be90a03](https://github.com/lucasilverentand/ha-inhabit/commit/be90a0342afa62548f086391386224c85272aa01))
+
+
+### Tests
+
+* preserve entity picker state across hass updates ([47616e1](https://github.com/lucasilverentand/ha-inhabit/commit/47616e1f773e7e1f9d9be40a4d4891a389513cc1))
+
 ## [0.14.26](https://github.com/lucasilverentand/ha-inhabit/compare/v0.14.25...v0.14.26) (2026-06-27)
 
 
